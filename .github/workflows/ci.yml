@@ -83,7 +83,7 @@ jobs:
         run: |
           python -m pip install --upgrade build
           python -m build --wheel
-          python -c "from pathlib import Path; from zipfile import ZipFile; w=next(Path('dist').glob('*.whl')); z=ZipFile(w); n=set(z.namelist()); required={'tidy_file_tree.py','packtidy.py','core/__init__.py','core/signals.py','core/wire_ui.html','rules/__init__.py','rules/default.json'}; missing=required-n; print('wheel:', w); print('wheel entries:'); print(chr(10).join(sorted(n))); assert not missing, f'missing wheel entries: {missing}'"
+          python -c "from pathlib import Path; from zipfile import ZipFile; w=next(Path('dist').glob('*.whl')); z=ZipFile(w); n=set(z.namelist()); required={'tidy_file_tree.py','packtidy.py','core/__init__.py','core/signals.py','core/wire_ui.html','core/wire_ui.en.json','rules/__init__.py','rules/default.json'}; missing=required-n; print('wheel:', w); print('wheel entries:'); print(chr(10).join(sorted(n))); assert not missing, f'missing wheel entries: {missing}'"
       - name: Install wheel and smoke test outside the checkout
         # 从临时目录加载已安装的包，避免从工作区导入源码。
         run: |

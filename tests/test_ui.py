@@ -37,6 +37,13 @@ class ReviewPageCase(unittest.TestCase):
         self.assertIn('<small title="/root/__PACKTIDY_DATA__">', page)
         self.assertIn('const DATA = {"text": "__ROOT__"};', page)
 
+    def test_english_board_keeps_data_and_embeds_locale(self):
+        page = render_html('/root/__BOARD_MESSAGES__', {'text': '__BOARD_LANG__'}, lang='en')
+        self.assertIn('<html lang="en">', page)
+        self.assertIn('<small title="/root/__BOARD_MESSAGES__">', page)
+        self.assertIn('const DATA = {"text": "__BOARD_LANG__"};', page)
+        self.assertIn('"保持原位": "Keep in place"', page)
+
     def test_group_identity_tracks_members_independent_of_order(self):
         group = {'name': 'Series', 'units': ['part1', 'part2']}
         reordered = {**group, 'units': ['part2', 'part1']}

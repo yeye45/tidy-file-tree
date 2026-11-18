@@ -58,7 +58,7 @@ class BrowserRegression(unittest.TestCase):
             env["LOCALAPPDATA"] = str(Path(temp) / "appdata")
             env["XDG_STATE_HOME"] = str(Path(temp) / "state")
             generated = subprocess.run([sys.executable, "-m", "tidy_file_tree", "ui", str(root),
-                                        "--decisions", str(decisions), "--out", str(board)],
+                                        "--decisions", str(decisions), "--out", str(board), "--lang", "en"],
                                        cwd=temp, env=env, capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(generated.returncode, 0, generated.stderr)
             self.assertTrue(board.is_file())
@@ -73,13 +73,24 @@ class BrowserRegression(unittest.TestCase):
                 page.set_default_timeout(5000)
                 page.goto(board.as_uri())
                 self.assertIn("TidyFileTree", page.title())
+                self.assertEqual(page.locator("html").get_attribute("lang"), "en")
+                self.assertEqual(page.locator("#groupSearch").get_attribute("placeholder"), "Group or source")
                 archive_target = page.locator("[data-target]").filter(has=page.locator(".target-label", has_text="archive"))
                 page.locator("#groupSearch").fill("Sample Set")
                 card = page.locator("article.card").filter(has=page.get_by_role("heading", name="Sample Set"))
                 card.locator("summary").click()
                 card.locator("button.port[data-source][data-unit]").first.click()
+                self.assertEqual(page.locator('[data-target="@keep"] .target-label').inner_text(), "Keep in place")
                 page.locator('[data-target="@keep"] .target-port').click()
                 self.assertIn('"linked":1', page.evaluate("JSON.stringify(window.foState())"))
+
+                page.locator("#reviewButton").click()
+                self.assertIn("Unassigned", page.locator("#reviewText").inner_text())
+                page.locator("#review form button").click()
+                page.locator("#language").select_option("zh-CN")
+                self.assertEqual(page.locator("#groupSearch").get_attribute("placeholder"), "分组或来源")
+                self.assertEqual(page.evaluate("window.foState().linked"), 1)
+                self.assertEqual(card.locator("h3").inner_text(), "Sample Set")
 
                 card.locator("button.port.group-port[data-source]").click()
                 page.locator("#groupSearch").fill("no matching group")

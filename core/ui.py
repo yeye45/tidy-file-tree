@@ -16,6 +16,7 @@ import rules
 from safety import assert_no_links, block_kind, key, within
 
 TEMPLATE = Path(__file__).with_name('wire_ui.html')
+ENGLISH_MESSAGES = Path(__file__).with_name('wire_ui.en.json')
 TIERS = ('direct', 'verify', 'full')
 
 
@@ -224,16 +225,22 @@ def build_board(root, probe_dir, snapshot, protection):
     }
 
 
-def render_html(root, data):
+def render_html(root, data, *, lang='zh-CN'):
     # JSON values cannot end the script element or introduce an HTML tag.
     from html import escape
+    if lang not in ('zh-CN', 'en'):
+        raise ValueError('Unsupported board language')
     payload = json.dumps(data, ensure_ascii=False).replace('<', r'\u003c')
     template = TEMPLATE.read_text(encoding='utf-8')
     before, marker, after = template.partition('__PACKTIDY_DATA__')
-    if not marker:
-        raise ValueError('连线界面模板缺少数据入口')
+    script_start, locale_marker, script_end = after.partition('__BOARD_MESSAGES__')
+    if not marker or not locale_marker:
+        raise ValueError('Missing data or language catalog placeholder in board template')
+    messages = json.loads(ENGLISH_MESSAGES.read_text(encoding='utf-8'))
+    catalog = json.dumps(messages, ensure_ascii=False).replace('<', r'\u003c')
     title = escape(str(root))
-    return before.replace('__ROOT__', title) + payload + after.replace('__ROOT__', title)
+    return (before.replace('__BOARD_LANG__', lang).replace('__ROOT__', title) + payload
+            + script_start.replace('__ROOT__', title) + catalog + script_end.replace('__ROOT__', title))
 
 
 def main():
@@ -243,6 +250,7 @@ def main():
     ap.add_argument('--decisions', help='S4 decisions.json；默认读取根目录的 _organize/decisions.json')
     ap.add_argument('--out')
     ap.add_argument('--open', action='store_true')
+    ap.add_argument('--lang', choices=('zh-CN', 'en'), default='zh-CN')
     args = ap.parse_args()
 
     try:
@@ -259,12 +267,17 @@ def main():
         snapshot = read_json(snapshot_path) if args.decisions or os.path.lexists(snapshot_path) else None
         board = build_board(root, Path(args.probe) if args.probe else root/'_organize/probe', snapshot, protection)
         out = Path(args.out) if args.out else root/'_organize/ui.html'
-        atomic_write(out, render_html(root, board).encode('utf-8'))
+        atomic_write(out, render_html(root, board, lang=args.lang).encode('utf-8'))
     except (OSError, ValueError) as exc:
-        ap.error(f'无法生成连线工作台: {exc}')
+        prefix = 'Could not generate the review board' if args.lang == 'en' else '无法生成连线工作台'
+        ap.error(f'{prefix}: {exc}')
 
     count = sum(len(node['groups']) for node in board['nodes'])
-    print(f'已生成: {out}（{count} 组，{board["matchedAnswers"]} 份已回填判断，{len(board["proposedCategories"])} 个候选类别）')
+    if args.lang == 'en':
+        print(f'Created: {out} ({count} groups, {board["matchedAnswers"]} recorded decisions, '
+              f'{len(board["proposedCategories"])} suggested categories)')
+    else:
+        print(f'已生成: {out}（{count} 组，{board["matchedAnswers"]} 份已回填判断，{len(board["proposedCategories"])} 个候选类别）')
     if args.open:
         if os.name == 'nt':
             os.startfile(str(out))

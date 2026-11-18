@@ -152,7 +152,7 @@ def cmd_recover(args):
 
 def cmd_ui(args):
     ui = _load("ui", "ui.py")
-    argv = ["--root", args.root]
+    argv = ["--root", args.root, "--lang", args.lang]
     if args.probe:
         argv += ["--probe", args.probe]
     if args.decisions:
@@ -254,47 +254,66 @@ def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+    # Choose the help language before argparse formats any help text.
+    languages = ("zh-CN", "en")
+    language_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    language_parser.add_argument("--lang", default="zh-CN")
+    requested, _ = language_parser.parse_known_args(argv)
+
+    def text(zh, en):
+        return en if requested.lang == "en" else zh
+
+    language_help = text("帮助与工作台语言", "Language for CLI help and the review board")
     p = argparse.ArgumentParser(
         prog="tidy-file-tree",
-        description=__doc__,
+        description=text(__doc__, "TidyFileTree groups files by directory structure. "
+                         "Review and preview a plan before moving files."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    p.add_argument("--lang", choices=languages, default="zh-CN", help=language_help)
     sub = p.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("scan", help="观察目录的信号（只读）")
+    def command(name, zh, en):
+        description = text(zh, en)
+        return sub.add_parser(name, help=description, description=description)
+
+    s = command("scan", "观察目录的信号（只读）", "Inspect directory structure (read-only)")
     s.add_argument("paths", nargs="*")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_scan)
 
-    s = sub.add_parser("coverage", help="覆盖检查")
+    s = command("coverage", "覆盖检查", "Check for directories missing review records")
     s.add_argument("root")
     s.add_argument("--probe")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_coverage)
 
-    s = sub.add_parser("plan", help="生成待批清单")
+    s = command("plan", "生成待批清单", "Generate an action plan")
     s.add_argument("root")
     s.add_argument("--probe")
-    s.add_argument("--policy", help="计划的审批策略，可指定额外的禁区")
+    s.add_argument("--policy", help=text("计划的审批策略，可指定额外的禁区",
+                                        "Approval policy and optional additional protected paths"))
     s.add_argument("--out")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_plan)
 
-    s = sub.add_parser("apply", help="执行")
+    s = command("apply", "执行", "Preview or apply file actions")
     s.add_argument("root")
     s.add_argument("--actions")
     s.add_argument("--plan")
     s.add_argument("--rename", nargs=2)
     s.add_argument("--reason", default="-")
     s.add_argument("--dry-run", action="store_true")
-    s.add_argument("--receipt", help="预演时写入新的 JSON 清单，执行时核对同一清单")
+    s.add_argument("--receipt", help=text("预演时写入新的 JSON 清单，执行时核对同一清单",
+                                         "Write a JSON receipt during preview and verify it when applying"))
     s.add_argument("--batch-size", type=int, default=50)
     s.add_argument("--allow-cross-drive", action="store_true")
     s.add_argument("--destination-root", action="append", default=[],
-                   help="显式授权的外部目标根目录，可重复指定")
+                   help=text("显式授权的外部目标根目录，可重复指定",
+                             "Authorized external destination root; may be repeated"))
     s.set_defaults(func=cmd_apply)
 
-    s = sub.add_parser("undo", help="逆序撤销")
+    s = command("undo", "逆序撤销", "Undo recorded actions in reverse order")
     s.add_argument("--journal", required=True)
     s.add_argument("--run-id")
     s.add_argument("--last", action="store_true")
@@ -303,45 +322,48 @@ def main(argv=None):
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_undo)
 
-    s = sub.add_parser("recover", help="中断恢复")
+    s = command("recover", "中断恢复", "Recover interrupted actions")
     s.add_argument("root")
     s.set_defaults(func=cmd_recover)
 
-    s = sub.add_parser("setup", help="整理前的一次性确认")
+    s = command("setup", "整理前的一次性确认", "Configure sorting preferences before organizing")
     s.add_argument("action", choices=("ask", "apply", "show"))
     s.add_argument("root")
-    s.add_argument("answers_pos", nargs="?", help="apply 时的答案文件")
+    s.add_argument("answers_pos", nargs="?", help=text("apply 时的答案文件", "Answer file for setup apply"))
     s.set_defaults(func=cmd_setup)
 
-    s = sub.add_parser("decisions", help="算建议 / 生成 AI 问题 / 回填答案")
+    s = command("decisions", "算建议 / 生成 AI 问题 / 回填答案",
+                "Suggest destinations, export AI questions, and import AI answers")
     s.add_argument("root")
     s.add_argument("--probe")
     s.add_argument("--out")
     s.add_argument("--need-ai", action="store_true",
-                   help="只输出需要 AI 判断的问题清单")
-    s.add_argument("--answers", help="AI 判断结果 JSON，回填")
+                   help=text("只输出需要 AI 判断的问题清单", "Output only questions that need AI review"))
+    s.add_argument("--answers", help=text("AI 判断结果 JSON，回填", "Import AI answers from JSON"))
     s.set_defaults(func=cmd_decisions)
 
-    s = sub.add_parser("verify", help="回归验证")
+    s = command("verify", "回归验证", "Run classification checks")
     s.add_argument("action", choices=("run", "record", "coverage"))
-    s.add_argument("path", nargs="?", help="run 时的用例路径")
-    s.add_argument("--root", help="record/coverage 的盘根")
-    s.add_argument("--out", help="record 的输出文件")
+    s.add_argument("path", nargs="?", help=text("run 时的用例路径", "Test case file for verify run"))
+    s.add_argument("--root", help=text("record/coverage 的盘根", "Root directory for record or coverage"))
+    s.add_argument("--out", help=text("record 的输出文件", "Output file for verify record"))
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=cmd_verify)
 
-    s = sub.add_parser("rules", help="规则包")
+    s = command("rules", "规则包", "Show, validate, or sync the rule pack")
     s.add_argument("action", choices=("show", "check", "sync"))
     s.add_argument("--file")
     s.add_argument("--url")
     s.set_defaults(func=cmd_rules)
 
-    s = sub.add_parser("ui", help="生成决策界面")
+    s = command("ui", "生成决策界面", "Generate the standalone review board")
     s.add_argument("root")
     s.add_argument("--probe")
-    s.add_argument("--decisions", help="S4 decisions.json，默认读取根目录的阶段产物")
+    s.add_argument("--decisions", help=text("S4 decisions.json，默认读取根目录的阶段产物",
+                                            "S4 decisions file; defaults to the root's _organize/decisions.json"))
     s.add_argument("--out")
     s.add_argument("--open", action="store_true")
+    s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
     s.set_defaults(func=cmd_ui)
 
     args = p.parse_args(argv)
