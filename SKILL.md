@@ -1,5 +1,5 @@
 ---
-name: packtidy
+name: tidy-file-tree
 description: >
   分阶段式文件整理：探针判定 → 最小单元清点 → 归组 → 审批 → 执行。
   每个阶段产出结构化数据，任何人可复核；所有动作经 journal 记录，逐条可回滚。
@@ -9,7 +9,7 @@ description: >
   默认只在整理根内移动。跨卷移动需显式授权目标根；没有独立删除动作，保护路径一律跳过。
 ---
 
-# packtidy
+# TidyFileTree
 
 顺着结构切分，而不是按扩展名硬套。拿不准就报出来，不猜。
 
@@ -116,7 +116,7 @@ python core/decisions.py --root /path --need-ai > questions.json
 然后派一个（或几个）子代理，每个拿一部分问题：
 
 ```
-你是 packtidy 的判断代理。下面是要判断的组，每个都附了
+你是 TidyFileTree 的判断代理。下面是要判断的组，每个都附了
 已采集的事实（内容形态、样例文件名、规则匹配情况）。
 
 只做判断，不碰文件。输出 JSON：
@@ -282,9 +282,9 @@ python core/coverage.py /root --probe /root/_organize/probe
 **在派第一个探针之前跑一次。**
 
 ```bash
-python packtidy.py setup ask /path        # 生成要问的问题
-python packtidy.py setup apply /path 答案.json
-python packtidy.py setup show /path       # 看当前配置
+python tidy_file_tree.py setup ask /path        # 生成要问的问题
+python tidy_file_tree.py setup apply /path 答案.json
+python tidy_file_tree.py setup show /path       # 看当前配置
 ```
 
 ### 为什么要这一步
@@ -1039,11 +1039,11 @@ ComfyUI 运行环境          [选择去向 ▾]
 
 ### 实现要点
 
-`python packtidy.py ui <root> --open` 生成自包含工作台。S4 回填结果默认从 `_organize/decisions.json` 读取；界面按节点、组及成员标识核对后展示验证级别、猜想、验证和确认。候选类别来自 S4 或当前分组的未匹配项。
+`python tidy_file_tree.py ui <root> --open` 生成自包含工作台。S4 回填结果默认从 `_organize/decisions.json` 读取；界面按节点、组及成员标识核对后展示验证级别、猜想、验证和确认。候选类别来自 S4 或当前分组的未匹配项。
 
 曲线从左侧来源圆点接到右侧专用圆点，中间预留走线空间。可点击区域比可见线宽。整组连线只填未分配项，需要重设时明确选择覆盖并确认。整组各单元已连且去向相同时，合并成一条线。界面支持撤销和重做连线。
 
-复核清单包含待连和仅复核的项目。可执行 TSV 只导出已连到目录且能核对为 S2 原子单元的来源。手工纠正的去向可另存为本地分类样本。S5 用 `apply <root> --actions <表> --dry-run --receipt plan.packtidy-receipt.json` 生成新清单，确认后用同一命令去掉 `--dry-run` 执行。需要跨卷时，两次命令都传 `--allow-cross-drive --destination-root <已存在的目标根>`。
+复核清单包含待连和仅复核的项目。可执行 TSV 只导出已连到目录且能核对为 S2 原子单元的来源。手工纠正的去向可另存为本地分类样本。S5 用 `apply <root> --actions <表> --dry-run --receipt plan.tidy-file-tree-receipt.json` 生成新清单，确认后用同一命令去掉 `--dry-run` 执行。需要跨卷时，两次命令都传 `--allow-cross-drive --destination-root <已存在的目标根>`。
 
 ---
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the standalone PackTidy wiring board from local stage artifacts."""
+"""Build the standalone TidyFileTree wiring board from local stage artifacts."""
 import argparse
 from datetime import datetime
 from functools import lru_cache

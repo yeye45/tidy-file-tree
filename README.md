@@ -10,23 +10,27 @@ TidyFileTree 是面向下载目录、软件合集和媒体库的开源文件整�
 
 ## 安装
 
-需要 Python 3.9 或更新版本。当前版本安装后使用 `packtidy` 命令。
+需要 Python 3.9 或更新版本。当前版本安装后使用 `tidy-file-tree` 命令。
+
+如果先前用 pip 安装过 `packtidy`，先运行 `python -m pip uninstall packtidy`。
 
 ```bash
 git clone https://github.com/yeye45/tidy-file-tree.git
 cd tidy-file-tree
 python -m pip install .
-packtidy --help
+tidy-file-tree --help
 ```
 
-也可以直接运行 `python packtidy.py`。Windows 用户可使用 `scripts/` 中的 PowerShell 封装，支持 Windows PowerShell 5.1 和 PowerShell 7。
+也可以直接运行 `python tidy_file_tree.py`。Windows 用户可使用 `scripts/` 中的 PowerShell 封装，支持 Windows PowerShell 5.1 和 PowerShell 7。
+
+新版也提供 `packtidy` 兼容命令，可以继续读取原有规则、整理日志和连线记录。
 
 ## 快速体验
 
 选择一个已有目录，查看文件类型、连续编号或程序布局等线索。下面是 Windows 路径示例。
 
 ```powershell
-packtidy scan "D:\待整理" --json
+tidy-file-tree scan "D:\待整理" --json
 ```
 
 ### 试用连线工作台
@@ -36,35 +40,35 @@ packtidy scan "D:\待整理" --json
 ```powershell
 $demo = New-Item -ItemType Directory -Path ("tidy-file-tree-demo-" + [guid]::NewGuid())
 python tests/make_fixture.py $demo.FullName
-packtidy ui (Join-Path $demo.FullName "root") --open
+tidy-file-tree ui (Join-Path $demo.FullName "root") --open
 ```
 
 ## 整理自己的文件
 
-1. **确定整理范围。** 用 `packtidy setup ask <目录>` 查看需要确认的分类偏好和保护路径，用 `packtidy setup apply <目录> answers.json` 保存答案。先登记工作区、他人文件和凭据的保护标记。
-2. **判断哪些文件该一起处理。** 让 AI 代理按 [SKILL.md](SKILL.md) 做探针、清点和归组。软件和它的运行资源可以计作一个单元，互不相关的下载文件可以逐项处理。阶段记录存入 `_organize/probe/`，用 `packtidy coverage <目录>` 查漏。
-3. **在工作台确认去向。** 运行 `packtidy decisions <目录>` 生成建议，再运行 `packtidy ui <目录> --open`。把左侧分组或单元连到右侧目标，查看证据后下载动作表。可执行条目须有明确去向，并能与清点记录核对。
+1. **确定整理范围。** 用 `tidy-file-tree setup ask <目录>` 查看需要确认的分类偏好和保护路径，用 `tidy-file-tree setup apply <目录> answers.json` 保存答案。先登记工作区、他人文件和凭据的保护标记。
+2. **判断哪些文件该一起处理。** 让 AI 代理按 [SKILL.md](SKILL.md) 做探针、清点和归组。软件和它的运行资源可以计作一个单元，互不相关的下载文件可以逐项处理。阶段记录存入 `_organize/probe/`，用 `tidy-file-tree coverage <目录>` 查漏。
+3. **在工作台确认去向。** 运行 `tidy-file-tree decisions <目录>` 生成建议，再运行 `tidy-file-tree ui <目录> --open`。把左侧分组或单元连到右侧目标，查看证据后下载动作表。可执行条目须有明确去向，并能与清点记录核对。
 4. **先预演，再执行。** 按下方示例用 `--dry-run --receipt` 写出预演清单。核对后，去掉 `--dry-run`，使用同一份清单执行。完成后可按日志撤销，中断时用 `recover` 检查和恢复。
 
 ### AI 判断与保护标记
 
-- 用 `packtidy decisions <目录> --need-ai` 导出待判断的组，交给 AI 代理补充依据，再用 `--answers` 回填。有待判断的组时，命令会输出 JSON 并返回退出码 1。工作台可显示验证级别、规则依据和已回填的判断。 [AI 复核流程](FLOW.md#ai-介入)
+- 用 `tidy-file-tree decisions <目录> --need-ai` 导出待判断的组，交给 AI 代理补充依据，再用 `--answers` 回填。有待判断的组时，命令会输出 JSON 并返回退出码 1。工作台可显示验证级别、规则依据和已回填的判断。 [AI 复核流程](FLOW.md#ai-介入)
 - 用 `scripts/markers.ps1` 把保护写入 `_organize/markers.tsv`。常见标记有 `NO_TOUCH`（明确保留）、`WORKSPACE`（正在整理）、`FOREIGN`（他人资料）和 `SECRET`（凭据）。 [标记用法](SKILL.md#标记用户会忘所以文件得记住)
 
 ### 预演与执行示例
 
-假设你已下载并核对 `packtidy-actions.tsv`，在它所在的目录执行。第二条命令会按动作表移动或改名。
+假设你已下载并核对 `tidy-file-tree-actions.tsv`，在它所在的目录执行。第二条命令会按动作表移动或改名。
 
 ```powershell
-packtidy apply "D:\待整理" --actions packtidy-actions.tsv --dry-run --receipt plan.packtidy-receipt.json
-packtidy apply "D:\待整理" --actions packtidy-actions.tsv --receipt plan.packtidy-receipt.json
+tidy-file-tree apply "D:\待整理" --actions tidy-file-tree-actions.tsv --dry-run --receipt plan.tidy-file-tree-receipt.json
+tidy-file-tree apply "D:\待整理" --actions tidy-file-tree-actions.tsv --receipt plan.tidy-file-tree-receipt.json
 ```
 
-要预演撤销最近一批操作，可以运行 `packtidy undo --journal "D:\待整理\_organize\journal.tsv" --last --dry-run`。核对撤销内容后，去掉 `--dry-run` 执行。
+要预演撤销最近一批操作，可以运行 `tidy-file-tree undo --journal "D:\待整理\_organize\journal.tsv" --last --dry-run`。核对撤销内容后，去掉 `--dry-run` 执行。
 
 ## 动作表格式
 
-`packtidy plan <目录> --dry-run` 根据探针和 `_organize/policy.json` 预览可批准的动作。`--policy` 可以覆盖审批设置并追加禁区。重新生成计划时，如果没有可批准的动作，已有的 `plan.tsv` 会被更新为空表。
+`tidy-file-tree plan <目录> --dry-run` 根据探针和 `_organize/policy.json` 预览可批准的动作。`--policy` 可以覆盖审批设置并追加禁区。重新生成计划时，如果没有可批准的动作，已有的 `plan.tsv` 会被更新为空表。
 
 `--receipt` 在预演时将源身份和最终落点写入一个新 JSON 文件，在正式执行时核对同一份清单。发现拦截项、源被替换或最终落点变化时，整份清单会在启动文件移动前停止。清单请放在现有工作目录里，重新预演时换一个文件名。
 
@@ -81,8 +85,8 @@ mkdir   -                       /mnt/disk/归档           下载暂存区拆分
 也支持 PowerShell 封装：
 
 ```powershell
-pwsh -File scripts/apply.ps1 -Root G:\ -Actions actions.tsv -DryRun -Receipt plan.packtidy-receipt.json
-pwsh -File scripts/apply.ps1 -Root G:\ -Actions actions.tsv -Receipt plan.packtidy-receipt.json
+pwsh -File scripts/apply.ps1 -Root G:\ -Actions actions.tsv -DryRun -Receipt plan.tidy-file-tree-receipt.json
+pwsh -File scripts/apply.ps1 -Root G:\ -Actions actions.tsv -Receipt plan.tidy-file-tree-receipt.json
 pwsh -File scripts/undo.ps1 -Journal journal.tsv -Last -DryRun
 pwsh -File scripts/recover.ps1 -Root G:\
 ```
@@ -95,8 +99,8 @@ pwsh -File scripts/recover.ps1 -Root G:\
 动作表中的 `move` 目标必须是另一卷上已存在的目录。执行时同时传入开关和已授权的目标根。可重复指定目标根。
 
 ```powershell
-python packtidy.py apply "D:\整理区" --actions actions.tsv --allow-cross-drive --destination-root "E:\归档区" --dry-run --receipt cross.packtidy-receipt.json
-pwsh -File scripts/apply.ps1 -Root "D:\整理区" -Actions actions.tsv -AllowCrossDrive -DestinationRoot "E:\归档区" -Receipt cross.packtidy-receipt.json
+tidy-file-tree apply "D:\整理区" --actions actions.tsv --allow-cross-drive --destination-root "E:\归档区" --dry-run --receipt cross.tidy-file-tree-receipt.json
+pwsh -File scripts/apply.ps1 -Root "D:\整理区" -Actions actions.tsv -AllowCrossDrive -DestinationRoot "E:\归档区" -Receipt cross.tidy-file-tree-receipt.json
 ```
 
 工具会验证暂存副本再发布目标，随后隔离原件并逐项复核后清理。恢复和撤销仍用源整理根及其日志。跨卷目标已有同名对象会拦截。发布前中断时，原件仍在原路径，暂存副本留在目标根的 `_organize/cross-volume`。
@@ -104,7 +108,7 @@ pwsh -File scripts/apply.ps1 -Root "D:\整理区" -Actions actions.tsv -AllowCro
 ## 目录结构
 
 ```
-packtidy.py                 统一入口（scan/coverage/plan/apply/undo/recover/ui）
+tidy_file_tree.py           统一入口（scan/coverage/plan/apply/undo/recover/ui）
 SKILL.md                    流程与规则
 policy.example.json         自动批准策略示例（复制为 policy.json 后按你的盘改）
 core/
@@ -168,7 +172,7 @@ reason 列使用 JSON 保存人工依据、事务编号、文件身份和逆操�
 
 ## 测试
 
-工作台可以导出人工纠正的分类样本。参考 [分类基准](cases/baseline.json) 记录期望去向，再运行 `packtidy verify run <本地用例.json>`。
+工作台可以导出人工纠正的分类样本。参考 [分类基准](cases/baseline.json) 记录期望去向，再运行 `tidy-file-tree verify run <本地用例.json>`。
 
 ```bash
 python -B -m unittest discover -s tests -v

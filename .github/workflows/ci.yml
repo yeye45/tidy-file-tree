@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PY_MAX }}
-      - name: Build and install PackTidy wheel with browser test dependency
+      - name: Build and install TidyFileTree wheel with browser test dependency
         run: |
           python -m pip install --upgrade build
           python -m build --wheel
@@ -78,34 +78,39 @@ jobs:
       - name: Run unittest suite
         run: python -B -m unittest discover -s tests -v
       - name: Run decision baseline
-        run: python -B packtidy.py verify run cases/baseline.json
+        run: python -B tidy_file_tree.py verify run cases/baseline.json
       - name: Build wheel and inspect its layout
         run: |
           python -m pip install --upgrade build
           python -m build --wheel
-          python -c "from pathlib import Path; from zipfile import ZipFile; w=next(Path('dist').glob('*.whl')); z=ZipFile(w); n=set(z.namelist()); required={'packtidy.py','core/__init__.py','core/signals.py','core/wire_ui.html','rules/__init__.py','rules/default.json'}; missing=required-n; print('wheel:', w); print('wheel entries:'); print(chr(10).join(sorted(n))); assert not missing, f'missing wheel entries: {missing}'"
+          python -c "from pathlib import Path; from zipfile import ZipFile; w=next(Path('dist').glob('*.whl')); z=ZipFile(w); n=set(z.namelist()); required={'tidy_file_tree.py','packtidy.py','core/__init__.py','core/signals.py','core/wire_ui.html','rules/__init__.py','rules/default.json'}; missing=required-n; print('wheel:', w); print('wheel entries:'); print(chr(10).join(sorted(n))); assert not missing, f'missing wheel entries: {missing}'"
       - name: Install wheel and smoke test outside the checkout
-        # 用独立脚本而不是 -m：单文件模块没有 __main__.py，
-        # 而 core/ 内部是扁平导入，必须由 packtidy.py 显式把 core/ 加进 sys.path。
+        # 从临时目录加载已安装的包，避免从工作区导入源码。
         run: |
           python -c "
-          import pathlib, sys, os, tempfile
+          import pathlib, sys, os
+          from importlib.metadata import distribution
           target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'packtidy-install'
           import subprocess
           subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-deps', '--target', str(target), *map(str, pathlib.Path('dist').glob('*.whl'))])
 
           sys.path.insert(0, str(target))
+          entries = {e.name: e.value for e in distribution('tidy-file-tree').entry_points if e.group == 'console_scripts'}
+          assert entries['tidy-file-tree'] == entries['packtidy'] == 'tidy_file_tree:main'
           work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'packtidy-smoke'
           (work / 'input').mkdir(parents=True, exist_ok=True)
           (work / 'input' / 'sample.txt').write_text('smoke\n', encoding='utf-8')
           os.chdir(work)
 
-          from packtidy import main
+          from tidy_file_tree import main
+          from packtidy import main as legacy_main
+          assert legacy_main is main
           assert main(['scan', 'input', '--json']) == 0
           assert main(['rules', 'show']) == 0
           assert main(['ui', 'input', '--out', 'board.html']) == 0
 
           html = pathlib.Path('board.html').read_text(encoding='utf-8')
+          assert 'TidyFileTree' in html
           assert 'wires' in html, 'board.html 里没有连线元素'
           assert '__PACKTIDY_DATA__' not in html, '数据占位符没被替换'
           print('smoke OK: wheel 安装后 scan / rules / ui 都可用')

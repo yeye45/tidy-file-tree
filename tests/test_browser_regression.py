@@ -1,4 +1,4 @@
-"""End to end browser acceptance for the generated PackTidy review board.
+"""End to end browser acceptance for the generated TidyFileTree review board.
 
 Run with: python -m pip install playwright && playwright install chromium
 """
@@ -57,7 +57,7 @@ class BrowserRegression(unittest.TestCase):
                 env["PYTHONPATH"] = str(PROJECT) + os.pathsep + env.get("PYTHONPATH", "")
             env["LOCALAPPDATA"] = str(Path(temp) / "appdata")
             env["XDG_STATE_HOME"] = str(Path(temp) / "state")
-            generated = subprocess.run([sys.executable, "-m", "packtidy", "ui", str(root),
+            generated = subprocess.run([sys.executable, "-m", "tidy_file_tree", "ui", str(root),
                                         "--decisions", str(decisions), "--out", str(board)],
                                        cwd=temp, env=env, capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(generated.returncode, 0, generated.stderr)
@@ -72,6 +72,7 @@ class BrowserRegression(unittest.TestCase):
                 page = browser.new_page(accept_downloads=True)
                 page.set_default_timeout(5000)
                 page.goto(board.as_uri())
+                self.assertIn("TidyFileTree", page.title())
                 archive_target = page.locator("[data-target]").filter(has=page.locator(".target-label", has_text="archive"))
                 page.locator("#groupSearch").fill("Sample Set")
                 card = page.locator("article.card").filter(has=page.get_by_role("heading", name="Sample Set"))
@@ -132,11 +133,12 @@ class BrowserRegression(unittest.TestCase):
                 with page.expect_download() as download_info:
                     page.locator("#downloadActions").click()
                 action_file = Path(temp) / "actions.tsv"
+                self.assertEqual(download_info.value.suggested_filename, "tidy-file-tree-actions.tsv")
                 download_info.value.save_as(action_file)
                 self.assertIn("part-b.bin", action_file.read_text(encoding="utf-8"))
                 self.assertNotIn("part-a.bin", action_file.read_text(encoding="utf-8"))
                 receipt = Path(temp) / "receipt.json"
-                cli = lambda *args: subprocess.run([sys.executable, "-m", "packtidy", *map(str, args)],
+                cli = lambda *args: subprocess.run([sys.executable, "-m", "tidy_file_tree", *map(str, args)],
                                                     cwd=temp, env=env, check=True, capture_output=True,
                                                     text=True, encoding="utf-8")
                 cli("apply", root, "--actions", action_file, "--dry-run", "--receipt", receipt)

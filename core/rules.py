@@ -294,7 +294,7 @@ def cmd_show(args):
     print(f"规则包: {source}")
     print(f"  版本    {data.get('version')}")
     print(f"  更新    {data.get('updated', '—')}")
-    print(f"  兼容    packtidy >= {data.get('minPacktidy')}")
+    print(f"  兼容    TidyFileTree >= {data.get('minPacktidy')}")
     print()
     for field in ("protected", "nestedAllow", "nestedDeny", "categoryNodes"):
         if field in data:

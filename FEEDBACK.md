@@ -14,7 +14,7 @@
 
 ## 怎么提
 
-到 [Issues](https://github.com/yeye45/packtidy/issues) 新建，选「手动反馈」模板，按栏目填写。
+到 [Issues](https://github.com/yeye45/tidy-file-tree/issues) 新建，选「手动反馈」模板，按栏目填写。
 
 | 你遇到的情况 | 最该贴的东西 | 会归到哪 |
 |---|---|---|

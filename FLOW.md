@@ -1,4 +1,4 @@
-# packtidy 完整流程
+# TidyFileTree 完整流程
 
 从一块乱盘到整理完成，中间经过六个阶段。每个阶段有明确的输入、输出和停止条件。
 
@@ -75,8 +75,8 @@ S1 判断能不能动、S4 算建议、S5 预检，都读同一份规则。
 **在派第一个探针之前。**
 
 ```bash
-python packtidy.py setup ask /path
-python packtidy.py setup apply /path answers.json
+python tidy_file_tree.py setup ask /path
+python tidy_file_tree.py setup apply /path answers.json
 ```
 
 七个问题，只问真正影响整理的：成人内容分不分、视频按不按用途分、
@@ -520,7 +520,7 @@ python core/decisions.py --root /path --answers ai.json
 ### 人在这里介入
 
 ```bash
-python packtidy.py ui /path --open
+python tidy_file_tree.py ui /path --open
 ```
 
 界面只做一件事：**把需要人看的挑出来，其余默认填好。**
@@ -560,7 +560,7 @@ python packtidy.py ui /path --open
 ### 预演
 
 ```bash
-python packtidy.py apply /path --actions plan.tsv --dry-run --receipt plan.packtidy-receipt.json
+python tidy_file_tree.py apply /path --actions plan.tsv --dry-run --receipt plan.tidy-file-tree-receipt.json
 ```
 
 预演会列出最终路径，包括同卷同名时分配的后缀。所有动作通过预检后，才将源身份、最终落点及动作表校验写入新清单。
@@ -578,7 +578,7 @@ rename 的 dst 含分隔符 → 拦
 ### 执行
 
 ```bash
-python packtidy.py apply /path --actions plan.tsv --receipt plan.packtidy-receipt.json
+python tidy_file_tree.py apply /path --actions plan.tsv --receipt plan.tidy-file-tree-receipt.json
 ```
 
 `ui` 可下载已连单元的四列动作表。执行会先核对整份清单，遇到动作变更或预检拦截时停止，处理后用新文件名重新预演。跨卷移动需在两次命令中都传 `--allow-cross-drive` 与 `--destination-root`，并使用目标卷上的现有目录。中断从源整理根运行 `recover`。
@@ -604,8 +604,8 @@ seq  run_id  ts  op  before  after  reason  status
 ### 撤销
 
 ```bash
-python packtidy.py undo --journal journal.tsv --last --dry-run
-python packtidy.py undo --journal journal.tsv --run-id run-xxx
+python tidy_file_tree.py undo --journal journal.tsv --last --dry-run
+python tidy_file_tree.py undo --journal journal.tsv --run-id run-xxx
 ```
 
 四种情况：
@@ -620,7 +620,7 @@ python packtidy.py undo --journal journal.tsv --run-id run-xxx
 ### 中断恢复
 
 ```bash
-python packtidy.py recover /path
+python tidy_file_tree.py recover /path
 ```
 
 执行到一半崩了，先恢复再继续。**不恢复就继续修改会留下不一致状态。**
@@ -632,7 +632,7 @@ python packtidy.py recover /path
 **每个阶段结束后必跑。**
 
 ```bash
-python packtidy.py coverage /path
+python tidy_file_tree.py coverage /path
 ```
 
 ### 它检查三件事
@@ -778,19 +778,19 @@ C 组 · 判断后删除    不属于当前主题、看着像垃圾、但没直�
 ```bash
 # 查看
 python core/rules.py show              规则包内容
-python packtidy.py scan /path          看信号
-python packtidy.py coverage /path      覆盖检查
+python tidy_file_tree.py scan /path          看信号
+python tidy_file_tree.py coverage /path      覆盖检查
 
 # 决策
 python core/decisions.py --root /path --need-ai    生成 AI 问题
 python core/decisions.py --root /path --answers ai.json   回填
-python packtidy.py ui /path --open      人看界面
+python tidy_file_tree.py ui /path --open      人看界面
 
 # 执行
-python packtidy.py apply /path --actions plan.tsv --dry-run --receipt plan.packtidy-receipt.json
-python packtidy.py apply /path --actions plan.tsv --receipt plan.packtidy-receipt.json
-python packtidy.py undo --journal j.tsv --last
-python packtidy.py recover /path
+python tidy_file_tree.py apply /path --actions plan.tsv --dry-run --receipt plan.tidy-file-tree-receipt.json
+python tidy_file_tree.py apply /path --actions plan.tsv --receipt plan.tidy-file-tree-receipt.json
+python tidy_file_tree.py undo --journal j.tsv --last
+python tidy_file_tree.py recover /path
 
 # 验证
 python core/verify.py run cases/

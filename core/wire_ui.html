@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
-<title>PackTidy · 连线工作台</title>
+<title>TidyFileTree · 连线工作台</title>
 <style>
 :root{color-scheme:light dark;--bg:#f3f6fb;--paper:#fff;--tint:#ecf2fa;--ink:#152039;--muted:#566781;--line:#d1dceb;--accent:#245bcc;--wire:#3470e7;--ok:#176b54;--warn:#884405;--focus:#235dce}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101620;--paper:#182331;--tint:#223145;--ink:#eaf1fb;--muted:#a9b9d1;--line:#384c66;--accent:#9abbff;--wire:#83adff;--ok:#81dac2;--warn:#ffc88a;--focus:#9abbff}}
@@ -80,7 +80,7 @@ dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);pa
 </head>
 <body>
 <header>
-  <div><h1>PackTidy 连线工作台</h1><small title="__ROOT__">__ROOT__</small></div>
+  <div><h1>TidyFileTree 连线工作台</h1><small title="__ROOT__">__ROOT__</small></div>
   <div class="actions"><button id="undoButton" aria-label="撤销连线">撤销</button><button id="redoButton" aria-label="重做连线">重做</button><button id="proposalsButton">候选类别</button><button id="reviewButton" class="primary">复核清单</button><button id="theme" aria-label="切换明暗主题">◐</button></div>
 </header>
 <div class="toolbar"><strong id="progress"></strong><span id="summary"></span></div>
@@ -456,7 +456,7 @@ function showReview() {
   ];
   $('reviewStatus').textContent = r.conflicts.size
     ? '来源有重复或父子冲突，请断开冲突连线后再下载动作表。'
-    : `${r.rows.length} 个动作可下载，${r.pending.length} 项待连。请先用 --dry-run --receipt plan.packtidy-receipt.json 预演，再使用同一清单执行。`;
+    : `${r.rows.length} 个动作可下载，${r.pending.length} 项待连。请先用 --dry-run --receipt plan.tidy-file-tree-receipt.json 预演，再使用同一清单执行。`;
   $('reviewText').textContent = sections.map(([name,items]) => `## ${name}（${items.length}）\n${items.join('\n') || '（无）'}`).join('\n\n');
   $('downloadActions').disabled = !exportRows.length;
   const changed = [];
@@ -487,9 +487,9 @@ function tsv(value) {
 $('reviewButton').addEventListener('click',showReview);
 $('undoButton').addEventListener('click',()=>{if(undoStack.length) restore(undoStack.pop(),redoStack);});
 $('redoButton').addEventListener('click',()=>{if(redoStack.length) restore(redoStack.pop(),undoStack);});
-$('downloadReview').addEventListener('click',() => download('packtidy-review.md','# PackTidy 整理复核清单\n\n'+$('reviewText').textContent,'text/markdown;charset=utf-8'));
+$('downloadReview').addEventListener('click',() => download('tidy-file-tree-review.md','# TidyFileTree 整理复核清单\n\n'+$('reviewText').textContent,'text/markdown;charset=utf-8'));
 $('downloadActions').addEventListener('click',() => {
-  if (exportRows.length) download('packtidy-actions.tsv','op\tsrc\tdst\treason\n'+exportRows.map(row => row.map(tsv).join('\t')).join('\n')+'\n','text/tab-separated-values;charset=utf-8');
+  if (exportRows.length) download('tidy-file-tree-actions.tsv','op\tsrc\tdst\treason\n'+exportRows.map(row => row.map(tsv).join('\t')).join('\n')+'\n','text/tab-separated-values;charset=utf-8');
 });
 $('downloadCorrections').addEventListener('click',()=>{
   const rows=[...$('correctionRows').querySelectorAll('.correction-row')];
@@ -499,7 +499,7 @@ $('downloadCorrections').addEventListener('click',()=>{
   // Treat free-form labels and notes as text when opened in a spreadsheet.
   const content = [header,...body].map(row => row.map(value =>
     tsv(/^\s*[=+@-]/.test(value) ? "'" + value : value)).join('\t')).join('\n');
-  download('packtidy-classification-corrections.tsv',content+'\n','text/tab-separated-values;charset=utf-8');
+  download('tidy-file-tree-classification-corrections.tsv',content+'\n','text/tab-separated-values;charset=utf-8');
 });
 $('proposalsButton').addEventListener('click',() => {
   const list = Object.entries(DATA.proposedCategories);
