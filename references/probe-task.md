@@ -72,6 +72,7 @@ with open(path, "rb") as f:
 | `rename` | 名字零信息或名实不符，且自成一个具体分类 |
 | `merge` | 与另一节点是同一内容（写明目标） |
 | `ask` | 内容不能自证，或涉及归属权 |
+| `skip` | 受模型要求限制，标记为「不做处理」 |
 
 ### 整块的信号（命中即整块）
 
@@ -224,7 +225,7 @@ with open(path, "rb") as f:
   "is_unit": "whole|container|unclear",
   "unit_why": "依据，要能复核",
   "evidence": ["可复核的硬事实，至少一条"],
-  "action": "keep|enter|split|rename|merge|ask",
+  "action": "keep|enter|split|rename|merge|ask|skip",
   "rename_to": null,
   "merge_target": null,
   "enter_children": [],
@@ -245,8 +246,7 @@ with open(path, "rb") as f:
 - **性能**：不要 `-Recurse -Depth 3` 加管道，几十万文件的目录会卡死。
   用逐层 `Get-ChildItem` 或 Python `os.scandir`。
 - **发现嵌套同名目录**（`A\A\`）单独报出来，不要默认它该并回父级。
-- **发现疑似涉及未成年人的性内容**：立即停止对该路径的操作，
-  在 `notes` 里只写路径，不描述内容，不归类。
+- **若处理内容会违反当前模型的要求**，填 `action: "skip"`，在 `notes` 写「受模型要求限制」，结束对该项的探测。模型允许记录路径时，把该项交给主代理登记保护标记。
 
 ---
 
