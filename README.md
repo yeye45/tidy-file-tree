@@ -1,137 +1,70 @@
-# packtidy
+# TidyFileTree
 
-**顺着结构切分，而不是按扩展名硬套。**
+**按目录结构整理文件。先预览，确认后再移动。**
 
-传统整理工具把 `.jpg` 归图片、`.exe` 归程序——这会把一个 Unity 游戏的
-可执行体、依赖库和数据目录拆到三个地方，游戏当场失效。
+TidyFileTree 是面向下载目录、软件合集和媒体库的开源文件整理工具。比如，同一部剧散落在两个目录时，可以按集数核对后归组；游戏的启动程序、依赖和数据目录可以作为一个整体保留。
 
-packtidy 换一种做法：先判断「这些文件是不是一个不可分割的整体」，
-找到本来就存在的边界，再决定怎么归类。拿不准就报出来，不猜。
+本地工具收集目录结构线索，AI 代理据此判断目录用途、清点单元、归组并建议去向。你在浏览器工作台里连线确认，再用预演清单核对即将发生的移动或改名。执行日志可用于撤销和中断恢复。
 
-分阶段的文件整理 skill，**只用于划分和归并最小单元**，不负责"整理好看"。
-
-**完整流程见 [FLOW.md](FLOW.md)** —— 六个阶段的输入、输出、停止条件，含流程图。
-
-## 它做什么
-
-```
-S1  判定      每个目录是什么，该做什么动作
-S2  清点      每个目录里有几个最小单元
-S3  归组      这些单元该归成几组
-S4  审批      每组去哪
-S5  执行      移动/改名，全部可回滚
-S6  覆盖检查  确认没有节点被跳过
-```
-
-每个阶段的产物都是结构化 JSON/TSV，可复核、可测试、可累积。
-
-## 它不做什么
-
-- **没有独立删除动作。** 空目录只报告。撤销可移除本次创建且仍为空的目录；显式跨卷移动验证目标副本后清理其原件。
-- **不为整理好看而动结构。** 目标是"以后找得到"。
-- **不猜。** 拿不准就 `uncertain`，报给人。
-- **不把「乱」和「还没整理完」当同一件事。** 后者由用户标记为 `WORKSPACE`。
-
-## 核心概念
-
-### 最小单元
-
-按形态定边界，不靠语义推断：
-
-```
-游戏/软件     整个目录 = 1 单元（exe + 数据 + 存档绑定）
-已归类作品集  文件夹 = 1 单元
-散落文件      每个文件 = 1 单元
-容器         内部每个子项按上面判
-```
-
-### 归组
-
-**组 = 去向相同的单元集合。**
-
-归组能发现四类关系，这些关系单看一个目录永远看不到：
-
-| 关系 | 例子 |
-|---|---|
-| 集数互补 | 同一部剧被拆成两个目录，1-4 + 7-12 |
-| 多季多版本 | 同 IP 的多个季度 / 多套 BD |
-| 跨层重复 | 顶层与嵌套目录各一份 |
-| 形态类聚 | 来源形态一致但作品各异 |
+[安装](#安装) · [快速体验](#快速体验) · [整理自己的文件](#整理自己的文件) · [完整流程](FLOW.md)
 
 ## 安装
 
-```bash
-git clone <repo> packtidy
-```
-
-**Windows**：PowerShell 5.1+ 和 Python 3.9+。
-PowerShell 脚本使用 UTF-8 BOM，兼容 Windows PowerShell 5.1 和 PowerShell 7。
-`python` 必须在 PATH 中，且需要 Python 3.9+，无第三方必需依赖。
-
-**macOS / Linux**：可以直接调用 Python 工具及 `core/executor.py`；也可用 PowerShell 7 的入口。
-文件修改要求系统和文件系统支持原子“不覆盖”改名；不支持时停止，不退回可能覆盖目标的接口。
-当前完整集成验证在 Windows 完成，未在 macOS / Linux 实机运行。
-
-## 快速开始
-
-统一入口 `packtidy.py`。以下是主流程命令，其他命令可用 `--help` 查看。
+需要 Python 3.9 或更新版本。当前版本安装后使用 `packtidy` 命令。
 
 ```bash
-# 看盘上一级目录有什么（零成本，只读）
-python packtidy.py coverage /mnt/disk
-
-# 采集某个目录的信号（只读，输出事实）
-python packtidy.py scan /mnt/disk/some-dir --json
-
-# 从探针结果生成待批清单
-python packtidy.py plan /mnt/disk --dry-run
-
-# 生成连线工作台（自动读取已有的 decisions.json）
-python packtidy.py ui /mnt/disk --open
-
-# 执行 / 撤销 / 中断恢复
-python packtidy.py apply /mnt/disk --actions plan.tsv --dry-run --receipt plan.packtidy-receipt.json
-python packtidy.py undo --journal /mnt/disk/_organize/journal.tsv --last --dry-run
-python packtidy.py recover /mnt/disk
+git clone https://github.com/yeye45/tidy-file-tree.git
+cd tidy-file-tree
+python -m pip install .
+packtidy --help
 ```
 
-也可以直接用模块：`python core/signals.py <dir> --json`
+也可以直接运行 `python packtidy.py`。Windows 用户可使用 `scripts/` 中的 PowerShell 封装，支持 Windows PowerShell 5.1 和 PowerShell 7。
 
-`plan` 和 `ui` 读取 AI 代理执行 `references/probe-task.md` 等任务时生成的 `_organize/probe/*.json`。
-工作台左侧是分组和单元，右侧是目标。拖动圆点或依次点选两端即可连线。整组连线只填未分配项，需要重设时用「覆盖整组去向」。点线或用「断开」可解除分配，顶部按钮可撤销或重做本次打开页面以来的连线操作。展开分组可看验证级别、规则证据与已回填的 AI 判断链。`--decisions` 可指定另存的 S4 结果。
+## 快速体验
 
-工作台可以下载复核清单及四列动作表。动作表只包含已有明确去向且能与 S2 清点核对的单元。复核时也可把手动纠正的建议导出为本地样本，补写「这是什么」后留作分类回归。
+选择一个已有目录，查看文件类型、连续编号或程序布局等线索。下面是 Windows 路径示例。
 
-需要让纠正样本参与规则回归时，可参考 `cases/baseline.json` 里的 ComfyUI 和语音工具链用例，把纠正后的去向写入独立用例的 `expectTarget`，并保留当时容易混淆的候选区，再运行 `python packtidy.py verify run <本地用例.json>`。
-
-`plan` 默认读取根目录下的 `_organize/policy.json`。`--policy` 可覆盖审批设置并追加禁区，根目录的保护规则仍然生效。
-再次生成计划时，如果已有 `plan.tsv` 且没有可批准动作，会把它更新为空表。
-
-## 一个完整的例子
-
-```bash
-# 1. 先看有没有遗漏（每次阶段结束都该跑）
-python packtidy.py coverage /mnt/disk
-#   → 列出哪些节点没有探针、哪些没清点、哪些没归组
-
-# 2. 看某个目录到底是什么
-python packtidy.py scan /mnt/disk/新建文件夹
-#   → [结构绑定] Unity 布局 exe + _data/
-#   → [到达聚集] 73% 同秒 (2025-01-24 18:18:28)
-#   → [构成] 6 文件 / 1 目录 / 2 种类型
-
-# 3. 打开工作台，确认去向并下载动作表
-python packtidy.py ui /mnt/disk --open
-
-# 4. 先预演，再执行
-python packtidy.py apply /mnt/disk --actions plan.tsv --dry-run --receipt plan.packtidy-receipt.json
-python packtidy.py apply /mnt/disk --actions plan.tsv --receipt plan.packtidy-receipt.json
-
-# 5. 不满意就撤
-python packtidy.py undo --journal /mnt/disk/_organize/journal.tsv --last
+```powershell
+packtidy scan "D:\待整理" --json
 ```
+
+### 试用连线工作台
+
+在项目目录运行下面的 PowerShell 命令，生成一份虚构样本并打开工作台。可以练习连线、改变去向和查看复核清单。
+
+```powershell
+$demo = New-Item -ItemType Directory -Path ("tidy-file-tree-demo-" + [guid]::NewGuid())
+python tests/make_fixture.py $demo.FullName
+packtidy ui (Join-Path $demo.FullName "root") --open
+```
+
+## 整理自己的文件
+
+1. **确定整理范围。** 用 `packtidy setup ask <目录>` 查看需要确认的分类偏好和保护路径，用 `packtidy setup apply <目录> answers.json` 保存答案。先登记工作区、他人文件和凭据的保护标记。
+2. **判断哪些文件该一起处理。** 让 AI 代理按 [SKILL.md](SKILL.md) 做探针、清点和归组。软件和它的运行资源可以计作一个单元，互不相关的下载文件可以逐项处理。阶段记录存入 `_organize/probe/`，用 `packtidy coverage <目录>` 查漏。
+3. **在工作台确认去向。** 运行 `packtidy decisions <目录>` 生成建议，再运行 `packtidy ui <目录> --open`。把左侧分组或单元连到右侧目标，查看证据后下载动作表。可执行条目须有明确去向，并能与清点记录核对。
+4. **先预演，再执行。** 按下方示例用 `--dry-run --receipt` 写出预演清单。核对后，去掉 `--dry-run`，使用同一份清单执行。完成后可按日志撤销，中断时用 `recover` 检查和恢复。
+
+### AI 判断与保护标记
+
+- 用 `packtidy decisions <目录> --need-ai` 导出待判断的组，交给 AI 代理补充依据，再用 `--answers` 回填。有待判断的组时，命令会输出 JSON 并返回退出码 1。工作台可显示验证级别、规则依据和已回填的判断。 [AI 复核流程](FLOW.md#ai-介入)
+- 用 `scripts/markers.ps1` 把保护写入 `_organize/markers.tsv`。常见标记有 `NO_TOUCH`（明确保留）、`WORKSPACE`（正在整理）、`FOREIGN`（他人资料）和 `SECRET`（凭据）。 [标记用法](SKILL.md#标记用户会忘所以文件得记住)
+
+### 预演与执行示例
+
+假设你已下载并核对 `packtidy-actions.tsv`，在它所在的目录执行。第二条命令会按动作表移动或改名。
+
+```powershell
+packtidy apply "D:\待整理" --actions packtidy-actions.tsv --dry-run --receipt plan.packtidy-receipt.json
+packtidy apply "D:\待整理" --actions packtidy-actions.tsv --receipt plan.packtidy-receipt.json
+```
+
+要预演撤销最近一批操作，可以运行 `packtidy undo --journal "D:\待整理\_organize\journal.tsv" --last --dry-run`。核对撤销内容后，去掉 `--dry-run` 执行。
 
 ## 动作表格式
+
+`packtidy plan <目录> --dry-run` 根据探针和 `_organize/policy.json` 预览可批准的动作。`--policy` 可以覆盖审批设置并追加禁区。重新生成计划时，如果没有可批准的动作，已有的 `plan.tsv` 会被更新为空表。
 
 `--receipt` 在预演时将源身份和最终落点写入一个新 JSON 文件，在正式执行时核对同一份清单。发现拦截项、源被替换或最终落点变化时，整份清单会在启动文件移动前停止。清单请放在现有工作目录里，重新预演时换一个文件名。
 
@@ -224,7 +157,7 @@ reason 列使用 JSON 保存人工依据、事务编号、文件身份和逆操�
 
 ## 已知限制
 
-- **不做内容语义判断。** 它不知道"这张照片拍的是什么"，只知道文件结构。
+- **扫描证据以文件名和目录结构为主。** 照片画面、音视频对白等内容需要额外的识别工具。
 - **跨平台尚未完整验证。** Windows PowerShell 5.1/7 已做集成测试，macOS/Linux 接口未实机验证。
 - **跨卷对象限制。** 当前支持 Windows 本地 NTFS 固定磁盘。跨卷移动接受可保真的普通文件和目录，遇到重解析点、硬链接、备用数据流、扩展属性或权限不匹配会停止。会核对可查询权限，审计 SACL 不在保真范围。
 - **日志不是备份。** 对象被外部替换、日志历史分歧或其他无法证明的状态需要人工核对，不猜测恢复。
@@ -234,6 +167,8 @@ reason 列使用 JSON 保存人工依据、事务编号、文件身份和逆操�
 - **不检测损坏。** 截断的文件、不完整的分卷，只标记不修复。
 
 ## 测试
+
+工作台可以导出人工纠正的分类样本。参考 [分类基准](cases/baseline.json) 记录期望去向，再运行 `packtidy verify run <本地用例.json>`。
 
 ```bash
 python -B -m unittest discover -s tests -v
