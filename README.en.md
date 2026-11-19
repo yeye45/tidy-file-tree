@@ -8,11 +8,11 @@ TidyFileTree is an open-source file organizer for download folders, media librar
 
 Local tools collect structural evidence. An AI agent can use it to identify what belongs together, suggest destinations, and flag uncertain cases. Review the proposed assignments in an offline browser board, preview the file actions, then apply them with the same preview receipt. The journal supports undo and recovery.
 
-[Install](#install) · [Try the review board](#try-the-review-board) · [Organize your own files](#organize-your-own-files)
+[Project site](https://yeye45.github.io/tidy-file-tree/en.html) · [Install](#install) · [Try the review board](#try-the-review-board) · [Organize your own files](#organize-your-own-files)
 
 [![TidyFileTree review board. Recordings and episodes are assigned to destination folders, while the game runtime stays in place.](site/assets/board-en.png)](site/assets/board-en.png)
 
-The screenshot uses fictional folders. From the checkout, open `site/en.html` in your browser to view the [English introduction page](site/en.html), or open `site/index.html` for Chinese.
+The screenshot uses fictional folders.
 
 ## Install
 
