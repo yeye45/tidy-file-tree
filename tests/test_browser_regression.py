@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 try:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import expect, sync_playwright
 except ImportError:  # Keep the ordinary unit suite dependency-free.
     sync_playwright = None
 
@@ -24,6 +24,79 @@ from ui import group_key
 
 @unittest.skipIf(sync_playwright is None, "install the browser extra: pip install playwright")
 class BrowserRegression(unittest.TestCase):
+    def test_scan_drafts_export_ai_questions_and_import_only_current_answers(self):
+        with tempfile.TemporaryDirectory(prefix=".packtidy-browser-ai-", dir=PROJECT) as temp:
+            root = Path(temp) / "library"
+            for title, season_episodes in (("Sky", (1, 1)), ("Morning", (1, 2))):
+                for index, episode in enumerate(season_episodes):
+                    batch = root / title / f"fixture-batch-{index}"
+                    batch.mkdir(parents=True)
+                    (batch / f"{title}.S01E{episode:02}.mkv").touch()
+            before = sorted(root.rglob("*"))
+            env = os.environ.copy()
+            if env.get("PACKTIDY_BROWSER_USE_INSTALLED") != "1":
+                env["PYTHONPATH"] = str(PROJECT) + os.pathsep + env.get("PYTHONPATH", "")
+            env["LOCALAPPDATA"] = str(Path(temp) / "appdata")
+            env["XDG_STATE_HOME"] = str(Path(temp) / "state")
+            command = [sys.executable, "-m", "tidy_file_tree", "scan", str(root), "--tree", "--no-open", "--lang", "en"]
+            with subprocess.Popen(command, cwd=temp, env=env, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace") as server:
+                try:
+                    url = server.stdout.readline().strip()
+                    self.assertTrue(url.startswith("http://127.0.0.1:"), url)
+                    with sync_playwright() as p:
+                        chrome = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+                        edge = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+                        executable = chrome if chrome.is_file() else edge if edge.is_file() else None
+                        browser = p.chromium.launch(executable_path=str(executable) if executable else None)
+                        page = browser.new_page(accept_downloads=True)
+                        page.set_default_timeout(5000)
+                        page.goto(url)
+                        page.locator("#ai-export").wait_for()
+                        with page.expect_download() as download:
+                            page.locator("#ai-export").click()
+                        questions = json.loads(download.value.path().read_text(encoding="utf-8"))
+                        [question] = questions["questions"]
+                        self.assertEqual(question["title"], "Sky")
+                        self.assertNotIn("fixture-batch-", json.dumps(questions))
+                        answer = {
+                            "id": question["id"], "hypothesis": "These may be different editions.",
+                            "verification": {"method": "Compare names", "findings": "Two candidates for episode 1"},
+                            "confirmation": {"recommendation": "needs_more_evidence", "confidence": "medium",
+                                             "why": "The episode numbers overlap.", "residualRisk": "Edition is unknown."},
+                        }
+                        staged_answers = Path(temp) / "answers.json"
+                        duplicate = {**answer, "id": "duplicate-id"}
+                        staged_answers.write_text(json.dumps({
+                            "format": questions["answerFormat"]["format"],
+                            "answers": [answer, {**answer, "id": "unmatched-id"}, duplicate, duplicate],
+                        }), encoding="utf-8")
+                        page.locator("#draft-node").select_option(label="Morning")
+                        page.locator("#ai-file").set_input_files(str(staged_answers))
+                        notice = page.locator("#ai-message")
+                        expect(notice).to_have_text("Imported 1 · invalid or duplicate 2 · unmatched to this scan 1")
+                        self.assertEqual(page.locator("#draft-node option:checked").inner_text(), "Sky")
+                        self.assertIn("Needs review", page.locator("#drafts details summary").inner_text())
+                        self.assertIn(answer["verification"]["findings"], page.locator(".ai-review").inner_text())
+                        page.locator("#rescan").click()
+                        expect(page.locator("#ai-count")).to_have_text("AI review · 1 of 1 answered")
+
+                        source = root / "Sky/fixture-batch-0/Sky.S01E01.mkv"
+                        changed = source.with_name("Sky.S01E01.alt.mkv")
+                        source.rename(changed)
+                        try:
+                            page.locator("#rescan").click()
+                            expect(page.locator("#ai-count")).to_have_text("AI review · 0 of 1 answered")
+                            page.locator("#ai-file").set_input_files(str(staged_answers))
+                            expect(notice).to_have_text("Imported 0 · invalid or duplicate 2 · unmatched to this scan 2")
+                        finally:
+                            changed.rename(source)
+                        browser.close()
+                finally:
+                    if server.poll() is None:
+                        server.terminate()
+            self.assertEqual(sorted(root.rglob("*")), before)
+
     def test_review_board_to_receipted_apply_and_undo(self):
         with tempfile.TemporaryDirectory(prefix=".packtidy-browser-", dir=PROJECT) as temp:
             root = Path(temp) / "library"

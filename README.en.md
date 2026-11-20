@@ -47,6 +47,8 @@ Run `tidy-file-tree scan "D:\ToSort" --tree` to open a live directory tree in yo
 
 After scanning, files with explicit season and episode numbers appear in an episode inventory draft. When episodes from the same season are spread across sibling folders, their parent shows a grouping draft with the source and proposed destination of each video and matching subtitle. If the parent is the series folder, the draft suggests moving the files up one level. Otherwise, it suggests a series folder under the shared parent. Name conflicts, duplicate episodes, and ambiguous subtitles are flagged for review. You can download the drafts as JSON. The move preview displays paths only.
 
+After scanning, grouping drafts flagged for review automatically get AI questions. **Export AI review questions** downloads a JSON file with conflict descriptions, episode and naming distributions, and up to eight representative filenames per group. Source folders are identified by number. Give the file to your AI agent, then use **Import AI answers** to view its hypothesis, verification, and conclusion at the corresponding node. Approval stays with the user. Rescanning in the same tab keeps answers for unchanged drafts. You can reimport a saved answer file after reopening the page.
+
 `--depth N` sets the maximum scan depth (default 3). The page indicates when a sampling limit is reached. Use `--lang en` for the English interface, and press `Ctrl+C` to stop the local server.
 
 ```powershell

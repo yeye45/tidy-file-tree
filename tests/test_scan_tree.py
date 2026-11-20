@@ -113,6 +113,47 @@ class ScanTreeTests(unittest.TestCase):
         self.assertIn('incompleteGroup', draft['issues'])
         self.assertFalse(any(event['event'] == 'draft' for event in self.stream(depth=1)))
 
+    def test_ai_questions_are_bounded_and_bound_to_observed_names(self):
+        for name, start in [('BATCH_ONE', 1), ('BATCH_TWO', 11)]:
+            for episode in range(start, start + 10):
+                self.fixture_file('Star Train', name, f'Star.Train.S01E{episode:02}.mkv')
+            self.fixture_file('Morning', name, f'Morning.S01E{start:02}.mkv')
+        self.fixture_file('Star Train', 'BATCH_TWO', 'Star.Train.S01E01.2160p.mp4')
+        hidden = self.fixture_file('Star Train', 'BATCH_TWO', 'PRIVATE_EPISODE_SAMPLE.S01E30.mkv')
+        self.markers(self.root, (hidden, 'SECRET'))
+
+        def question():
+            [item] = [event['reviewQuestion'] for event in self.stream() if 'reviewQuestion' in event]
+            return item
+
+        item = question()
+        data = json.dumps(item)
+        for secret in (json.dumps(str(self.root))[1:-1], 'BATCH_ONE', 'BATCH_TWO', hidden.name):
+            self.assertNotIn(secret, data)
+        evidence = item['evidence']
+        self.assertEqual(evidence['videos'], 21)
+        self.assertEqual(evidence['episodes']['duplicateExamples'], [1])
+        self.assertEqual(evidence['sourceRanges'][0], {'folder': 1, 'videos': 10, 'min': 1, 'max': 10})
+        self.assertLessEqual(len(evidence['sampleFiles']), 8)
+        self.fixture_file('AAA-other-directory', 'hello.txt')
+        self.assertEqual(question(), item)
+        unnamed = self.root / 'Star Train/BATCH_ONE/Star.Train.S01E06.mkv'
+        unnamed.rename(unnamed.with_name('Star_Train.S01E06.mkv'))
+        changed = question()
+        self.assertEqual(changed['evidence'], evidence)
+        self.assertNotEqual(changed['id'], item['id'])
+
+    def test_review_ranges_cover_sampled_folders_beyond_the_first_eight(self):
+        for index in range(1, 11):
+            self.fixture_file('Sky', f'Batch {index:02}', f'Sky.S01E{index:02}.mkv')
+        self.fixture_file('Sky', 'Batch 10', 'Sky.S01E01.mp4')
+        [evidence] = [event['reviewQuestion']['evidence'] for event in self.stream() if 'reviewQuestion' in event]
+        samples = {item['folder'] for item in evidence['sampleFiles']}
+        ranges = {item['folder'] for item in evidence['sourceRanges']}
+        self.assertIn(10, samples)
+        self.assertLessEqual(samples, ranges)
+        self.assertLessEqual(len(ranges), 8)
+
     def test_shallow_classification_and_scoped_protection(self):
         series = self.root / 'Episodes'
         series.mkdir()
