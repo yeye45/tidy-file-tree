@@ -1,0 +1,224 @@
+<!doctype html>
+<!-- TidyFileTree execution history -->
+<html lang="__HISTORY_LANG__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<title>TidyFileTree</title>
+<style>
+:root{color-scheme:light dark;--canvas:#f1f5fb;--paper:#fff;--ink:#182742;--muted:#50627a;--line:#d1deef;--soft:#edf3fa;--accent:#2554b4;--good:#15684f;--warn:#854700}
+@media(prefers-color-scheme:dark){:root{--canvas:#111925;--paper:#192538;--ink:#eef5ff;--muted:#b0bfd3;--line:#374b64;--soft:#223149;--accent:#a8caff;--good:#90e0bd;--warn:#ffce93}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--ink);font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif}
+header{background:#172f57;color:#f7faff;padding:24px max(20px,calc((100% - 1080px)/2))}
+header h1{font-size:clamp(23px,4vw,33px);margin:0}
+header p{color:#c8d9f4;margin:6px 0 0;overflow-wrap:anywhere}
+main{max-width:1120px;margin:auto;padding:21px 20px 46px}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin:0 0 15px}
+.summary>div,.filters,.operation{background:var(--paper);border:1px solid var(--line);border-radius:10px}
+.summary>div{padding:12px 15px}
+.summary dt{color:var(--muted)}
+.summary dd{font-size:24px;font-variant-numeric:tabular-nums;font-weight:700;margin:1px 0 0}
+.filters{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) minmax(0,.65fr);gap:12px;padding:14px}
+.filters label{display:grid;gap:4px;color:var(--muted);min-width:0}
+.filters [hidden]{display:none}
+.filters.preview{grid-template-columns:minmax(0,1fr)}
+input,select,button{color:var(--ink);font:inherit;border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:7px 9px}
+input,select{width:100%;min-width:0}
+button{cursor:pointer}
+button:disabled{opacity:.55;cursor:default}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.muted,footer{color:var(--muted)}
+.notice{margin:0 0 12px;padding:8px 11px;background:var(--soft);border-left:3px solid var(--warn);border-radius:4px;color:var(--warn)}
+.notice ul{margin:5px 0;padding-left:20px;overflow-wrap:anywhere}
+#result{margin:12px 0}
+.operation{margin:0 0 10px;padding:13px 15px;scroll-margin-top:10px}
+.operation:focus{outline:2px solid var(--accent)}
+.operation h3{margin:0;font-size:15px}
+.op-head{display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap}
+.tag{border:1px solid var(--line);border-radius:5px;background:var(--soft);padding:1px 6px;font-size:12px;color:var(--muted)}
+.tag.done,.steps .done{color:var(--good)}
+.tag.pending,.tag.aborted,.tag.failed,.steps .aborted,.steps .failed{color:var(--warn)}
+.route{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:center;margin:9px 0 0}
+.route dl{background:var(--soft);border-radius:6px;margin:0;padding:6px 9px;min-height:50px}
+.route dt{color:var(--muted);font-size:11px}
+.route dd{margin:0;overflow-wrap:anywhere}
+.route span{color:var(--accent);font-size:20px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(145px,100%),1fr));list-style:none;margin:11px 0 0;padding:0;color:var(--muted);font-size:12px}
+.steps li{--dot:currentColor;position:relative;border-top:1px solid var(--line);padding:7px 8px 0 0;min-width:0;overflow-wrap:anywhere}
+.steps li::before{content:"";position:absolute;top:-4px;left:0;width:7px;height:7px;background:var(--dot);border-radius:50%}
+.steps strong{display:block}
+.steps time{color:var(--muted)}
+.related{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.related button{font-size:12px;color:var(--accent);padding:3px 7px}
+.parents{font-size:12px;margin-top:8px;overflow-wrap:anywhere}
+.pages{display:flex;justify-content:center;align-items:center;gap:10px;margin:14px 0}
+.pages[hidden]{display:none}
+footer{margin-top:18px;font-size:12px}
+@media(max-width:630px){.summary{grid-template-columns:repeat(2,minmax(0,1fr))}.filters{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:410px){.route{grid-template-columns:minmax(0,1fr);gap:3px}.route span{transform:rotate(90deg);width:20px;justify-self:center}}
+</style>
+</head>
+<body>
+<header><h1 id="title"></h1><p id="root"></p></header>
+<main>
+  <dl class="summary" id="summary"></dl>
+  <p class="notice" id="mirror" hidden></p>
+  <p class="notice" id="hidden" hidden></p>
+  <section class="notice" id="blockers" hidden></section>
+  <section class="filters" id="filters">
+    <label><span id="batchLabel"></span><select id="batch"></select></label>
+    <label><span id="searchLabel"></span><input id="search" type="search"></label>
+    <label><span id="statusLabel"></span><select id="status"></select></label>
+  </section>
+  <p class="muted" id="result" role="status"></p>
+  <section id="operations"></section>
+  <nav class="pages" id="pages" hidden><button id="previous"></button><span id="pageNumber"></span><button id="next"></button></nav>
+  <footer id="snapshot"></footer>
+</main>
+<script type="application/json" id="historyData">__HISTORY_DATA__</script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const data = JSON.parse($('historyData').textContent);
+const en = document.documentElement.lang === 'en';
+const preview = data.mode === 'preview';
+const labels = {
+  title:['TidyFileTree · 执行历史','TidyFileTree · Execution history'],
+  previewTitle:['TidyFileTree · 执行预演','TidyFileTree · Execution preview'],
+  ready:['拟执行','Planned'], eligible:['通过预检','Passed preflight'], blocked:['预检拦截','Blocked'],
+  blockers:['按动作编号核对以下拦截项，修正后重新预演。','Check these blockers by action number and run the preview again.'],
+  blockedReceipt:['整份清单已拦截。修正以下动作后，再重新预演并生成执行清单。','The entire batch is blocked. Fix these actions and preview again to generate an execution receipt.'],
+  parents:['可能新建的父目录','Parent directories to be created'],
+  previewFrom:['来源','Source'], previewTo:['预计最终落点','Expected final destination'],
+  previewSnapshot:['执行前的预检快照 · {time}。','Preflight snapshot captured before execution · {time}.'],
+  previewSearch:['搜索通过预检的动作','Search actions that passed preflight'], previewHint:['路径或动作编号','Path or action number'],
+  previewResult:['显示 {count} 项拟执行动作','{count} proposed actions'],
+  eligibleResult:['{count} 项通过预检，整份清单仍被拦截','{count} actions passed preflight; the batch is blocked'],
+  previewEmpty:['没有通过预检的拟执行动作。','No proposed actions passed preflight.'],
+  batches:['记录批次','Batches'], done:['已完成','Completed'], pending:['未完成','Open'],
+  aborted:['已取消','Cancelled'], failed:['失败','Failed'], other:['其他记录','Other record'],
+  otherStates:['其他状态','Other states'], mirror:['本机镜像缺失、无法读取或与主日志不一致。此页显示主日志，任务结束后请重新生成并核对。','The local mirror is missing, unreadable, or differs from the primary journal. This snapshot shows the primary journal. Regenerate it after the task finishes.'],
+  hidden:['有 {count} 项因保护规则或无法核对跨卷保护状态而隐藏。','{count} operations are hidden by protection rules or because cross-volume protection could not be checked.'],
+  batchLabel:['批次','Batch'], searchLabel:['搜索日志','Search history'], searchHint:['路径、批次号或日志编号','Path, batch ID, or journal number'],
+  statusLabel:['状态','Status'], all:['全部状态','All states'], noBatch:['无匹配批次','No matching batch'],
+  move:['移动','Move'], 'cross-move':['跨卷移动','Cross-volume move'], rename:['改名','Rename'], mkdir:['新建目录','Create directory'],
+  note:['日志备注','Journal note'], undo:['撤销','Undo'], redo:['重做','Redo'],
+  from:['原路径','Source'], to:['记录的落点','Recorded destination'], prepared:['已记准备记录','Prepare recorded'],
+  recover:['恢复时记入','Recorded by recovery'],
+  original:['原操作 #{seq}','Original operation #{seq}'], related:['后续相关操作 #{seq}','Related later operation #{seq}'],
+  result:['此批次显示 {count} 项','{count} operations in this batch'],
+  empty:['主日志暂无可显示的执行操作。','The primary journal has no visible operations.'],
+  noMatch:['没有符合筛选条件的操作。','No operations match the filters.'],
+  previous:['上一页','Previous'], next:['下一页','Next'],
+  snapshot:['只读快照 · {time}。未完成表示快照中尚无完成记录，操作可能仍在进行。','Read-only snapshot · {time}. Open operations have no recorded completion yet and may still be running.'],
+};
+const t = (key, values={}) => labels[key][Number(en)].replace(/\{([a-z]+)\}/g, (_, name) => values[name]);
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const time = value => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(en ? 'en' : 'zh-CN', {hour12:false});
+};
+const current = operation => operation.events[operation.events.length - 1]
+  ?? {status:'ready',seq:operation.id,time:data.captured};
+const bySeq = new Map();
+const successors = new Map();
+const batchLatest = new Map();
+const totals = {done:0,pending:0,otherStates:0};
+const pageSize = 24;
+let page = 0;
+
+for (const op of data.operations) {
+  const last = current(op);
+  for (const event of op.events) bySeq.set(event.seq, op);
+  if (op.inverseOf) {
+    if (!successors.has(op.inverseOf)) successors.set(op.inverseOf, []);
+    successors.get(op.inverseOf).push(op.id);
+  }
+  if (!batchLatest.has(op.run) || batchLatest.get(op.run).seq < last.seq) batchLatest.set(op.run,last);
+  totals[last.status === 'done' || last.status === 'pending' ? last.status : 'otherStates']++;
+}
+const batches = [...batchLatest.keys()].sort((a,b) => batchLatest.get(b).seq - batchLatest.get(a).seq);
+
+function operationCard(op) {
+  const last = current(op);
+  const kind = t(op.kind);
+  const heading = preview ? `#${op.id} · ${kind}` : op.direction ? t(op.direction) + ' · ' + kind : kind;
+  const path = (label, value) => `<dl><dt>${t(label)}</dt><dd>${esc(value || '—')}</dd></dl>`;
+  const route = op.before || op.after
+    ? `<div class="route">${path(preview ? 'previewFrom' : 'from',op.before)}<span aria-hidden="true">→</span>${path(preview ? 'previewTo' : 'to',op.after)}</div>` : '';
+  const parents = op.parents?.length ? `<div class="parents muted">${t('parents')} · ${op.parents.map(esc).join(' · ')}</div>` : '';
+  const events = op.events.map(event => `<li class="${event.status}"><strong>${t(event.status === 'pending' ? 'prepared' : event.status)} · #${event.seq}</strong><time>${esc(time(event.time))}</time>${event.recovered ? ' · ' + t('recover') : ''}</li>`).join('');
+  const links = op.events.flatMap(event => (successors.get(event.seq) || []).map(seq => ({seq,label:'related'})));
+  if (op.inverseOf) links.unshift({seq:op.inverseOf,label:'original'});
+  const related = links.map(({seq,label}) => `<button type="button" data-seq="${seq}">${t(label,{seq})}</button>`).join('');
+  return `<article class="operation" id="operation-${op.id}" tabindex="-1">
+    <div class="op-head"><h3>${heading}</h3><span class="tag ${last.status}">${t(data.receiptBlocked ? 'eligible' : last.status)}</span></div>
+    ${route}${parents}${events ? `<ol class="steps">${events}</ol>` : ''}${related ? `<div class="related">${related}</div>` : ''}</article>`;
+}
+
+function render(jump) {
+  const query = $('search').value.trim().toLocaleLowerCase();
+  const status = preview ? 'all' : $('status').value;
+  const matches = data.operations.filter(op =>
+    (status === 'all' || current(op).status === status) &&
+    (!query || [op.run,op.before,op.after].some(value => value?.toLocaleLowerCase().includes(query)) ||
+      (preview ? String(op.id) === query.replace(/^#/, '') :
+        op.events.some(event => String(event.seq) === query.replace(/^#/, '')))));
+  const available = new Set(matches.map(op => op.run));
+  const selected = jump?.run ?? $('batch').value;
+  $('batch').innerHTML = batches.filter(run => available.has(run)).map(run =>
+    `<option value="${esc(run)}">${esc(time(batchLatest.get(run).time))} · ${esc(run || '—')}</option>`).join('')
+      || `<option>${t('noBatch')}</option>`;
+  if (available.has(selected)) $('batch').value = selected;
+  $('batch').disabled = !matches.length;
+  const entries = preview ? matches : matches.filter(op => op.run === $('batch').value);
+  const numPages = Math.max(1,Math.ceil(entries.length / pageSize));
+  if (jump) page = Math.max(0,Math.floor(entries.indexOf(jump) / pageSize));
+  page = Math.max(0,Math.min(page,numPages-1));
+  $('result').textContent = entries.length ? t(preview ? (data.receiptBlocked ? 'eligibleResult' : 'previewResult') : 'result',{count:entries.length}) :
+    t(data.operations.length ? 'noMatch' : preview ? 'previewEmpty' : 'empty');
+  $('operations').innerHTML = entries.slice(page * pageSize,(page + 1) * pageSize).map(operationCard).join('');
+  $('pages').hidden = numPages === 1;
+  $('pageNumber').textContent = `${page + 1} / ${numPages}`;
+  $('previous').disabled = page === 0;
+  $('next').disabled = page + 1 >= numPages;
+  if (jump) $(`operation-${jump.id}`)?.focus();
+}
+
+for (const id of ['batchLabel','searchLabel','statusLabel','previous','next']) $(id).textContent = t(id);
+document.title = $('title').textContent = t(preview ? 'previewTitle' : 'title');
+$('root').textContent = data.root;
+$('search').placeholder = t(preview ? 'previewHint' : 'searchHint');
+$('status').innerHTML = ['all','done','pending','aborted','failed','other'].map(key => `<option value="${key}">${t(key)}</option>`).join('');
+const summary = preview ? {[data.receiptBlocked ? 'eligible' : 'ready']:data.operations.length,blocked:data.blocked.length} : {batches:batches.length,...totals};
+$('summary').innerHTML = Object.entries(summary).map(([key,value]) => `<div><dt>${t(key)}</dt><dd>${value}</dd></div>`).join('');
+$('mirror').textContent = t('mirror');
+$('mirror').hidden = !data.mirrorDiffers;
+$('hidden').textContent = t('hidden',{count:data.hidden ?? 0});
+$('hidden').hidden = !data.hidden;
+$('snapshot').textContent = t(preview ? 'previewSnapshot' : 'snapshot',{time:time(data.captured)});
+if (preview) {
+  $('filters').classList.add('preview');
+  $('batch').parentElement.hidden = $('status').parentElement.hidden = true;
+  $('searchLabel').textContent = t('previewSearch');
+  if (data.blocked.length) {
+    $('blockers').innerHTML = `<strong>${t(data.receiptBlocked ? 'blockedReceipt' : 'blockers')}</strong><ul>${data.blocked.map(message => `<li>${esc(message)}</li>`).join('')}</ul>`;
+    $('blockers').hidden = false;
+  }
+}
+for (const id of ['search','status','batch']) $(id).addEventListener(id === 'search' ? 'input' : 'change',() => {page = 0; render();});
+$('previous').addEventListener('click',() => {page--; render();});
+$('next').addEventListener('click',() => {page++; render();});
+$('operations').addEventListener('click',event => {
+  const op = bySeq.get(Number(event.target.closest('[data-seq]')?.dataset.seq));
+  if (!op) return;
+  $('search').value = '';
+  $('status').value = 'all';
+  render(op);
+});
+render();
+</script>
+</body>
+</html>

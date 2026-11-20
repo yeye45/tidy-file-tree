@@ -41,6 +41,18 @@ Use the language selector at the top of the board to switch between English and 
 
 ## Organize your own files
 
+### Live directory tree scan
+
+Run `tidy-file-tree scan "D:\ToSort" --tree` to open a live directory tree in your browser. Nodes branch from left to right and show the scan status and folder type. Types come from immediate directory structure and naming evidence, with uncertain types marked as candidates. This read-only view supports human or AI review and leaves directory sizes uncalculated.
+
+After scanning, files with explicit season and episode numbers appear in an episode inventory draft. When episodes from the same season are spread across sibling folders, their parent shows a grouping draft with the source and proposed destination of each video and matching subtitle. If the parent is the series folder, the draft suggests moving the files up one level. Otherwise, it suggests a series folder under the shared parent. Name conflicts, duplicate episodes, and ambiguous subtitles are flagged for review. You can download the drafts as JSON. The move preview displays paths only.
+
+`--depth N` sets the maximum scan depth (default 3). The page indicates when a sampling limit is reached. Use `--lang en` for the English interface, and press `Ctrl+C` to stop the local server.
+
+```powershell
+tidy-file-tree scan "D:\ToSort" --tree --depth 4 --lang en
+```
+
 1. **Set the scope.** Run `tidy-file-tree setup ask "D:\ToSort"` to see the setup questions. Record protected folders and files before inspecting the directory. See the [workflow guide](FLOW.md) and [agent instructions](SKILL.md).
 2. **Inspect and group.** Start with `tidy-file-tree scan "D:\ToSort" --json` to inspect structural signals. The agent reads the task instructions, then records its findings in `_organize/probe/`.
 3. **Review the destinations.** Run `tidy-file-tree decisions "D:\ToSort"`, then `tidy-file-tree ui "D:\ToSort" --lang en --open`. Assign the confirmed groups or items, then download the actions table.
@@ -50,6 +62,14 @@ Use the language selector at the top of the board to switch between English and 
 tidy-file-tree apply "D:\ToSort" --actions tidy-file-tree-actions.tsv --dry-run --receipt plan.tidy-file-tree-receipt.json
 tidy-file-tree apply "D:\ToSort" --actions tidy-file-tree-actions.tsv --receipt plan.tidy-file-tree-receipt.json
 ```
+
+### Preview in the browser
+
+Add `--preview-html plan.html --lang en` to the dry-run command and open `plan.html` in your browser. Review proposed source paths, expected destinations, parent directories to be created, and preflight blockers. When using a receipt, pass the same JSON receipt to the apply command.
+
+### View execution history
+
+Run `tidy-file-tree history "D:\ToSort" --lang en --open` to review a timeline by batch, path, or journal number. Each entry shows recorded paths and stages and links related undo and redo operations. Run the command again to refresh the offline snapshot.
 
 To preview undoing the last run, use:
 

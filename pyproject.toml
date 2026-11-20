@@ -40,5 +40,5 @@ packages = ["core", "rules"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-core = ["wire_ui.html", "wire_ui.en.json"]
+core = ["wire_ui.html", "wire_ui.en.json", "history_ui.html", "scan_tree_ui.html"]
 rules = ["default.json"]

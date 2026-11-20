@@ -462,7 +462,7 @@ function showReview() {
   ];
   $('reviewStatus').textContent = r.conflicts.size
     ? t('来源有重复或父子冲突，请断开冲突连线后再下载动作表。')
-    : t('{actions} 个动作可下载，{pending} 项待连。请先用 --dry-run --receipt plan.tidy-file-tree-receipt.json 预演，再使用同一清单执行。',{actions:r.rows.length,pending:r.pending.length});
+    : t('{actions} 个动作可下载，{pending} 项待连。请先用 --dry-run --receipt plan.tidy-file-tree-receipt.json 预演，可加 --preview-html plan.html 生成图形预演。执行时使用同一份 JSON 清单。',{actions:r.rows.length,pending:r.pending.length});
   $('reviewText').textContent = sections.map(([name,items]) => `## ${name} (${items.length})\n${items.join('\n') || t('（无）')}`).join('\n\n');
   $('downloadActions').disabled = !exportRows.length;
   const changed = [];

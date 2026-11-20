@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TidyFileTree</title>
+<style>
+:root{color-scheme:light dark;--surface:light-dark(#fff,#17222f);--base:light-dark(#f4f7fa,#101b28);--ink:light-dark(#162639,#edf4fb);--muted:light-dark(#53677c,#abbdd0);--line:light-dark(#d8e3ec,#32495f);--wire:light-dark(#9eb0c1,#647d95);--blue:light-dark(#1b62a9,#a4ceff);--selected:light-dark(#edf5ff,#203a56);--green:light-dark(#11644b,#a3e4c8);--green-bg:light-dark(#eaf6ef,#213931);--purple:light-dark(#663990,#d8baf8);--purple-bg:light-dark(#f2ecfb,#37294a);--amber:light-dark(#824c11,#ffd19b);--amber-bg:light-dark(#fff2df,#453322)}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--base);color:var(--ink);font:14px/1.45 system-ui,"Microsoft YaHei",sans-serif}
+main{margin:20px auto;max-width:1320px;padding:0 16px}
+.workbench{background:var(--surface);border:1px solid var(--line);border-radius:13px;overflow:hidden}
+.brand,header,.details{padding:12px 17px}
+.brand{display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--line);font-size:16px;font-weight:650}
+.brand .folder{color:var(--blue)}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+h1,h2,p{margin:0}
+h1{font-size:22px}
+h2{font-size:16px;overflow-wrap:anywhere}
+.muted{color:var(--muted);overflow-wrap:anywhere}
+.summary{margin:0 17px 12px;font-size:13px}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+#rescan{border:1px solid var(--line);background:var(--surface);color:var(--blue);border-radius:7px;padding:7px 10px}
+.viewport{overflow:auto;max-height:64vh;min-height:355px;border-block:1px solid var(--line);background:var(--base);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:14px 14px}
+.board{--node-width:228px;--gap:36px;position:relative;min-width:100%;padding:15px}
+.wires{position:absolute;inset:0;pointer-events:none}
+.wire{position:absolute;background:var(--wire)}
+.wire.active{background:var(--blue)}
+.tree,.tree ul{list-style:none;margin:0;padding:0}
+.tree li{display:grid;grid-template-columns:var(--node-width) minmax(0,max-content);gap:var(--gap);align-items:center}
+.tree ul{display:grid;gap:8px}
+.node{display:grid;gap:4px;min-height:74px;width:100%;min-width:0;position:relative;text-align:left;padding:7px 9px;background:var(--surface);border:1px solid var(--line);border-radius:9px;overflow-wrap:anywhere}
+.node[aria-pressed="true"]{border-color:var(--blue);background:var(--selected)}
+.node-name{display:flex;align-items:baseline;gap:7px;font-weight:650}
+.folder{display:inline-block;position:relative;height:11px;width:15px;border:1px solid currentColor;border-radius:2px;color:var(--blue);flex:none}
+.folder::before{content:"";position:absolute;left:-1px;top:-4px;width:7px;height:4px;border:1px solid currentColor;border-bottom:0;border-radius:2px 2px 0 0}
+.badge{display:inline-flex;align-items:center;gap:5px;width:fit-content;max-width:100%;border-radius:12px;padding:2px 7px;font-size:12px;color:var(--muted);background:var(--base);overflow-wrap:anywhere}
+.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.badge.scanning{color:var(--blue);background:var(--selected)}
+.badge.judged{color:var(--green);background:var(--green-bg)}
+.badge.review{color:var(--purple);background:var(--purple-bg)}
+.badge.skipped,.badge.unreadable{color:var(--amber);background:var(--amber-bg)}
+.type{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;font-size:13px}
+.type span:first-child{color:var(--muted);font-size:12px}
+.type strong{font-weight:620}
+.details{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.55fr);gap:9px 16px;min-height:95px}
+.details dl{margin:0;display:grid;align-content:start;gap:5px}
+.details dl div{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px}
+.details dt{color:var(--muted);font-size:13px}
+.details dd{margin:0;overflow-wrap:anywhere}
+.draft-tools,.drafts{border-top:1px solid var(--line);padding:12px 17px}
+.draft-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.draft-tools button,.draft-tools select{font:inherit;color:var(--blue);background:var(--surface);padding:5px 8px;border:1px solid var(--line);border-radius:7px;max-width:100%}
+.drafts{display:grid;gap:9px;overflow-wrap:anywhere}
+.drafts details{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.drafts summary{cursor:pointer;font-weight:620}
+.drafts p,.drafts table{margin-top:6px}
+.drafts ul{margin:5px 0;padding-inline-start:20px}
+.drafts table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px}
+.drafts th,.drafts td{padding:5px 6px;text-align:left;vertical-align:top;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.drafts th{color:var(--muted)}
+.draft-tag{color:var(--blue);font-size:12px}
+@media(max-width:620px){
+  main{margin:8px auto;padding:0 7px}
+  .board{width:auto!important;padding:11px}
+  .viewport{min-height:0;max-height:58vh}
+  .wires{display:none}
+  .tree li{display:block;position:relative}
+  .tree ul{margin:7px 0 0 10px;padding:0 0 0 9px;border-left:1px solid var(--wire)}
+  .tree ul>li::before{content:"";width:9px;border-top:1px solid var(--wire);position:absolute;left:-9px;top:18px}
+  .node{min-height:0}
+  .details{grid-template-columns:minmax(0,1fr)}
+}
+</style>
+</head>
+<body>
+<main><section class="workbench">
+  <div class="brand"><span class="folder" aria-hidden="true"></span>TidyFileTree</div>
+  <header><div><h1 id="title"></h1><p class="muted" id="root"></p></div><button type="button" id="rescan"></button></header>
+  <p class="summary muted" id="summary" role="status"></p>
+  <div class="viewport"><div class="board" id="board"><div class="wires" id="wires" aria-hidden="true"></div><ul class="tree" id="tree"></ul></div></div>
+  <section class="details" id="details" aria-live="polite"></section>
+  <div class="draft-tools" id="draft-tools" hidden><label id="draft-label" for="draft-node" hidden></label><select id="draft-node" hidden></select><button type="button" id="draft-download"></button></div>
+  <section class="drafts" id="drafts" hidden></section>
+</section></main>
+<script type="application/json" id="config">__SCAN_CONFIG__</script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const config = JSON.parse($('config').textContent);
+const en = config.lang === 'en';
+document.documentElement.lang = config.lang;
+const labels = {
+  title:['目录判断树','Directory assessment tree'], restart:['重新扫描','Scan again'],
+  scan:['正在扫描','Scanning'], done:['扫描完成','Scan complete'], incomplete:['扫描完成 · 达到范围上限','Scan complete · scope limit reached'],
+  connection:['扫描连接中断','Scan connection interrupted'], stopped:['无法读取整理范围或保护配置','Unable to read the scan scope or its protection settings'],
+  summary:['{stage} · 已发现 {nodes} 个目录 · 深度 {depth} · 大小未统计','{stage} · {nodes} directories found · depth {depth} · sizes not calculated'],
+  queued:['待检查','Queued'], scanning:['正在扫描','Scanning'], judged:['已判断','Assessed'], review:['待复核','Needs review'],
+  skipped:['保护跳过','Protected · skipped'], unreadable:['无法读取','Unreadable'],
+  type:['类型','Type'], candidate:['候选类型','Candidate type'], unknown:['未判定','Undetermined'],
+  container:['容器目录','Folder container'], empty:['空目录','Empty folder'], runtime:['软件运行环境','Software runtime'],
+  game:['游戏运行目录','Game runtime'], vm:['虚拟机文件目录','Virtual machine files'],
+  images:['图片目录','Images'], videos:['视频目录','Videos'], series:['剧集目录','Episode collection'],
+  audio:['音频目录','Audio'], archives:['压缩包目录','Archives'], documents:['文档目录','Documents'],
+  basis:['判断依据','Evidence'], unity:['可执行文件与同名 _Data 目录成套出现。','An executable and its matching _Data folder are present.'],
+  runtimeBasis:['启动文件与运行资源目录成套出现。','Launcher files and runtime resources are present together.'],
+  vmBasis:['直接子项包含虚拟机磁盘文件。','Immediate entries include virtual disk files.'],
+  containerBasis:['已检查的这一层以子目录组织。','The inspected level is organized into subfolders.'],
+  emptyBasis:['已检查的这一层没有可见文件或子目录。','No visible files or subfolders were found at this level.'],
+  dominant:['根据这一层的文件后缀分布判断。','Based on the extension distribution at this level.'],
+  sequence:['发现编号序列 {range}，共 {count} 个不同编号。','Found number range {range} with {count} distinct values.'],
+  mixed:['当前结构线索不足以确认用途。','The available structural evidence is inconclusive.'],
+  counts:['本层线索','Immediate entries'], countValues:['{files} 个文件 · {folders} 个子目录','{files} files · {folders} subfolders'],
+  limited:['扫描范围','Scan scope'], cap:['该层已达到条目上限。','This level reached the entry limit.'],
+  exclusions:['保护跳过','Protected entries skipped'], protection:['保护原因','Protection reason'],
+  genericProtection:['命中保护规则或链接检查。','A protection rule or link check prevented scanning.'],
+  drafts:['归组草稿','Grouping drafts'], exportDrafts:['下载清点与归组草稿','Download inventory and grouping drafts'],
+  chooseDraft:['选择草稿所在节点','Choose a node with drafts'], draftCount:['{count} 条归组草稿','{count} grouping drafts'],
+  inventoryLabel:['剧集清点草稿','Episode inventory draft'],
+  inventory:['剧集清点草稿 · {count} 个视频','Episode inventory draft · {count} videos'],
+  unpaired:['待确认的字幕','Subtitles to review'], subtitle:['字幕','Subtitle'],
+  group:['{title} · 第 {season} 季 · {folders} 个关联目录','{title} · Season {season} · {folders} related folders'],
+  draftStatus:['草稿已生成','Draft generated'], groupReview:['待确认','Needs review'],
+  readOnly:['草稿根据文件名生成。下表使用相对于扫描根目录的路径。','Drafts are based on filenames. The table shows paths relative to the scan root.'],
+  source:['原路径','Source path'], target:['建议目标路径','Proposed destination'], blocked:['目标待确认','Destination needs review'],
+  incompleteGroup:['来源目录有跳过项，或本组扫描不完整。','Entries were skipped or the scan of this group is incomplete.'],
+  unpairedSubtitles:['有字幕无法唯一配对。','Some subtitles could not be paired unambiguously.'],
+  mixedBatch:['来源目录还有其他内容，需确认哪些文件应该一起整理。','Source folders contain other items. Confirm which files belong together.'],
+  versions:['视频命名后缀或格式有差异，需确认版本。','Filename suffixes or formats differ. Confirm editions.'],
+  duplicateEpisode:['发现重复集号。','Duplicate episode numbers found.'],
+  existingFolder:['建议的剧名目录已存在，需核对其中的文件。','The proposed series folder already exists. Review its contents.'],
+  blockedTarget:['部分目标路径受保护或无法使用。','Some destination paths are protected or unavailable.'],
+  nameConflict:['文件名在建议目标中有冲突。','There are filename conflicts at the proposed destination.'],
+};
+const t = (key, values={}) => labels[key][Number(en)].replace(/\{(\w+)\}/g, (_,name) => String(values[name] ?? ''));
+const esc = value => String(value ?? '').replace(/[&<>"']/g,c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const badge = status => '<span class="badge '+status+'">'+t(status)+'</span>';
+const nodes = new Map();
+const inventories = new Map();
+const drafts = new Map();
+let selected = null;
+let stream = null;
+let frame = 0;
+let overall = 'scan';
+let draftSelection;
+
+const separator = path => /^(?:[A-Za-z]:\\|\\\\)/.test(path) ? '\\' : '/';
+function relativePath(path) {
+  const root = nodes.get(0).path;
+  if (path === root) return '.';
+  const boundary = root.replace(/[\\/]$/, '')+separator(root);
+  return path.startsWith(boundary) ? path.slice(boundary.length) : path;
+}
+
+function addNode(data) {
+  const item = document.createElement('li');
+  const children = document.createElement('ul');
+  children.hidden = true;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'node';
+  button.dataset.id = data.id;
+  button.innerHTML = '<span class="node-name"><span class="folder" aria-hidden="true"></span>'+esc(data.name)+'</span><span data-status></span><span class="type" data-type></span><span class="draft-tag" data-draft hidden></span>';
+  item.append(button,children);
+  const parent = nodes.get(data.parent);
+  if (parent) {
+    parent.children.hidden = false;
+    parent.children.append(item);
+  } else {
+    $('tree').append(item);
+    $('root').textContent = data.path;
+  }
+  return {...data,children,button,level:parent ? parent.level+1 : 0,
+    path:parent ? parent.path.replace(/[\\/]$/, '')+separator(parent.path)+data.name : data.path};
+}
+function update(data) {
+  const node = nodes.get(data.id) ?? addNode(data);
+  Object.assign(node,data);
+  nodes.set(node.id,node);
+  if (selected === null) selected = node.id;
+  node.button.setAttribute('aria-pressed',String(selected === node.id));
+  node.button.querySelector('[data-status]').innerHTML = badge(node.status);
+  const key = node.kind && node.status === 'review' ? 'candidate' : 'type';
+  node.button.querySelector('[data-type]').innerHTML = '<span>'+t(key)+'</span><strong>'+t(node.kind ?? 'unknown')+'</strong>';
+}
+function renderDetails() {
+  const node = nodes.get(selected);
+  if (!node) { $('details').replaceChildren(); return; }
+  const facts = [];
+  if (node.basis) {
+    const aliases = {runtime:'runtimeBasis',vm:'vmBasis',container:'containerBasis',empty:'emptyBasis'};
+    facts.push([t('basis'),t(aliases[node.basis] ?? node.basis,
+      {range:node.sequence?.range,count:node.sequence?.['unique-count']})]);
+    facts.push([t('counts'),t('countValues',node)]);
+  }
+  if (node.status === 'skipped') {
+    facts.push([t('protection'),node.reason === 'protected' ? t('genericProtection') : node.reason]);
+  }
+  if (node.excluded) facts.push([t('exclusions'),node.excluded]);
+  if (node.limited) facts.push([t('limited'),t('cap')]);
+  $('details').innerHTML = '<div><h2>'+esc(node.name)+'</h2><p class="muted">'+esc(node.path)+'</p>'+badge(node.status)+'</div><dl>'+
+    facts.map(([key,value]) => '<div><dt>'+esc(key)+'</dt><dd>'+esc(value)+'</dd></div>').join('')+'</dl>';
+}
+function selectNode(id) {
+  nodes.get(selected)?.button.setAttribute('aria-pressed','false');
+  selected = id;
+  nodes.get(selected)?.button.setAttribute('aria-pressed','true');
+  render();
+}
+function renderDrafts() {
+  if (draftSelection === selected) return;
+  draftSelection = selected;
+  const inventory = inventories.get(selected);
+  const groups = drafts.get(selected) ?? [];
+  const ready = overall === 'done' || overall === 'incomplete';
+  $('draft-tools').hidden = !ready || (!inventories.size && !drafts.size);
+  $('drafts').hidden = !ready || (!inventory && !groups.length);
+  $('draft-node').value = drafts.has(selected) ? String(selected) : '';
+  if ($('drafts').hidden) { $('drafts').replaceChildren(); return; }
+  const record = inventory ? '<details><summary>'+t('inventory',{count:inventory.episodes.length})+'</summary><ul>'+
+    inventory.episodes.map(episode => '<li>'+esc(episode.name)+(episode.subtitles.length ? '<ul>'+
+      episode.subtitles.map(name => '<li>'+t('subtitle')+' · '+esc(name)+'</li>').join('')+'</ul>' : '')+'</li>').join('')+
+    inventory.unpaired.map(name => '<li>'+t('unpaired')+' · '+esc(name)+'</li>').join('')+'</ul></details>' : '';
+  $('drafts').innerHTML = '<p class="muted">'+t('readOnly')+'</p>'+record+groups.map(group =>
+    '<details><summary>'+esc(t('group',group))+' · '+t(group.issues.length ? 'groupReview' : 'draftStatus')+'</summary>'+
+    (group.issues.length ? '<ul>'+group.issues.map(issue => '<li>'+t(issue)+'</li>').join('')+'</ul>' : '')+
+    '<table><thead><tr><th scope="col">'+t('source')+'</th><th scope="col">'+t('target')+'</th></tr></thead><tbody>'+
+    group.rows.map(row => '<tr><td title="'+esc(row.source)+'">'+esc(relativePath(row.source))+'</td><td title="'+
+      esc(row.target)+'">'+esc(row.target ? relativePath(row.target) : t('blocked'))+'</td></tr>').join('')+
+    '</tbody></table></details>').join('');
+}
+function finishDrafts() {
+  const chooser = $('draft-node');
+  chooser.replaceChildren(new Option(t('chooseDraft'),''));
+  for (const id of inventories.keys()) {
+    const label = nodes.get(id).button.querySelector('[data-draft]');
+    label.textContent = t('inventoryLabel');
+    label.hidden = false;
+  }
+  for (const [id, groups] of drafts) {
+    const node = nodes.get(id);
+    chooser.add(new Option(relativePath(node.path),String(id)));
+    const label = node.button.querySelector('[data-draft]');
+    label.textContent = t('draftCount',{count:groups.length});
+    label.hidden = false;
+  }
+  chooser.hidden = $('draft-label').hidden = !drafts.size;
+  draftSelection = undefined;
+}
+function drawLines() {
+  frame = 0;
+  const board = $('board');
+  const levels = Math.max(0,...[...nodes.values()].map(node => node.level)) + 1;
+  board.style.width = (30 + levels * 228 + (levels - 1) * 36) + 'px';
+  const boundary = board.getBoundingClientRect();
+  const edges = document.createDocumentFragment();
+  if (matchMedia('(min-width:621px)').matches) {
+    const selectedRoute = new Set();
+    for (let node = nodes.get(selected); node; node = nodes.get(node.parent)) selectedRoute.add(node.id);
+    const ordered = [...nodes.values()].filter(node => node.parent !== null);
+    ordered.sort((a,b) => Number(selectedRoute.has(a.id)) - Number(selectedRoute.has(b.id)));
+    function segment(x,y,w,h,active) {
+      const line = document.createElement('span');
+      line.className = 'wire' + (active ? ' active' : '');
+      Object.assign(line.style,{left:x+'px',top:y+'px',width:w+'px',height:h+'px'});
+      edges.append(line);
+    }
+    for (const node of ordered) {
+      const parent = nodes.get(node.parent).button.getBoundingClientRect();
+      const child = node.button.getBoundingClientRect();
+      const x1 = parent.right-boundary.left, y1 = (parent.top+parent.bottom)/2-boundary.top;
+      const x2 = child.left-boundary.left, y2 = (child.top+child.bottom)/2-boundary.top;
+      const mid = (x1+x2)/2, active = selectedRoute.has(node.id), width = active ? 2 : 1;
+      segment(x1,y1,mid-x1,width,active);
+      segment(mid,Math.min(y1,y2),width,Math.abs(y2-y1)+width,active);
+      segment(mid,y2,x2-mid,width,active);
+    }
+  }
+  $('wires').replaceChildren(edges);
+  renderDetails();
+  renderDrafts();
+  $('summary').textContent = t('summary',{stage:t(overall),nodes:nodes.size,depth:config.depth});
+}
+function render() {
+  if (!frame) frame = requestAnimationFrame(drawLines);
+}
+function start() {
+  stream?.close();
+  nodes.clear();
+  inventories.clear();
+  drafts.clear();
+  draftSelection = undefined;
+  selected = null;
+  $('tree').replaceChildren();
+  $('root').textContent = '';
+  overall = 'scan';
+  const source = new EventSource('events');
+  stream = source;
+  source.onmessage = message => {
+    if (stream !== source) return;
+    const event = JSON.parse(message.data);
+    if (event.event === 'node') update(event);
+    else if (event.event === 'inventory') inventories.set(event.id,event);
+    else if (event.event === 'draft') {
+      if (!drafts.has(event.id)) drafts.set(event.id,[]);
+      drafts.get(event.id).push(event);
+    }
+    else {
+      overall = event.event === 'stopped' ? 'stopped' : event.limited ? 'incomplete' : 'done';
+      if (event.event === 'done') finishDrafts();
+      source.close();
+    }
+    render();
+  };
+  source.onerror = () => {
+    if (stream !== source) return;
+    source.close();
+    overall = 'connection';
+    render();
+  };
+  render();
+}
+$('title').textContent = t('title');
+document.title = 'TidyFileTree · ' + t('title');
+$('rescan').textContent = t('restart');
+$('draft-label').textContent = t('drafts');
+$('draft-download').textContent = t('exportDrafts');
+$('draft-node').addEventListener('change',event => {
+  if (event.target.value === '') return;
+  const id = Number(event.target.value);
+  selectNode(id);
+  nodes.get(id).button.scrollIntoView({block:'nearest',inline:'nearest'});
+});
+$('draft-download').addEventListener('click',() => {
+  const root = nodes.get(0).path;
+  const report = {root,limited:overall === 'incomplete',
+    inventories:[...inventories.values()].map(({path,episodes,unpaired}) => ({path,episodes,unpaired})),
+    groups:[...drafts].flatMap(([id,groups]) => groups.map(({title,season,folders,issues,rows}) =>
+      ({parent:nodes.get(id).path,title,season,folders,issues,rows})))};
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(report,null,2)+'\n'],{type:'application/json'}));
+  link.download = 'tidy-file-tree-drafts.json';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href),1000);
+});
+$('rescan').addEventListener('click',start);
+$('tree').addEventListener('click',event => {
+  const button = event.target.closest('button[data-id]');
+  if (!button) return;
+  selectNode(Number(button.dataset.id));
+});
+window.addEventListener('resize',render);
+start();
+</script>
+</body>
+</html>

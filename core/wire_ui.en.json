@@ -77,7 +77,7 @@
   "已连到目录": "Assigned to folders",
   "仅复核（缺少已确认来源）": "Review only (source unconfirmed)",
   "来源有重复或父子冲突，请断开冲突连线后再下载动作表。": "Resolve duplicate or overlapping source paths before downloading actions.",
-  "{actions} 个动作可下载，{pending} 项待连。请先用 --dry-run --receipt plan.tidy-file-tree-receipt.json 预演，再使用同一清单执行。": "Actions available: {actions}. Unassigned: {pending}. Preview with --dry-run --receipt plan.tidy-file-tree-receipt.json, then apply with the same receipt.",
+  "{actions} 个动作可下载，{pending} 项待连。请先用 --dry-run --receipt plan.tidy-file-tree-receipt.json 预演，可加 --preview-html plan.html 生成图形预演。执行时使用同一份 JSON 清单。": "Actions available: {actions}. Unassigned: {pending}. Preview with --dry-run --receipt plan.tidy-file-tree-receipt.json and optionally add --preview-html plan.html for a browser report. Apply with the same JSON receipt.",
   "（无）": "(None)",
   "这是什么": "What is this?",
   "{name}：这是什么": "What is {name}?",

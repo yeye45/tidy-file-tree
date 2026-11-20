@@ -156,7 +156,7 @@ def rename_noreplace(before, after):
     raise SafetyError('当前系统未实现安全的不覆盖移动；只读工具仍可使用')
 
 
-def atomic_write(path, data):
+def atomic_write(path, data, *, replace=True):
     path = Path(path)
     assert_no_links(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -166,7 +166,10 @@ def atomic_write(path, data):
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(temporary, path)
+        if replace:
+            os.replace(temporary, path)
+        else:
+            rename_noreplace(temporary, path)
         sync_directory(path.parent)
     finally:
         if os.path.exists(temporary):
@@ -1131,7 +1134,7 @@ def read_actions(args):
     return actions
 
 
-def preflight(root, actions, journal=None, external_roots=(), review=False):
+def preflight(root, actions, journal=None, external_roots=(), review=False, report=False):
     journal = journal or Journal(root)
     protection = journal.protection()
     prepared, blocked, reserved = [], [], set()
@@ -1208,6 +1211,8 @@ def preflight(root, actions, journal=None, external_roots=(), review=False):
             if not parent.is_dir():
                 raise SafetyError('目标路径的父级不是目录')
             action_plan = dict(op=op, src=src, dst=target, reason=action.get('reason','-'))
+            if report:
+                action_plan['preview'] = {'row': index, 'parents': [str(p) for p in reversed(missing_parents)]}
             if review:
                 for missing in missing_parents:
                     guard(missing, root, protection)
@@ -1314,6 +1319,9 @@ def apply(args):
     if not os.path.isdir(root):
         raise SafetyError('整理根目录不存在')
     assert_no_links(root)
+    preview_html = getattr(args, 'preview_html', None)
+    if preview_html and not args.dry_run:
+        raise SafetyError('--preview-html 须与 --dry-run 一起使用')
     actions = read_actions(args)
     receipt = receipt_path(args.receipt) if getattr(args, 'receipt', None) else None
     if not 1 <= args.batch_size <= 200:
@@ -1333,9 +1341,14 @@ def apply(args):
     def execute():
         if journal.unresolved():
             raise SafetyError('存在未完成操作；请先运行 recover')
-        prepared, blocked = preflight(root, actions, journal, external_roots, review=receipt is not None)
+        prepared, blocked = preflight(root, actions, journal, external_roots, review=receipt is not None,
+                                      report=bool(preview_html))
         for message in blocked:
             print('拦截 '+message)
+        if preview_html:
+            from history import write_preview
+            write_preview(journal, Path(preview_html), prepared, blocked, external_roots, receipt is not None, args.lang)
+            print(f'已写图形预演：{preview_html}')
         if receipt is not None:
             if blocked:
                 raise SafetyError('整份清单已停止，请处理拦截项后重新预演')
@@ -1539,7 +1552,8 @@ def recover(args):
                 finish_references(tx['edits'])
                 sync_reference_mirror(journal,tx['edits'])
             status = 'done' if applied else 'aborted'
-            journal.append(tx['run_id'],tx['op'],src,dst,json.dumps(tx_meta(tx),ensure_ascii=False),status)
+            metadata = {**tx_meta(tx), 'recorded_by': 'recover'}
+            journal.append(tx['run_id'],tx['op'],src,dst,json.dumps(metadata,ensure_ascii=False),status)
             print(f"恢复事务 {tx['id']}: {status}")
     return 0
 
@@ -1637,6 +1651,8 @@ def main(argv=None):
     p.add_argument('--reason',default='-')
     p.add_argument('--dry-run',action='store_true')
     p.add_argument('--receipt')
+    p.add_argument('--preview-html')
+    p.add_argument('--lang', choices=('zh-CN', 'en'), default='zh-CN')
     p.add_argument('--batch-size',type=int,default=50)
     p.add_argument('--allow-cross-drive',action='store_true')
     p.add_argument('--destination-root',action='append',default=[])

@@ -11,6 +11,7 @@ TidyFileTree — 根据目录结构整理文件
     tidy-file-tree undo     <root>            逆序撤销
     tidy-file-tree recover  <root>            中断恢复
     tidy-file-tree ui       <root>            生成决策界面
+    tidy-file-tree history  <root>            查看执行历史
 
 也可以直接用 core/ 下的模块：
     python core/signals.py <dir> --json
@@ -55,6 +56,13 @@ def _load(name, files):
 
 
 def cmd_scan(args):
+    if args.tree:
+        from safety import SafetyError
+        if args.json or len(args.paths) > 1:
+            raise SafetyError('--tree 每次只查看一个目录，不能与 --json 同用')
+        scanner = _load('scan_tree', 'scan_tree.py')
+        return scanner.main(args.paths[0] if args.paths else os.getcwd(), args.depth,
+                            args.lang, open_browser=not args.no_open)
     sig = _load("signals", "signals.py")
     targets = args.paths or [os.getcwd()]
     results = [sig.analyze(p) for p in targets if os.path.isdir(p)]
@@ -118,6 +126,8 @@ def cmd_apply(args):
         argv.append("--dry-run")
     if args.receipt:
         argv += ["--receipt", args.receipt]
+    if args.preview_html:
+        argv += ["--preview-html", args.preview_html, "--lang", args.lang]
     if args.batch_size:
         argv += ["--batch-size", str(args.batch_size)]
     if args.allow_cross_drive:
@@ -148,6 +158,11 @@ def cmd_undo(args):
 def cmd_recover(args):
     ex = _load("executor", "executor.py")
     return ex.main(["recover", "--root", args.root])
+
+
+def cmd_history(args):
+    history = _load("history", "history.py")
+    return history.main(args)
 
 
 def cmd_ui(args):
@@ -263,7 +278,7 @@ def main(argv=None):
     def text(zh, en):
         return en if requested.lang == "en" else zh
 
-    language_help = text("帮助与工作台语言", "Language for CLI help and the review board")
+    language_help = text("帮助与界面语言", "Language for CLI help and the interface")
     p = argparse.ArgumentParser(
         prog="tidy-file-tree",
         description=text(__doc__, "TidyFileTree groups files by directory structure. "
@@ -280,6 +295,10 @@ def main(argv=None):
     s = command("scan", "观察目录的信号（只读）", "Inspect directory structure (read-only)")
     s.add_argument("paths", nargs="*")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--tree", action="store_true", help=text("在浏览器查看实时目录判断树", "Open a live directory assessment tree"))
+    s.add_argument("--depth", type=int, default=3, help=text("目录树最大深度，默认 3", "Maximum tree depth; defaults to 3"))
+    s.add_argument("--no-open", action="store_true", help=text("树模式只输出本地地址", "Print the local tree URL without opening a browser"))
+    s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
     s.set_defaults(func=cmd_scan)
 
     s = command("coverage", "覆盖检查", "Check for directories missing review records")
@@ -306,6 +325,9 @@ def main(argv=None):
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--receipt", help=text("预演时写入新的 JSON 清单，执行时核对同一清单",
                                          "Write a JSON receipt during preview and verify it when applying"))
+    s.add_argument("--preview-html", help=text("将 --dry-run 结果保存为图形预演页面",
+                                              "Save --dry-run results as an offline preview page"))
+    s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
     s.add_argument("--batch-size", type=int, default=50)
     s.add_argument("--allow-cross-drive", action="store_true")
     s.add_argument("--destination-root", action="append", default=[],
@@ -325,6 +347,14 @@ def main(argv=None):
     s = command("recover", "中断恢复", "Recover interrupted actions")
     s.add_argument("root")
     s.set_defaults(func=cmd_recover)
+
+    s = command("history", "生成只读执行历史", "Generate read-only execution history")
+    s.add_argument("root")
+    s.add_argument("--out", help=text("输出 HTML，默认写入 _organize/history.html",
+                                      "Output HTML; defaults to _organize/history.html"))
+    s.add_argument("--open", action="store_true")
+    s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
+    s.set_defaults(func=cmd_history)
 
     s = command("setup", "整理前的一次性确认", "Configure sorting preferences before organizing")
     s.add_argument("action", choices=("ask", "apply", "show"))
