@@ -1,24 +1,26 @@
-<img align="right" width="112" height="112" src="site/assets/project-icon.webp" alt="TidyFileTree project icon">
-
-# TidyFileTree
-
-[简体中文](README.md) · English
+<div align="center">
+  <img src="site/assets/readme-icon-rounded.webp" width="112" height="112" alt="TidyFileTree project icon"><br>
+  <img src="site/assets/readme-wordmark.png" width="360" alt="TidyFileTree">
+</div>
+<p align="center"><a href="README.md">简体中文</a> | English</p>
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.9+" src="https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&amp;logoColor=white"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
+  <a href="https://github.com/yeye45/tidy-file-tree/actions/workflows/ci.yml"><img alt="GitHub Actions" src="https://img.shields.io/github/actions/workflow/status/yeye45/tidy-file-tree/ci.yml?label=actions"></a>
+  <a href="https://yeye45.github.io/tidy-file-tree/en.html"><img alt="Docs" src="https://img.shields.io/badge/docs-online-blue"></a>
+</p>
 
 **Organize files by directory structure. Review the plan before moving anything.**
 
-TidyFileTree is an open-source file organizer for download folders, media libraries, and software collections. A game's launcher and resource folders can stay together, while episodes spread across folders can be checked against each other by number.
+TidyFileTree is an open-source organizer for download folders, software collections, and media libraries. It gathers structural and naming clues to help you or an AI agent identify file groups, inventory units, and suggest destinations. Confirm assignments in a browser board, then review a preview receipt before applying moves or renames. The journal supports undo and recovery after interruption.
 
-Local tools collect structural evidence. An AI agent can use it to identify what belongs together, suggest destinations, and flag uncertain cases. Review the proposed assignments in an offline browser board, preview the file actions, then apply them with the same preview receipt. The journal supports undo and recovery.
+[Project site](https://yeye45.github.io/tidy-file-tree/en.html) · [Quick start](#quick-start) · [Try sample data](#try-sample-data) · [Workflow guide](FLOW.md) · [Agent instructions](SKILL.md)
 
-[Project site](https://yeye45.github.io/tidy-file-tree/en.html) · [Install](#install) · [Try the review board](#try-the-review-board) · [Organize your own files](#organize-your-own-files)
+[![TidyFileTree workflow: scan structure, review groups, preview actions, and apply changes](site/assets/readme-workflow-en.webp)](site/assets/readme-workflow-en.webp)
 
-[![TidyFileTree review board. Recordings and episodes are assigned to destination folders, while the game runtime stays in place.](site/assets/board-en.png)](site/assets/board-en.png)
+## Quick start
 
-The screenshot uses fictional folders.
-
-## Install
-
-Requires Python 3.9 or later. If you installed an earlier version through pip, uninstall that package before installing this version.
+Requires Python 3.9 or later. Windows PowerShell users can also use the wrappers in `scripts/`. When upgrading from an earlier version installed through pip, uninstall that package first.
 
 ```bash
 git clone https://github.com/yeye45/tidy-file-tree.git
@@ -27,11 +29,9 @@ python -m pip install .
 tidy-file-tree --lang en --help
 ```
 
-Windows is the platform with the most complete end-to-end testing. Cross-volume moves currently support local fixed NTFS volumes on Windows.
+### Try sample data
 
-## Try the review board
-
-Run these PowerShell commands from the checkout to create a fresh set of fictional files and open the board. You can try assigning groups and reviewing a plan using the sample data. The fixture includes Chinese group labels to demonstrate how the board displays source text.
+Open the review board with fictional sample data.
 
 ```powershell
 $demo = New-Item -ItemType Directory -Path ("tidy-file-tree-demo-" + [guid]::NewGuid())
@@ -39,51 +39,89 @@ python tests/make_fixture.py $demo.FullName
 tidy-file-tree ui (Join-Path $demo.FullName "root") --lang en --open
 ```
 
-Use the language selector at the top of the board to switch between English and Simplified Chinese. The language setting covers the board's controls, review text, and CLI help. Paths, category labels, evidence, and AI responses appear as supplied. Some underlying command messages are currently in Chinese.
+## Organize your files
 
-## Organize your own files
-
-### Live directory tree scan
-
-Run `tidy-file-tree scan "D:\ToSort" --tree` to open a live directory tree in your browser. Nodes branch from left to right and show the scan status and folder type. Types come from immediate directory structure and naming evidence, with uncertain types marked as candidates. This read-only view supports human or AI review and leaves directory sizes uncalculated.
-
-After scanning, files with explicit season and episode numbers appear in an episode inventory draft. When episodes from the same season are spread across sibling folders, their parent shows a grouping draft with the source and proposed destination of each video and matching subtitle. If the parent is the series folder, the draft suggests moving the files up one level. Otherwise, it suggests a series folder under the shared parent. Name conflicts, duplicate episodes, and ambiguous subtitles are flagged for review. You can download the drafts as JSON. The move preview displays paths only.
-
-After scanning, grouping drafts flagged for review automatically get AI questions. **Export AI review questions** downloads a JSON file with conflict descriptions, episode and naming distributions, and up to eight representative filenames per group. Source folders are identified by number. Give the file to your AI agent, then use **Import AI answers** to view its hypothesis, verification, and conclusion at the corresponding node. Approval stays with the user. Rescanning in the same tab keeps answers for unchanged drafts. You can reimport a saved answer file after reopening the page.
-
-`--depth N` sets the maximum scan depth (default 3). The page indicates when a sampling limit is reached. Use `--lang en` for the English interface, and press `Ctrl+C` to stop the local server.
+1. **Inspect folders.** Run `tidy-file-tree scan "D:\ToSort" --tree` to open the read-only directory tree and review folder types and episode drafts.
+2. **Set the scope and inventory.** Use `tidy-file-tree setup ask <directory>` to see questions about category preferences and protected paths. Save your answers with `tidy-file-tree setup apply <directory> answers.json`. Give your AI agent [SKILL.md](SKILL.md) to record probes, inventory units, and group related items. Use `tidy-file-tree coverage <directory>` to check for omissions.
+3. **Confirm destinations.** Run `tidy-file-tree decisions <directory>` and `tidy-file-tree ui <directory> --open`. Connect groups to destinations, review the evidence, and download the actions table.
+4. **Preview and apply.** Generate a browser preview and JSON receipt first.
 
 ```powershell
-tidy-file-tree scan "D:\ToSort" --tree --depth 4 --lang en
+tidy-file-tree apply "D:\ToSort" --actions tidy-file-tree-actions.tsv --dry-run --preview-html plan.html --receipt plan.tidy-file-tree-receipt.json
 ```
 
-1. **Set the scope.** Run `tidy-file-tree setup ask "D:\ToSort"` to see the setup questions. Record protected folders and files before inspecting the directory. See the [workflow guide](FLOW.md) and [agent instructions](SKILL.md).
-2. **Inspect and group.** Start with `tidy-file-tree scan "D:\ToSort" --json` to inspect structural signals. The agent reads the task instructions, then records its findings in `_organize/probe/`.
-3. **Review the destinations.** Run `tidy-file-tree decisions "D:\ToSort"`, then `tidy-file-tree ui "D:\ToSort" --lang en --open`. Assign the confirmed groups or items, then download the actions table.
-4. **Preview, then apply.** Use the same receipt for both commands. The first command previews the actions. Run the second after you review the preview.
+Open `plan.html` to check the source paths, final destinations, and blockers. Once you've approved the changes, apply them with the same receipt.
 
 ```powershell
-tidy-file-tree apply "D:\ToSort" --actions tidy-file-tree-actions.tsv --dry-run --receipt plan.tidy-file-tree-receipt.json
 tidy-file-tree apply "D:\ToSort" --actions tidy-file-tree-actions.tsv --receipt plan.tidy-file-tree-receipt.json
 ```
 
-### Preview in the browser
-
-Add `--preview-html plan.html --lang en` to the dry-run command and open `plan.html` in your browser. Review proposed source paths, expected destinations, parent directories to be created, and preflight blockers. When using a receipt, pass the same JSON receipt to the apply command.
-
-### View execution history
-
-Run `tidy-file-tree history "D:\ToSort" --lang en --open` to review a timeline by batch, path, or journal number. Each entry shows recorded paths and stages and links related undo and redo operations. Run the command again to refresh the offline snapshot.
-
-To preview undoing the last run, use:
+You can then view the journal or preview undoing the last batch.
 
 ```powershell
+tidy-file-tree history "D:\ToSort" --open
 tidy-file-tree undo --journal "D:\ToSort\_organize\journal.tsv" --last --dry-run
 ```
 
-## Feedback
+You approve the file operations. The preview receipt checks source identity and final destinations.
 
-If a grouping looks wrong, share a small synthetic directory tree, the destination you expected, and what the tool suggested. See [the feedback guide](FEEDBACK.md) for the local redaction script.
+## Features
+
+| Feature | Purpose |
+| --- | --- |
+| Structural scan and directory tree | Inspect candidate folder types in a read-only tree using directory and filename clues |
+| AI review and browser board | Export questions, import answers, and confirm groups and destinations |
+| Preview, apply, and journal | Preview path changes and verify them with a receipt before applying |
+| Undo and recovery | Inspect, reverse, or recover interrupted operations from the append-only journal |
+| Protection and approval | Markers, excluded paths, and explicit action tables govern file operations |
+| Chinese and English UI | Switch languages in the board or start it in English with `--lang en` |
+
+## More detail
+
+See the [workflow guide](FLOW.md), [agent instructions](SKILL.md), [feedback guide](FEEDBACK.md), and [limits and safety notes](#limits-and-safety-notes). Cross-volume examples, receipt details, the actions table format, and advanced recovery notes are in the section below.
+
+<details>
+<summary>Advanced operations and safety boundaries</summary>
+
+### AI review and protection markers
+
+`tidy-file-tree decisions <directory> --need-ai` exports groups that need review. Use `--answers` to import responses. From the browser tree, you can export AI questions with conflicts and sample filenames, then import answers at the corresponding nodes. Use `scripts/markers.ps1` to write protection markers to `_organize/markers.tsv`, including `NO_TOUCH`, `WORKSPACE`, `FOREIGN`, and `SECRET`.
+
+### Preview receipts and HTML preview
+
+`--receipt` records source identity and final destinations during preview. Apply must use the same JSON receipt. Blockers, changed sources, or changed destinations stop the run before file moves begin. Store receipts in an existing working directory and use a new filename for each preview. Add `--preview-html plan.html` to create a browser preview.
+
+### Actions table
+
+The table has four tab-separated columns, `op`, `src`, `dst`, and `reason`. For `move`, `dst` is a destination folder. For `rename`, it is a new filename. For `mkdir`, it is an absolute path. To split a directory, inventory the units and confirm their destinations before generating individual moves.
+
+### Cross-volume moves
+
+Cross-volume moves support local fixed NTFS volumes on Windows. The destination must exist on a different volume. Explicitly authorize its root in both commands.
+
+```powershell
+tidy-file-tree apply "D:\Sort" --actions actions.tsv --allow-cross-drive --destination-root "E:\Archive" --dry-run --receipt cross.json
+tidy-file-tree apply "D:\Sort" --actions actions.tsv --allow-cross-drive --destination-root "E:\Archive" --receipt cross.json
+```
+
+The PowerShell wrapper accepts `-AllowCrossDrive -DestinationRoot`. The tool verifies a staged copy before publishing it and checking the original. Reparse points, hard links, alternate data streams, extended attributes, or permission mismatches stop the move; a same-name destination also blocks it.
+
+### Limits and safety notes
+
+- Filenames and directory structure are the main evidence; image and audio/video content are not analyzed.
+- Deletion is not a standalone action. Credential markers, protected areas, links, and reparse points block affected operations.
+- The journal is not a backup. If objects changed externally or their state cannot be proven, inspect them manually.
+- Windows PowerShell 5.1/7 have integration coverage; macOS/Linux have not been validated on real systems.
+- Large scans may take time. Damaged or incomplete files are flagged but not repaired.
+- Failure checks cover process interruption and simulated write failures, not real power loss or hardware damage.
+
+</details>
+
+## Tests and feedback
+
+Run tests with `python -B -m unittest discover -s tests -v`. Classification examples are in [baseline](cases/baseline.json).
+
+See the [feedback guide](FEEDBACK.md) before reporting an issue. The redacted summary is generated locally and is not uploaded; you choose what to submit.
 
 ## License
 
