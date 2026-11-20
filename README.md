@@ -1,3 +1,5 @@
+<img align="right" width="112" height="112" src="site/assets/project-icon.webp" alt="TidyFileTree 项目图标">
+
 # TidyFileTree
 
 简体中文 · [English](README.en.md)
@@ -18,7 +20,7 @@ TidyFileTree 是面向下载目录、软件合集和媒体库的开源文件整�
 
 需要 Python 3.9 或更新版本。当前版本安装后使用 `tidy-file-tree` 命令。
 
-如果先前用 pip 安装过 `packtidy`，先运行 `python -m pip uninstall packtidy`。
+从旧版升级时，请先卸载原来用 pip 安装的软件包。
 
 ```bash
 git clone https://github.com/yeye45/tidy-file-tree.git
@@ -29,7 +31,7 @@ tidy-file-tree --help
 
 也可以直接运行 `python tidy_file_tree.py`。Windows 用户可使用 `scripts/` 中的 PowerShell 封装，支持 Windows PowerShell 5.1 和 PowerShell 7。
 
-新版也提供 `packtidy` 兼容命令，可以继续读取原有规则、整理日志和连线记录。
+新版可以读取原有规则、整理日志和连线记录。
 
 ### 语言
 

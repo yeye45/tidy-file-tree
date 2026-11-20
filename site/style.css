@@ -38,33 +38,7 @@ code, pre { font-family: "IBM Plex Mono", Consolas, monospace; }
   font-weight: 750;
   text-decoration: none;
 }
-.mark {
-  position: relative;
-  width: 27px;
-  height: 24px;
-  border-radius: 4px 5px 5px 5px;
-  background: var(--green);
-}
-.mark::before {
-  content: "";
-  position: absolute;
-  top: -3px;
-  left: 0;
-  width: 13px;
-  height: 5px;
-  border-radius: 3px 3px 0 0;
-  background: var(--green);
-}
-.mark::after {
-  content: "";
-  position: absolute;
-  left: 6px;
-  top: 9px;
-  height: 2px;
-  width: 14px;
-  background: var(--mint);
-  box-shadow: 0 5px 0 var(--mint);
-}
+.wordmark img { flex: none; border-radius: 8px; }
 .topbar nav, .hero-actions, .footer-links {
   display: flex;
   flex-wrap: wrap;

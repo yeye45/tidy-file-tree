@@ -1,3 +1,5 @@
+<img align="right" width="112" height="112" src="site/assets/project-icon.webp" alt="TidyFileTree project icon">
+
 # TidyFileTree
 
 [简体中文](README.md) · English
@@ -16,7 +18,7 @@ The screenshot uses fictional folders.
 
 ## Install
 
-Requires Python 3.9 or later. If you installed the previous `packtidy` package through pip, uninstall it with `python -m pip uninstall packtidy` before installing.
+Requires Python 3.9 or later. If you installed an earlier version through pip, uninstall that package before installing this version.
 
 ```bash
 git clone https://github.com/yeye45/tidy-file-tree.git
@@ -25,7 +27,7 @@ python -m pip install .
 tidy-file-tree --lang en --help
 ```
 
-The `packtidy` command remains available as an alias. Windows is the platform with the most complete end-to-end testing. Cross-volume moves currently support local fixed NTFS volumes on Windows.
+Windows is the platform with the most complete end-to-end testing. Cross-volume moves currently support local fixed NTFS volumes on Windows.
 
 ## Try the review board
 
