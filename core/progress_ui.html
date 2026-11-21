@@ -68,6 +68,8 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent-mid
 .banner{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:11px 14px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:14px;font-size:13px}
 .banner.warn{background:var(--warn-soft);border-color:rgba(180,83,9,.28);color:var(--warn)}
 .banner.danger{background:var(--danger-soft);border-color:rgba(220,38,38,.3);color:var(--danger)}
+.banner.next{background:var(--accent-soft);border-color:var(--accent-mid);color:var(--text)}
+.banner.next .next-tag{flex:0 0 auto;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--accent);color:#fff}
 .banner strong{font-weight:700}
 
 .stepper{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}
@@ -182,6 +184,7 @@ tr:hover td{background:var(--surface-2)}
 
   <div id="unresolvedBanner" class="banner danger" hidden></div>
   <div id="quarantineBanner" class="banner warn" hidden></div>
+  <div id="nextStepBanner" class="banner next" hidden></div>
 
   <section id="stepper" class="stepper" aria-label="Pipeline stages"></section>
   <section id="metrics" class="metrics" aria-label="Key metrics"></section>
@@ -273,6 +276,16 @@ const dict = {
   updatedAt: ['最后检测：{time}', 'Last checked: {time}'],
   unresolvedAlert: ['检测到 {n} 项未完成的中断事务，请先运行 recover 恢复后再继续执行。', '{n} interrupted transaction(s) pending recovery. Run recover before applying more changes.'],
   quarantineAlert: ['收押区 {dir} 现有 {n} 项待确认 — 仅隔离未删除。删除严格留到全部整理完成后，按 A/B/C 三组由你确认后再处理。', 'Quarantine folder {dir} holds {n} item(s) — isolated, not deleted. Deletion is strictly deferred to the final step after human A/B/C confirmation.'],
+  nextTag: ['下一步', 'Next step'],
+  next_recover: ['先在对话里让 AI 运行中断恢复（recover），核对未完成事务后再继续。', 'Ask AI to run recover first and reconcile interrupted transactions before continuing.'],
+  next_idle: ['等待 S0 分类体系确认。在对话里确认分类偏好后，AI 会自动启动目录探针并逐级下钻。', 'Waiting for S0 setup. Confirm your sorting preferences in chat so AI can launch probes and drill down.'],
+  next_s1: ['S1 探针进行中（已完成 {done}/{total}）。AI 会自动下钻容器目录与 Downloads/Desktop/Documents，完成后进入 S2 单元清点。', 'S1 probes in progress ({done}/{total}). AI will drill into containers and user folders before S2 inventory.'],
+  next_s2: ['S2 单元清点进行中（{done}/{total}）。正在按最小不可拆单元盘点待拆分目录，完成后自动进入 S3 跨目录归组。', 'S2 unit inventory running ({done}/{total}). Once finished, AI will group items across folders in S3.'],
+  next_s3: ['S3 跨目录归组进行中（{done}/{total}）。完成后会生成 S4 建议清单，只把拿不准的项交给你拍板。', 'S3 cross-folder grouping running ({done}/{total}). S4 suggestions will follow, highlighting only uncertain items.'],
+  next_s4_ui: ['连线工作台 ui.html 已就绪，有 {n} 组待你拍板。打开它连完待确认项并导出 actions.tsv，再交给 AI 跑预演。', 'Review board ui.html is ready with {n} group(s) needing your call. Wire them, export actions.tsv, and ask AI to preview.'],
+  next_s4_plan: ['S4 建议已就绪（{n} 项待确认）。可在对话里让 AI 生成连线工作台 ui.html 拍板，或直接跑图形预演（--dry-run --preview-html）。', 'S4 suggestions ready ({n} need review). Ask AI to open ui.html or run a visual dry-run preview before applying.'],
+  next_s5_quarantine: ['核心移动已执行 {done} 项。收押区 {dir} 还有 {q} 项，可在对话里让 AI 按 A/B/C 三组核对后做最后清理，或打开 history.html 复查/撤销。', '{done} op(s) applied. Quarantine {dir} holds {q} item(s) — ask AI for final A/B/C review, or inspect history.html.'],
+  next_done: ['当前阶段已全部覆盖（已执行 {done} 项）。可打开 history.html 复查全量记录或一键复制撤销命令。', 'All stages covered ({done} op(s) applied). Open history.html anytime to audit or copy undo commands.'],
   s0Name: ['分类确认', 'Setup'], s1Name: ['目录探针', 'Probes'], s2Name: ['单元清点', 'Units'],
   s3Name: ['跨目录归组', 'Grouping'], s4Name: ['审批拍板', 'Review'], s5Name: ['执行与历史', 'Apply'],
   stDone: ['已完成', 'Done'], stRun: ['进行中', 'In progress'], stWait: ['待开始', 'Waiting'], stReady: ['已就绪', 'Ready'], stIssue: ['待恢复', 'Needs recovery'],
@@ -376,6 +389,31 @@ function render() {
     $('quarantineBanner').innerHTML = `<span>🛡 ${esc(t('quarantineAlert', {dir: snap.quarantine.dir || '_待删除', n: snap.quarantine.count}))}</span>`;
   } else {
     $('quarantineBanner').hidden = true;
+  }
+
+  let nextText = '';
+  if (s.s5.unresolved > 0) {
+    nextText = t('next_recover');
+  } else if (s.s5.done > 0 && snap.quarantine && snap.quarantine.count > 0) {
+    nextText = t('next_s5_quarantine', {done: s.s5.done, dir: snap.quarantine.dir || '_待删除', q: snap.quarantine.count});
+  } else if (s.s5.done > 0 && s.s6.ok) {
+    nextText = t('next_done', {done: s.s5.done});
+  } else if (s.s4.ready) {
+    nextText = s.s4.uiReady ? t('next_s4_ui', {n: s.s4.needCheck}) : t('next_s4_plan', {n: s.s4.needCheck});
+  } else if (s.s3.total > 0 && s.s3.done < s.s3.total) {
+    nextText = t('next_s3', {done: s.s3.done, total: s.s3.total});
+  } else if (s.s2.total > 0 && s.s2.done < s.s2.total) {
+    nextText = t('next_s2', {done: s.s2.done, total: s.s2.total});
+  } else if (s.s0.done && s.s1.total > 0 && s.s1.done < s.s1.total) {
+    nextText = t('next_s1', {done: s.s1.done, total: s.s1.total});
+  } else if (!s.s0.done) {
+    nextText = t('next_idle');
+  } else {
+    nextText = t('next_s4_plan', {n: s.s4.needCheck});
+  }
+  $('nextStepBanner').hidden = !nextText;
+  if (nextText) {
+    $('nextStepBanner').innerHTML = `<div style="display:flex;align-items:center;gap:10px"><span class="next-tag">${esc(t('nextTag'))}</span><span>${esc(nextText)}</span></div>`;
   }
 
   const pct = (a, b) => b > 0 ? Math.min(100, Math.round((a / b) * 100)) : 0;
