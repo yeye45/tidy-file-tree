@@ -7,74 +7,214 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
 <title>TidyFileTree</title>
 <style>
-:root{color-scheme:light dark;--canvas:#f1f5fb;--paper:#fff;--ink:#182742;--muted:#50627a;--line:#d1deef;--soft:#edf3fa;--accent:#2554b4;--good:#15684f;--warn:#854700}
-@media(prefers-color-scheme:dark){:root{--canvas:#111925;--paper:#192538;--ink:#eef5ff;--muted:#b0bfd3;--line:#374b64;--soft:#223149;--accent:#a8caff;--good:#90e0bd;--warn:#ffce93}}
+:root{color-scheme:light dark;--canvas:#f4f7fb;--paper:#fff;--ink:#142038;--muted:#52647d;--line:#d4dfee;--soft:#eef3fa;--accent:#245bcc;--accent-soft:#e7f0ff;--good:#126b52;--good-bg:#e8f7f1;--warn:#8c4a08;--warn-bg:#fff3e2;--purple:#64369a;--purple-bg:#f3ecfc;--danger:#b42318;--danger-bg:#fef0ef;--shadow:0 1px 2px rgba(15,28,50,.05)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--canvas:#0f1621;--paper:#172231;--ink:#ebf2fc;--muted:#9eb0c9;--line:#31455e;--soft:#1f2e42;--accent:#8ab4ff;--accent-soft:#1d3252;--good:#78dbb9;--good-bg:#17352c;--warn:#ffca85;--warn-bg:#3b2b18;--purple:#d4b4fa;--purple-bg:#2f2343;--danger:#ff9b93;--danger-bg:#3c1e22;--shadow:0 1px 3px rgba(0,0,0,.28)}}
+:root[data-theme="dark"]{color-scheme:dark;--canvas:#0f1621;--paper:#172231;--ink:#ebf2fc;--muted:#9eb0c9;--line:#31455e;--soft:#1f2e42;--accent:#8ab4ff;--accent-soft:#1d3252;--good:#78dbb9;--good-bg:#17352c;--warn:#ffca85;--warn-bg:#3b2b18;--purple:#d4b4fa;--purple-bg:#2f2343;--danger:#ff9b93;--danger-bg:#3c1e22;--shadow:0 1px 3px rgba(0,0,0,.28)}
+:root[data-theme="light"]{color-scheme:light}
 *{box-sizing:border-box}
-body{margin:0;background:var(--canvas);color:var(--ink);font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif}
-header{background:#172f57;color:#f7faff;padding:24px max(20px,calc((100% - 1080px)/2))}
-header h1{font-size:clamp(23px,4vw,33px);margin:0}
-header p{color:#c8d9f4;margin:6px 0 0;overflow-wrap:anywhere}
-main{max-width:1120px;margin:auto;padding:21px 20px 46px}
-.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin:0 0 15px}
-.summary>div,.filters,.operation{background:var(--paper);border:1px solid var(--line);border-radius:10px}
-.summary>div{padding:12px 15px}
-.summary dt{color:var(--muted)}
-.summary dd{font-size:24px;font-variant-numeric:tabular-nums;font-weight:700;margin:1px 0 0}
-.filters{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) minmax(0,.65fr);gap:12px;padding:14px}
-.filters label{display:grid;gap:4px;color:var(--muted);min-width:0}
-.filters [hidden]{display:none}
-.filters.preview{grid-template-columns:minmax(0,1fr)}
-input,select,button{color:var(--ink);font:inherit;border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:7px 9px}
+[hidden]{display:none!important}
+body{margin:0;background:var(--canvas);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+header{background:var(--paper);border-bottom:1px solid var(--line);padding:12px max(20px,calc((100% - 1080px)/2));display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.brand-group{display:flex;align-items:center;gap:11px;min-width:0}
+.brand-icon{display:inline-block;position:relative;width:18px;height:13px;border:1.8px solid var(--accent);border-radius:3px;flex:none;margin-top:3px}
+.brand-icon::before{content:"";position:absolute;left:-1.8px;top:-5px;width:8px;height:4.5px;border:1.8px solid var(--accent);border-bottom:0;border-radius:2px 2px 0 0}
+header h1{font-size:19px;margin:0;letter-spacing:-.01em}
+header p{color:var(--muted);margin:2px 0 0;font-size:12px;overflow-wrap:anywhere}
+.header-actions{display:flex;align-items:center;gap:6px;flex:none}
+main{max-width:1120px;margin:auto;padding:16px 20px 46px}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin:0 0 14px}
+.summary>div,.filters,.operation,.dest-group,.flow-card,.batch-panel,.compact-table-wrap{background:var(--paper);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+.summary>div{padding:10px 14px;display:flex;align-items:baseline;justify-content:space-between;gap:10px;transition:border-color .15s,background-color .15s}
+.summary>div.clickable{cursor:pointer}
+.summary>div.clickable:hover{border-color:var(--accent)}
+.summary>div.active-stat{border-color:var(--accent);background:var(--accent-soft)}
+.summary dt{color:var(--muted);font-size:12.5px}
+.summary dd{font-size:21px;font-variant-numeric:tabular-nums;font-weight:700;margin:0}
+.summary .tone-good dd{color:var(--good)}
+.summary .tone-warn dd{color:var(--warn)}
+.summary .tone-danger dd{color:var(--danger)}
+.batch-panel{margin:0 0 14px;padding:11px 14px}
+.batch-panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap;margin-bottom:8px}
+.batch-panel-left{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.batch-panel-head h2{margin:0;font-size:13px;font-weight:650;color:var(--muted)}
+.batch-jump{width:auto;max-width:260px;font-size:12px;padding:3px 8px}
+.batch-panel-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.batch-strip{display:flex;gap:8px;overflow-x:auto;padding-bottom:3px;scrollbar-width:thin}
+.batch-card{flex:0 0 auto;min-width:190px;max-width:270px;text-align:left;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--soft);display:grid;gap:3px;cursor:pointer;transition:border-color .15s,background-color .15s,box-shadow .15s}
+.batch-card.all-batch-card{min-width:140px}
+.batch-card:hover{border-color:var(--accent)}
+.batch-card[aria-pressed="true"]{background:var(--paper);border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.batch-card-top{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12.5px;font-weight:650}
+.batch-card-meta{font-size:11.5px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.batch-id-short{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;opacity:.78}
+.hit-badge{padding:0 5px;border-radius:99px;font-size:10.5px;font-weight:700;background:var(--accent);color:var(--paper)}
+.undo-drawer{margin-top:9px;padding:9px 11px;border-radius:8px;background:var(--soft);border:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px}
+.undo-drawer code{font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;color:var(--ink);flex:1;min-width:220px}
+.undo-toggle-btn{font-size:12px;padding:4px 10px;color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,var(--line));background:var(--accent-soft)}
+.undo-toggle-btn:hover{background:var(--accent);color:var(--paper)}
+.flow-card{margin:0 0 14px;padding:11px 15px}
+.flow-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.flow-head h2{margin:0;font-size:13px;font-weight:650;color:var(--muted)}
+.flow-hint{font-size:12px;color:var(--muted)}
+.flow-svg{width:100%;display:block;overflow:visible}
+.flow-node{cursor:pointer}
+.flow-node.is-other{cursor:default}
+.flow-node rect{fill:var(--soft);stroke:var(--line);stroke-width:1;transition:stroke .15s,fill .15s}
+.flow-node:not(.is-other):hover rect,.flow-node.active rect{stroke:var(--accent);fill:var(--accent-soft)}
+.flow-node.is-other rect{stroke-dasharray:4 3}
+.flow-node text{fill:var(--ink);font:600 12px system-ui,"Microsoft YaHei",sans-serif}
+.flow-node .flow-cnt{fill:var(--accent);font:700 11.5px system-ui,sans-serif}
+.flow-edge{fill:none;stroke:var(--accent);stroke-opacity:.32;transition:stroke-opacity .15s}
+.flow-edge:hover{stroke-opacity:.75}
+.filters{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,.68fr) minmax(0,.68fr) auto;gap:10px;padding:11px 13px;align-items:end}
+.filters label{display:grid;gap:4px;color:var(--muted);min-width:0;font-size:12px}
+.filters.preview{grid-template-columns:minmax(0,1.6fr) minmax(0,.85fr) auto}
+input,select,button{color:var(--ink);font:inherit;border:1px solid var(--line);background:var(--paper);border-radius:7px;padding:6px 9px}
 input,select{width:100%;min-width:0}
-button{cursor:pointer}
-button:disabled{opacity:.55;cursor:default}
+button{cursor:pointer;transition:border-color .15s,background-color .15s}
+button:hover:not(:disabled){border-color:var(--accent);background:var(--soft)}
+button:disabled{opacity:.5;cursor:default}
+.view-toggle{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--soft)}
+.view-toggle button{border:0;border-radius:0;background:transparent;font-size:12px;padding:6px 9px;color:var(--muted);white-space:nowrap}
+.view-toggle button[aria-pressed="true"]{background:var(--accent);color:var(--paper);font-weight:600}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .muted,footer{color:var(--muted)}
-.notice{margin:0 0 12px;padding:8px 11px;background:var(--soft);border-left:3px solid var(--warn);border-radius:4px;color:var(--warn)}
-.notice ul{margin:5px 0;padding-left:20px;overflow-wrap:anywhere}
-#result{margin:12px 0}
-.operation{margin:0 0 10px;padding:13px 15px;scroll-margin-top:10px}
+.notice{margin:0 0 12px;padding:9px 13px;background:var(--warn-bg);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent);border-left:3px solid var(--warn);border-radius:8px;color:var(--warn);font-size:13px}
+.notice.danger{background:var(--danger-bg);border-color:color-mix(in srgb,var(--danger) 35%,transparent);border-left-color:var(--danger);color:var(--danger)}
+.notice ul{margin:6px 0 0;padding-left:20px;overflow-wrap:anywhere;max-height:220px;overflow:auto}
+.result-bar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:11px 0;font-size:13px;flex-wrap:wrap}
+.result-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mini-ctrl{font-size:12px;padding:3px 9px;color:var(--muted);width:auto}
+.dest-group{margin:0 0 10px;overflow:hidden}
+.dest-group>summary{padding:9px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--soft);font-weight:650;font-size:13px;list-style:none}
+.dest-group>summary::-webkit-details-marker{display:none}
+.dest-group-body{padding:10px 12px 6px}
+.load-more-btn{display:block;width:100%;margin:4px 0 6px;font-size:12.5px;color:var(--accent);background:var(--soft);border-style:dashed}
+.operation{margin:0 0 9px;padding:11px 14px;scroll-margin-top:12px;border-left:3.5px solid var(--accent);transition:opacity .15s}
+.operation.kind-cross-move{border-left-color:var(--purple)}
+.operation.kind-rename{border-left-color:var(--warn)}
+.operation.kind-mkdir{border-left-color:var(--good)}
+.operation.dir-undo{border-left-color:var(--muted)}
+.operation.was-undone{opacity:.78;background:color-mix(in srgb,var(--paper) 88%,var(--soft))}
 .operation:focus{outline:2px solid var(--accent)}
-.operation h3{margin:0;font-size:15px}
+.operation h3{margin:0;font-size:13.5px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .op-head{display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap}
-.tag{border:1px solid var(--line);border-radius:5px;background:var(--soft);padding:1px 6px;font-size:12px;color:var(--muted)}
+.tag-group{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.tag{border:1px solid var(--line);border-radius:6px;background:var(--soft);padding:1px 7px;font-size:11.5px;color:var(--muted);font-weight:600;white-space:nowrap}
 .tag.done,.steps .done{color:var(--good)}
+.tag.done{background:var(--good-bg);border-color:color-mix(in srgb,var(--good) 35%,transparent)}
 .tag.pending,.tag.aborted,.tag.failed,.steps .aborted,.steps .failed{color:var(--warn)}
-.route{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:center;margin:9px 0 0}
-.route dl{background:var(--soft);border-radius:6px;margin:0;padding:6px 9px;min-height:50px}
-.route dt{color:var(--muted);font-size:11px}
-.route dd{margin:0;overflow-wrap:anywhere}
-.route span{color:var(--accent);font-size:20px}
-.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(145px,100%),1fr));list-style:none;margin:11px 0 0;padding:0;color:var(--muted);font-size:12px}
+.tag.pending,.tag.aborted,.tag.failed{background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.tag.cross{color:var(--purple);background:var(--purple-bg);border-color:color-mix(in srgb,var(--purple) 35%,transparent)}
+.tag.undo-badge{color:var(--muted);background:var(--soft)}
+.tag-link{cursor:pointer;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:1px 7px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.tag-link:hover{background:var(--accent);color:var(--paper)}
+.route{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:center;margin:8px 0 0}
+.route.single{grid-template-columns:minmax(0,1fr)}
+.route dl{background:var(--soft);border:1px solid var(--line);border-radius:8px;margin:0;padding:6px 10px;min-height:42px}
+.route dt{color:var(--muted);font-size:11px;margin-bottom:2px}
+.route dd{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;font-size:12.5px}
+.seg{padding:0 3px;border-radius:4px;overflow-wrap:anywhere}
+.seg-sep{color:var(--muted);opacity:.6;font-size:11px;user-select:none}
+.seg-prefix{color:var(--muted)}
+.seg-old{background:var(--warn-bg);color:var(--warn);font-weight:600}
+.seg-new{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.seg-leaf{font-weight:700}
+.route .arrow{color:var(--accent);font-size:17px;font-weight:700}
+.op-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;padding-top:7px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.op-foot-left{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.op-foot-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.op-mini-btn{font-size:11.5px;padding:2px 7px;color:var(--muted);border-color:transparent;background:transparent}
+.op-mini-btn:hover{border-color:var(--line);background:var(--soft);color:var(--ink)}
+.steps-details{margin-top:6px}
+.steps-details>summary{cursor:pointer;font-size:11.5px;color:var(--muted);width:fit-content;user-select:none}
+.steps-details>summary:hover{color:var(--accent)}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(145px,100%),1fr));list-style:none;margin:8px 0 0;padding:0;color:var(--muted);font-size:12px}
 .steps li{--dot:currentColor;position:relative;border-top:1px solid var(--line);padding:7px 8px 0 0;min-width:0;overflow-wrap:anywhere}
 .steps li::before{content:"";position:absolute;top:-4px;left:0;width:7px;height:7px;background:var(--dot);border-radius:50%}
 .steps strong{display:block}
 .steps time{color:var(--muted)}
-.related{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
-.related button{font-size:12px;color:var(--accent);padding:3px 7px}
-.parents{font-size:12px;margin-top:8px;overflow-wrap:anywhere}
-.pages{display:flex;justify-content:center;align-items:center;gap:10px;margin:14px 0}
-.pages[hidden]{display:none}
+.parents{font-size:12px;margin-top:7px;overflow-wrap:anywhere}
+/* Compact table view for long histories */
+.compact-table-wrap{overflow-x:auto}
+.compact-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.compact-table th,.compact-table td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}
+.compact-table th{background:var(--soft);color:var(--muted);font-size:11.5px;font-weight:650;white-space:nowrap}
+.compact-table tr:last-child td{border-bottom:0}
+.compact-table tr:hover td{background:color-mix(in srgb,var(--soft) 55%,transparent)}
+.compact-table tr.was-undone td{opacity:.68}
+.compact-path{font-family:ui-monospace,SFMono-Regular,Consolas,"Microsoft YaHei",monospace;font-size:12px;overflow-wrap:anywhere}
+.pages{display:flex;justify-content:center;align-items:center;gap:8px;margin:14px 0;flex-wrap:wrap;font-size:13px}
+.page-jump-wrap{display:inline-flex;align-items:center;gap:5px;color:var(--muted)}
+.page-jump-wrap input{width:58px;text-align:center;padding:4px 6px;font-variant-numeric:tabular-nums}
 footer{margin-top:18px;font-size:12px}
-@media(max-width:630px){.summary{grid-template-columns:repeat(2,minmax(0,1fr))}.filters{grid-template-columns:minmax(0,1fr)}}
-@media(max-width:410px){.route{grid-template-columns:minmax(0,1fr);gap:3px}.route span{transform:rotate(90deg);width:20px;justify-self:center}}
+@media(max-width:740px){.filters,.filters.preview{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:630px){.summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){.route{grid-template-columns:minmax(0,1fr);gap:3px}.route .arrow{transform:rotate(90deg);width:20px;justify-self:center}}
 </style>
 </head>
 <body>
-<header><h1 id="title"></h1><p id="root"></p></header>
+<header>
+  <div class="brand-group"><span class="brand-icon" aria-hidden="true"></span><div><h1 id="title"></h1><p id="root"></p></div></div>
+  <div class="header-actions">
+    <select id="language" aria-label="Language"><option value="zh-CN">简体中文</option><option value="en">English</option></select>
+    <button type="button" id="theme" aria-label="Toggle theme">◐</button>
+  </div>
+</header>
 <main>
   <dl class="summary" id="summary"></dl>
+  <section class="batch-panel" id="batchPanel" hidden>
+    <div class="batch-panel-head">
+      <div class="batch-panel-left">
+        <h2 id="batchPanelTitle"></h2>
+        <select class="batch-jump" id="batchJump" aria-label="Jump to batch" hidden></select>
+      </div>
+      <div class="batch-panel-right">
+        <button type="button" class="mini-ctrl" id="issueBatchesBtn" hidden></button>
+        <button type="button" class="undo-toggle-btn" id="undoDrawerBtn"></button>
+      </div>
+    </div>
+    <div class="batch-strip" id="batchStrip"></div>
+    <div class="undo-drawer" id="undoDrawer" hidden>
+      <code id="cmdText"></code>
+      <button type="button" class="undo-toggle-btn" id="copyCmd"></button>
+    </div>
+  </section>
+  <section class="flow-card" id="flowCard" hidden>
+    <div class="flow-head"><h2 id="flowTitle"></h2><div class="result-controls"><span class="flow-hint" id="flowHint"></span><button type="button" class="mini-ctrl" id="flowToggleBtn"></button></div></div>
+    <svg class="flow-svg" id="flowSvg" aria-hidden="true"></svg>
+  </section>
   <p class="notice" id="mirror" hidden></p>
   <p class="notice" id="hidden" hidden></p>
-  <section class="notice" id="blockers" hidden></section>
+  <section class="notice danger" id="blockers" hidden></section>
   <section class="filters" id="filters">
-    <label><span id="batchLabel"></span><select id="batch"></select></label>
     <label><span id="searchLabel"></span><input id="search" type="search"></label>
-    <label><span id="statusLabel"></span><select id="status"></select></label>
+    <label id="kindWrap"><span id="kindLabel"></span><select id="kind"></select></label>
+    <label id="statusWrap"><span id="statusLabel"></span><select id="status"></select></label>
+    <div class="view-toggle" id="viewToggle">
+      <button type="button" data-view="list" aria-pressed="true" id="viewList"></button>
+      <button type="button" data-view="compact" aria-pressed="false" id="viewCompact"></button>
+      <button type="button" data-view="grouped" aria-pressed="false" id="viewGrouped"></button>
+    </div>
   </section>
-  <p class="muted" id="result" role="status"></p>
+  <div class="result-bar">
+    <span class="muted" id="result" role="status"></span>
+    <div class="result-controls">
+      <button type="button" class="mini-ctrl" id="toggleGroupsBtn" hidden></button>
+      <select class="mini-ctrl" id="pageSizeSelect" aria-label="Items per page">
+        <option value="24">24 / 页</option><option value="50">50 / 页</option><option value="100">100 / 页</option>
+      </select>
+      <button type="button" class="mini-ctrl" id="pathModeBtn"></button>
+    </div>
+  </div>
   <section id="operations"></section>
-  <nav class="pages" id="pages" hidden><button id="previous"></button><span id="pageNumber"></span><button id="next"></button></nav>
+  <nav class="pages" id="pages" hidden>
+    <button type="button" id="firstPage"></button>
+    <button type="button" id="previous"></button>
+    <span class="page-jump-wrap"><input type="number" id="pageInput" min="1" aria-label="Page number"><span id="pageTotal"></span></span>
+    <button type="button" id="next"></button>
+    <button type="button" id="lastPage"></button>
+  </nav>
   <footer id="snapshot"></footer>
 </main>
 <script type="application/json" id="historyData">__HISTORY_DATA__</script>
@@ -82,143 +222,695 @@ footer{margin-top:18px;font-size:12px}
 'use strict';
 const $ = id => document.getElementById(id);
 const data = JSON.parse($('historyData').textContent);
-const en = document.documentElement.lang === 'en';
+let lang = document.documentElement.lang === 'en' ? 'en' : 'zh-CN';
 const preview = data.mode === 'preview';
+const themeKey = 'tidy-file-tree-theme';
+const svgNS = 'http://www.w3.org/2000/svg';
+const ALL_BATCHES = '__ALL__';
+try {
+  const savedTheme = localStorage.getItem(themeKey) ?? localStorage.getItem('packtidy-theme');
+  if (savedTheme === 'light' || savedTheme === 'dark') document.documentElement.dataset.theme = savedTheme;
+} catch (_) {}
 const labels = {
   title:['TidyFileTree · 执行历史','TidyFileTree · Execution history'],
   previewTitle:['TidyFileTree · 执行预演','TidyFileTree · Execution preview'],
-  ready:['拟执行','Planned'], eligible:['通过预检','Passed preflight'], blocked:['预检拦截','Blocked'],
-  blockers:['按动作编号核对以下拦截项，修正后重新预演。','Check these blockers by action number and run the preview again.'],
-  blockedReceipt:['整份清单已拦截。修正以下动作后，再重新预演并生成执行清单。','The entire batch is blocked. Fix these actions and preview again to generate an execution receipt.'],
-  parents:['可能新建的父目录','Parent directories to be created'],
-  previewFrom:['来源','Source'], previewTo:['预计最终落点','Expected final destination'],
-  previewSnapshot:['执行前的预检快照 · {time}。','Preflight snapshot captured before execution · {time}.'],
-  previewSearch:['搜索通过预检的动作','Search actions that passed preflight'], previewHint:['路径或动作编号','Path or action number'],
-  previewResult:['显示 {count} 项拟执行动作','{count} proposed actions'],
-  eligibleResult:['{count} 项通过预检，整份清单仍被拦截','{count} actions passed preflight; the batch is blocked'],
-  previewEmpty:['没有通过预检的拟执行动作。','No proposed actions passed preflight.'],
-  batches:['记录批次','Batches'], done:['已完成','Completed'], pending:['未完成','Open'],
+  ready:['待执行','Planned'], eligible:['已通过预检','Passed preflight'], blocked:['已拦截','Blocked'],
+  crossCount:['跨卷移动','Cross-volume'], newDirs:['将新建目录','New folders'],
+  flowTitle:['流向概览','Movement flow'], flowHint:['点击目录节点可筛选（超 6 个目录自动归并）','Click a folder to filter (top 6 shown)'],
+  flowHide:['收起流向图','Hide flow'], flowShow:['展开流向图','Show flow'],
+  otherFolders:['其余 {count} 个目录','{count} other folders'],
+  pathRel:['相对路径','Relative paths'], pathFull:['完整路径','Full paths'],
+  batchPanelTitle:['执行批次（共 {count} 批）','Execution batches ({count})'],
+  allBatches:['全部批次','All batches'], allBatchesMeta:['跨批次统一检索','Search across all runs'],
+  batchApply:['整理批次','Apply run'], batchUndoRun:['撤销批次','Undo run'],
+  onlyIssueBatches:['只看异常批次 ({count})','Issues only ({count})'],
+  showAllBatches:['显示全部批次','Show all batches'],
+  hits:['命中 {count}','{count} hits'],
+  undoBatchBtn:['撤销此批次…','Undo this batch…'], undoBatchHide:['收起撤销命令','Hide undo command'],
+  copyUndo:['复制撤销预演命令','Copy undo preview cmd'], copySingleUndo:['复制单条撤销','Undo item'], copied:['已复制','Copied'],
+  stepDetails:['步骤详情','Step details'],
+  undoneBy:['已被 #{seq} 撤销','Undone by #{seq}'],
+  expandAllGroups:['展开全部分组','Expand all groups'], collapseAllGroups:['收起全部分组','Collapse all groups'],
+  loadMore:['再加载 {count} 项（剩余 {left} 项）','Load {count} more ({left} remaining)'],
+  perPage:['{n} 条/页','{n} / page'],
+  colOp:['操作','Action'], colFrom:['原路径','Source'], colTo:['目标路径','Destination'], colTime:['时间 / 编号','Time / #'], colState:['状态','Status'],
+  blockers:['以下动作未通过安全预检，请按编号修正动作表后重新预演：','These actions failed preflight checks. Fix them by number and preview again:'],
+  blockedReceipt:['本次预演存在拦截项，未生成执行清单（receipt）。修正以下动作后请重新预演：','This batch is blocked and no execution receipt was written. Fix these actions and preview again:'],
+  parents:['将自动创建的父目录','Parent folders to be created'],
+  previewFrom:['来源路径','Source'], previewTo:['预计落点','Expected destination'],
+  previewSnapshot:['执行前预检快照，生成于 {time}（尚未改动任何文件）。','Preflight snapshot captured {time} (no files changed).'],
+  previewSearch:['筛选预演动作','Filter preview actions'], previewHint:['输入路径或编号（如 #3）','Path or action number (e.g. #3)'],
+  previewResult:['共 {count} 项待执行动作','{count} planned actions'],
+  eligibleResult:['{count} 项通过预检，但因上方存在拦截项，整批不会执行','{count} passed preflight, but the whole batch is blocked'],
+  previewEmpty:['没有通过预检的待执行动作。','No actions passed preflight.'],
+  batches:['执行批次','Batches'], done:['已完成','Completed'], pending:['未完成','Open'],
   aborted:['已取消','Cancelled'], failed:['失败','Failed'], other:['其他记录','Other record'],
-  otherStates:['其他状态','Other states'], mirror:['本机镜像缺失、无法读取或与主日志不一致。此页显示主日志，任务结束后请重新生成并核对。','The local mirror is missing, unreadable, or differs from the primary journal. This snapshot shows the primary journal. Regenerate it after the task finishes.'],
-  hidden:['有 {count} 项因保护规则或无法核对跨卷保护状态而隐藏。','{count} operations are hidden by protection rules or because cross-volume protection could not be checked.'],
-  batchLabel:['批次','Batch'], searchLabel:['搜索日志','Search history'], searchHint:['路径、批次号或日志编号','Path, batch ID, or journal number'],
-  statusLabel:['状态','Status'], all:['全部状态','All states'], noBatch:['无匹配批次','No matching batch'],
-  move:['移动','Move'], 'cross-move':['跨卷移动','Cross-volume move'], rename:['改名','Rename'], mkdir:['新建目录','Create directory'],
+  otherStates:['其他状态','Other states'], mirror:['本机备份镜像缺失或与主日志不一致，当前展示主日志内容；建议在任务结束后重新生成并核对。','Local backup mirror is missing or differs from the primary journal. Showing the primary journal; regenerate and verify once the task completes.'],
+  hidden:['已隐藏 {count} 项受保护或无法核验跨卷保护状态的操作。','{count} operations hidden due to protection rules or unverified cross-volume protection.'],
+  searchLabel:['搜索记录','Search history'], searchHint:['输入路径、批次号或 #编号','Path, batch ID, or #number'],
+  kindLabel:['操作类型','Operation type'], allKinds:['全部类型','All types'],
+  statusLabel:['状态','Status'], all:['全部状态','All states'],
+  viewList:['卡片','Cards'], viewCompact:['紧凑表','Compact'], viewGrouped:['按目标分组','By folder'],
+  groupCount:['{count} 项','{count} items'], noDest:['其他目录','Other destinations'],
+  batchItems:['{count} 项','{count} ops'], batchFail:['含异常','has issues'],
+  move:['移动','Move'], 'cross-move':['跨卷移动','Cross-volume move'], rename:['改名','Rename'], mkdir:['新建目录','Create folder'],
   note:['日志备注','Journal note'], undo:['撤销','Undo'], redo:['重做','Redo'],
-  from:['原路径','Source'], to:['记录的落点','Recorded destination'], prepared:['已记准备记录','Prepare recorded'],
-  recover:['恢复时记入','Recorded by recovery'],
-  original:['原操作 #{seq}','Original operation #{seq}'], related:['后续相关操作 #{seq}','Related later operation #{seq}'],
-  result:['此批次显示 {count} 项','{count} operations in this batch'],
-  empty:['主日志暂无可显示的执行操作。','The primary journal has no visible operations.'],
+  from:['原路径','Source'], to:['目标路径','Destination'], mkdirPath:['新建目录路径','Directory path'], prepared:['准备执行','Prepared'],
+  recover:['由恢复流程补记','Recorded by recovery'],
+  original:['原操作 #{seq}','Original #{seq}'], related:['关联操作 #{seq}','Related #{seq}'],
+  result:['当前显示 {count} 项操作','Showing {count} operations'],
+  resultAll:['跨全部批次共 {count} 项操作','{count} operations across all batches'],
+  empty:['主日志暂无可显示的操作记录。','No visible operations in the primary journal.'],
   noMatch:['没有符合筛选条件的操作。','No operations match the filters.'],
-  previous:['上一页','Previous'], next:['下一页','Next'],
-  snapshot:['只读快照 · {time}。未完成表示快照中尚无完成记录，操作可能仍在进行。','Read-only snapshot · {time}. Open operations have no recorded completion yet and may still be running.'],
+  firstPage:['首页','First'], previous:['上一页','Prev'], next:['下一页','Next'], lastPage:['末页','Last'],
+  snapshot:['只读快照，生成于 {time}。「未完成」表示当时尚无结束记录，操作可能仍在执行或已中断。','Read-only snapshot captured {time}. "Open" means no completion was recorded yet — the action may still be running or interrupted.'],
 };
-const t = (key, values={}) => labels[key][Number(en)].replace(/\{([a-z]+)\}/g, (_, name) => values[name]);
+const t = (key, values={}) => labels[key][Number(lang === 'en')].replace(/\{([a-z]+)\}/g, (_, name) => values[name]);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const time = value => {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(en ? 'en' : 'zh-CN', {hour12:false});
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(lang === 'en' ? 'en' : 'zh-CN', {hour12:false});
+};
+const shortTime = value => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(date.getMonth()+1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 const current = operation => operation.events[operation.events.length - 1]
   ?? {status:'ready',seq:operation.id,time:data.captured};
+const knownStatuses = new Set(['done','pending','aborted','failed']);
 const bySeq = new Map();
 const successors = new Map();
 const batchLatest = new Map();
+const batchStats = new Map();
 const totals = {done:0,pending:0,otherStates:0};
-const pageSize = 24;
+const uniqueParents = new Set();
+let crossTotal = 0;
+let pageSize = 24;
 let page = 0;
+let viewMode = 'list';
+let showFullPath = false;
+let selectedBatch = '';
+let undoDrawerOpen = false;
+let onlyIssueBatches = false;
+let flowCollapsed = false;
+let searchTimer = 0;
+let lastFlowKey = '';
+let groupedData = new Map();
+const groupRenderLimit = new Map();
 
+const isWinRoot = /^(?:[A-Za-z]:\\|\\\\)/.test(data.root);
+const rootTrim = data.root.replace(/[\\/]$/, '');
+const journalPath = data.journalPath || (rootTrim + (isWinRoot ? '\\' : '/') + '_organize' + (isWinRoot ? '\\' : '/') + 'journal.tsv');
+const sysFlag = data.systemDrive ? ' --allow-system-drive' : '';
+function relPath(value) {
+  if (!value) return '';
+  if (showFullPath) return value;
+  const cmpRoot = isWinRoot ? rootTrim.toLocaleLowerCase() : rootTrim;
+  const cmpVal = isWinRoot ? value.toLocaleLowerCase() : value;
+  if (cmpVal === cmpRoot) return '.';
+  if (cmpVal.startsWith(cmpRoot + '\\') || cmpVal.startsWith(cmpRoot + '/')) {
+    return value.slice(rootTrim.length + 1);
+  }
+  return value;
+}
+function parentDir(path) {
+  if (!path) return '';
+  const idx = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
+  return idx > 0 ? path.slice(0, idx) : path;
+}
+function splitSegs(value) {
+  return String(value).split(/[\\/]+/).filter(Boolean);
+}
+function renderBreadcrumbs(value, diffStart, tone) {
+  const segs = splitSegs(value);
+  if (!segs.length) return esc(value || '—');
+  return segs.map((seg, idx) => {
+    const isLeaf = idx === segs.length - 1;
+    const cls = ['seg'];
+    if (idx < diffStart) cls.push('seg-prefix');
+    else if (tone) cls.push(tone);
+    if (isLeaf) cls.push('seg-leaf');
+    return (idx ? '<span class="seg-sep" aria-hidden="true">›</span>' : '') + `<span class="${cls.join(' ')}">${esc(seg)}</span>`;
+  }).join('');
+}
+function diffPaths(before, after) {
+  const bDisp = relPath(before), aDisp = relPath(after);
+  if (!before || !after) {
+    return [renderBreadcrumbs(bDisp, 0, ''), renderBreadcrumbs(aDisp, 0, 'seg-new')];
+  }
+  const a = splitSegs(bDisp), b = splitSegs(aDisp);
+  let i = 0;
+  while (i < a.length && i < b.length) {
+    const eq = isWinRoot ? a[i].toLocaleLowerCase() === b[i].toLocaleLowerCase() : a[i] === b[i];
+    if (!eq) break;
+    i++;
+  }
+  return [renderBreadcrumbs(bDisp, i, 'seg-old'), renderBreadcrumbs(aDisp, i, 'seg-new')];
+}
+
+// Precompute search haystacks and batch stats once for fast filtering even on 5,000+ operations.
 for (const op of data.operations) {
   const last = current(op);
+  op._last = last;
+  op._hay = [op.run, op.before, op.after].filter(Boolean).join('\n').toLocaleLowerCase().replace(/\//g, '\\');
+  op._seqs = new Set(op.events.map(e => String(e.seq)));
   for (const event of op.events) bySeq.set(event.seq, op);
   if (op.inverseOf) {
     if (!successors.has(op.inverseOf)) successors.set(op.inverseOf, []);
     successors.get(op.inverseOf).push(op.id);
   }
   if (!batchLatest.has(op.run) || batchLatest.get(op.run).seq < last.seq) batchLatest.set(op.run,last);
+  const st = batchStats.get(op.run) ?? {count:0, moves:0, renames:0, mkdirs:0, undos:0, hasIssue:false};
+  st.count++;
+  if (op.direction === 'undo') st.undos++;
+  if (op.kind === 'move' || op.kind === 'cross-move') st.moves++;
+  else if (op.kind === 'rename') st.renames++;
+  else if (op.kind === 'mkdir') st.mkdirs++;
+  if (last.status === 'failed' || last.status === 'aborted' || last.status === 'pending') st.hasIssue = true;
+  batchStats.set(op.run, st);
+  if (op.kind === 'cross-move') crossTotal++;
+  for (const p of op.parents ?? []) uniqueParents.add(p);
   totals[last.status === 'done' || last.status === 'pending' ? last.status : 'otherStates']++;
 }
 const batches = [...batchLatest.keys()].sort((a,b) => batchLatest.get(b).seq - batchLatest.get(a).seq);
+const issueBatchCount = batches.filter(r => batchStats.get(r).hasIssue).length;
+selectedBatch = batches[0] || '';
+// Default to compact table automatically when a single view has a huge number of operations.
+if (data.operations.length >= 120) viewMode = 'compact';
+
+async function copyCmdText(cmd, btn, restoreKey) {
+  try {
+    await navigator.clipboard.writeText(cmd);
+    btn.textContent = t('copied');
+    setTimeout(() => { btn.textContent = t(restoreKey); }, 1400);
+  } catch (_) {}
+}
+
+function renderBatchStrip(matchCountsByRun) {
+  if (preview || !batches.length) { $('batchPanel').hidden = true; return; }
+  $('batchPanel').hidden = false;
+  $('batchPanelTitle').textContent = t('batchPanelTitle', {count: batches.length});
+  $('issueBatchesBtn').hidden = !issueBatchCount;
+  if (issueBatchCount) {
+    $('issueBatchesBtn').textContent = t(onlyIssueBatches ? 'showAllBatches' : 'onlyIssueBatches', {count: issueBatchCount});
+  }
+  const hasSearch = Boolean($('search').value.trim());
+  let runs = onlyIssueBatches ? batches.filter(r => batchStats.get(r).hasIssue) : batches;
+  if (hasSearch && matchCountsByRun) {
+    const matching = runs.filter(r => matchCountsByRun.has(r));
+    if (matching.length) runs = matching;
+  }
+  if (selectedBatch !== ALL_BATCHES && runs.length && !runs.includes(selectedBatch)) selectedBatch = runs[0];
+
+  // Quick jump dropdown when there are many batches (> 6)
+  const jumpEl = $('batchJump');
+  jumpEl.hidden = batches.length <= 6;
+  if (!jumpEl.hidden) {
+    jumpEl.innerHTML = `<option value="${ALL_BATCHES}">${esc(t('allBatches'))} (${data.operations.length})</option>` +
+      batches.map(run => {
+        const s = batchStats.get(run);
+        const hits = hasSearch && matchCountsByRun?.get(run) ? ` · ${t('hits',{count:matchCountsByRun.get(run)})}` : '';
+        return `<option value="${esc(run)}">${esc(shortTime(batchLatest.get(run).time))} · ${esc(t('batchItems',{count:s.count}))}${esc(hits)}</option>`;
+      }).join('');
+    jumpEl.value = selectedBatch;
+  }
+
+  // Cap rendered horizontal cards to keep DOM lightweight even with 100+ historical batches (keep selected visible)
+  const MAX_STRIP = 18;
+  let visibleRuns = runs.slice(0, MAX_STRIP);
+  if (selectedBatch !== ALL_BATCHES && runs.includes(selectedBatch) && !visibleRuns.includes(selectedBatch)) {
+    visibleRuns = [selectedBatch, ...visibleRuns.slice(0, MAX_STRIP - 1)];
+  }
+  const allCard = batches.length > 1
+    ? `<button type="button" class="batch-card all-batch-card" data-batch="${ALL_BATCHES}" aria-pressed="${selectedBatch === ALL_BATCHES}">
+        <div class="batch-card-top"><span>${esc(t('allBatches'))}</span><span class="tag">${data.operations.length}</span></div>
+        <div class="batch-card-meta"><span>${esc(t('allBatchesMeta'))}</span></div>
+      </button>` : '';
+  $('batchStrip').innerHTML = allCard + visibleRuns.map(run => {
+    const s = batchStats.get(run);
+    const isUndoRun = s.undos > 0 && s.undos === s.count;
+    const badgeCls = s.hasIssue ? 'tag pending' : isUndoRun ? 'tag undo-badge' : 'tag done';
+    const badgeTxt = s.hasIssue ? t('batchFail') : t(isUndoRun ? 'batchUndoRun' : 'batchApply');
+    const breakdown = [];
+    if (s.moves) breakdown.push(`${t('move')} ${s.moves}`);
+    if (s.renames) breakdown.push(`${t('rename')} ${s.renames}`);
+    if (s.mkdirs) breakdown.push(`${t('mkdir')} ${s.mkdirs}`);
+    const shortId = run ? (run.length > 12 ? '…' + run.slice(-8) : run) : '—';
+    const hits = hasSearch && matchCountsByRun?.get(run)
+      ? `<span class="hit-badge">${esc(t('hits',{count:matchCountsByRun.get(run)}))}</span>` : '';
+    return `<button type="button" class="batch-card" data-batch="${esc(run)}" aria-pressed="${selectedBatch === run}">
+      <div class="batch-card-top"><span>${esc(shortTime(batchLatest.get(run).time))}</span><span>${hits} <span class="${badgeCls}">${esc(badgeTxt)}</span></span></div>
+      <div class="batch-card-meta"><span>${esc(breakdown.join(' · ') || t('batchItems',{count:s.count}))}</span><span class="batch-id-short" title="${esc(run)}">${esc(shortId)}</span></div>
+    </button>`;
+  }).join('');
+
+  const hasSingleBatch = Boolean(selectedBatch && selectedBatch !== ALL_BATCHES && runs.includes(selectedBatch));
+  $('undoDrawerBtn').hidden = !hasSingleBatch;
+  $('undoDrawerBtn').textContent = t(undoDrawerOpen ? 'undoBatchHide' : 'undoBatchBtn');
+  $('undoDrawer').hidden = !hasSingleBatch || !undoDrawerOpen;
+  if (hasSingleBatch) {
+    const cmd = `tidy-file-tree undo --journal "${journalPath.replace(/"/g,'\\"')}" --run-id ${selectedBatch}${sysFlag} --dry-run`;
+    $('cmdText').textContent = cmd;
+    $('copyCmd').textContent = t('copyUndo');
+    $('copyCmd').onclick = () => copyCmdText(cmd, $('copyCmd'), 'copyUndo');
+  }
+}
+
+function renderFlowMap(ops, force) {
+  const flowKey = `${lang}|${showFullPath}|${preview ? 'p' : selectedBatch}|${ops.length}`;
+  if (!force && flowKey === lastFlowKey) {
+    const activeQuery = $('search').value.trim();
+    for (const g of $('flowSvg').querySelectorAll('.flow-node')) {
+      g.classList.toggle('active', Boolean(activeQuery && g.getAttribute('data-filter-path') === activeQuery));
+    }
+    return;
+  }
+  lastFlowKey = flowKey;
+  if (!ops.length) { $('flowCard').hidden = true; return; }
+  const rawEdges = [], srcTotals = new Map(), dstTotals = new Map();
+  for (const op of ops) {
+    if (!op.before || !op.after) continue;
+    const srcRel = relPath(parentDir(op.before)) || '.';
+    const dstRel = relPath(parentDir(op.after)) || '.';
+    const srcKey = splitSegs(srcRel).slice(0, 2).join('/') || '.';
+    const dstKey = splitSegs(dstRel).slice(0, 2).join('/') || '.';
+    rawEdges.push([srcKey, dstKey]);
+    srcTotals.set(srcKey, (srcTotals.get(srcKey) || 0) + 1);
+    dstTotals.set(dstKey, (dstTotals.get(dstKey) || 0) + 1);
+  }
+  if (!rawEdges.length) { $('flowCard').hidden = true; return; }
+
+  // Cap at Top 6 sources & Top 6 destinations, aggregating remaining folders into a clean "other folders" node.
+  const MAX_NODES = 6;
+  const topSrcs = [...srcTotals.entries()].sort((a,b) => b[1] - a[1]);
+  const topDsts = [...dstTotals.entries()].sort((a,b) => b[1] - a[1]);
+  const keepSrc = new Set(topSrcs.slice(0, MAX_NODES).map(e => e[0]));
+  const keepDst = new Set(topDsts.slice(0, MAX_NODES).map(e => e[0]));
+  const otherSrcCount = Math.max(0, topSrcs.length - MAX_NODES);
+  const otherDstCount = Math.max(0, topDsts.length - MAX_NODES);
+  const OTHER_SRC = '__OTHER_SRC__', OTHER_DST = '__OTHER_DST__';
+
+  const edgeCounts = new Map(), aggSrc = new Map(), aggDst = new Map();
+  for (const [s0, d0] of rawEdges) {
+    const s = keepSrc.has(s0) ? s0 : OTHER_SRC;
+    const d = keepDst.has(d0) ? d0 : OTHER_DST;
+    const key = s + '\0' + d;
+    edgeCounts.set(key, (edgeCounts.get(key) || 0) + 1);
+    aggSrc.set(s, (aggSrc.get(s) || 0) + 1);
+    aggDst.set(d, (aggDst.get(d) || 0) + 1);
+  }
+  const srcs = [...aggSrc.entries()].sort((a,b) => (a[0] === OTHER_SRC) - (b[0] === OTHER_SRC) || b[1] - a[1]);
+  const dsts = [...aggDst.entries()].sort((a,b) => (a[0] === OTHER_DST) - (b[0] === OTHER_DST) || b[1] - a[1]);
+
+  $('flowCard').hidden = false;
+  $('flowTitle').textContent = t('flowTitle');
+  $('flowHint').textContent = t('flowHint');
+  $('flowToggleBtn').textContent = t(flowCollapsed ? 'flowShow' : 'flowHide');
+  $('flowSvg').hidden = flowCollapsed;
+  if (flowCollapsed) return;
+  const activeQuery = $('search').value.trim();
+  const rowH = 30, gap = 7, boxW = 280, w = 860;
+  const h = Math.max(srcs.length, dsts.length) * (rowH + gap) + 6;
+  const svgEl = $('flowSvg');
+  svgEl.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  const frag = document.createDocumentFragment();
+  const sPos = new Map(), dPos = new Map();
+  const trim = s => s.length > 28 ? '…' + s.slice(-26) : s;
+  const mk = (tag, attrs) => {
+    const el = document.createElementNS(svgNS, tag);
+    for (const [k,v] of Object.entries(attrs)) el.setAttribute(k, v);
+    return el;
+  };
+  srcs.forEach(([name, cnt], i) => {
+    const y = i * (rowH + gap) + 3;
+    sPos.set(name, y + rowH / 2);
+    const isOther = name === OTHER_SRC;
+    const labelTxt = isOther ? t('otherFolders', {count: otherSrcCount}) : trim(name);
+    const g = mk('g', {class:'flow-node' + (isOther ? ' is-other' : '') + (!isOther && activeQuery === name ? ' active' : ''), ...(isOther ? {} : {'data-filter-path': name})});
+    g.append(mk('rect', {x:0, y, width:boxW, height:rowH, rx:7}));
+    const txt = mk('text', {x:12, y:y + 19});
+    txt.textContent = labelTxt;
+    const num = mk('text', {x:boxW - 12, y:y + 19, 'text-anchor':'end', class:'flow-cnt'});
+    num.textContent = String(cnt);
+    g.append(txt, num);
+    frag.append(g);
+  });
+  dsts.forEach(([name, cnt], i) => {
+    const y = i * (rowH + gap) + 3;
+    dPos.set(name, y + rowH / 2);
+    const x = w - boxW;
+    const isOther = name === OTHER_DST;
+    const labelTxt = isOther ? t('otherFolders', {count: otherDstCount}) : trim(name);
+    const g = mk('g', {class:'flow-node' + (isOther ? ' is-other' : '') + (!isOther && activeQuery === name ? ' active' : ''), ...(isOther ? {} : {'data-filter-path': name})});
+    g.append(mk('rect', {x, y, width:boxW, height:rowH, rx:7}));
+    const txt = mk('text', {x:x + 12, y:y + 19});
+    txt.textContent = labelTxt;
+    const num = mk('text', {x:w - 12, y:y + 19, 'text-anchor':'end', class:'flow-cnt'});
+    num.textContent = String(cnt);
+    g.append(txt, num);
+    frag.append(g);
+  });
+  const maxCnt = Math.max(...edgeCounts.values());
+  for (const [key, cnt] of edgeCounts) {
+    const [s, d] = key.split('\0');
+    const y1 = sPos.get(s), y2 = dPos.get(d);
+    const x1 = boxW, x2 = w - boxW, mid = w / 2;
+    const sw = 2 + (cnt / maxCnt) * 7;
+    const path = mk('path', {d:`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`, class:'flow-edge', 'stroke-width':sw.toFixed(1)});
+    const tip = mk('title', {});
+    const sLabel = s === OTHER_SRC ? t('otherFolders',{count:otherSrcCount}) : s;
+    const dLabel = d === OTHER_DST ? t('otherFolders',{count:otherDstCount}) : d;
+    tip.textContent = `${sLabel} → ${dLabel} (${cnt})`;
+    path.append(tip);
+    frag.append(path);
+  }
+  svgEl.replaceChildren(frag);
+}
 
 function operationCard(op) {
-  const last = current(op);
+  const last = op._last;
   const kind = t(op.kind);
   const heading = preview ? `#${op.id} · ${kind}` : op.direction ? t(op.direction) + ' · ' + kind : kind;
-  const path = (label, value) => `<dl><dt>${t(label)}</dt><dd>${esc(value || '—')}</dd></dl>`;
-  const route = op.before || op.after
-    ? `<div class="route">${path(preview ? 'previewFrom' : 'from',op.before)}<span aria-hidden="true">→</span>${path(preview ? 'previewTo' : 'to',op.after)}</div>` : '';
-  const parents = op.parents?.length ? `<div class="parents muted">${t('parents')} · ${op.parents.map(esc).join(' · ')}</div>` : '';
-  const events = op.events.map(event => `<li class="${event.status}"><strong>${t(event.status === 'pending' ? 'prepared' : event.status)} · #${event.seq}</strong><time>${esc(time(event.time))}</time>${event.recovered ? ' · ' + t('recover') : ''}</li>`).join('');
-  const links = op.events.flatMap(event => (successors.get(event.seq) || []).map(seq => ({seq,label:'related'})));
-  if (op.inverseOf) links.unshift({seq:op.inverseOf,label:'original'});
-  const related = links.map(({seq,label}) => `<button type="button" data-seq="${seq}">${t(label,{seq})}</button>`).join('');
-  return `<article class="operation" id="operation-${op.id}" tabindex="-1">
-    <div class="op-head"><h3>${heading}</h3><span class="tag ${last.status}">${t(data.receiptBlocked ? 'eligible' : last.status)}</span></div>
-    ${route}${parents}${events ? `<ol class="steps">${events}</ol>` : ''}${related ? `<div class="related">${related}</div>` : ''}</article>`;
+  const [beforeHtml, afterHtml] = diffPaths(op.before, op.after);
+  let route = '';
+  if (!op.before && op.after) {
+    route = `<div class="route single"><dl title="${esc(op.after)}"><dt>${t(op.kind === 'mkdir' ? 'mkdirPath' : (preview ? 'previewTo' : 'to'))}</dt><dd>${afterHtml}</dd></dl></div>`;
+  } else if (op.before || op.after) {
+    route = `<div class="route"><dl title="${esc(op.before || '')}"><dt>${t(preview ? 'previewFrom' : 'from')}</dt><dd>${beforeHtml}</dd></dl><span class="arrow" aria-hidden="true">→</span><dl title="${esc(op.after || '')}"><dt>${t(preview ? 'previewTo' : 'to')}</dt><dd>${afterHtml}</dd></dl></div>`;
+  }
+  const parents = op.parents?.length ? `<div class="parents muted">${t('parents')} · ${op.parents.map(p => esc(relPath(p))).join(' · ')}</div>` : '';
+  const laterSeqs = op.events.flatMap(event => successors.get(event.seq) || []);
+  const wasUndone = laterSeqs.length > 0 && op.direction !== 'undo';
+  const crossTag = op.kind === 'cross-move' ? `<span class="tag cross">${t('cross-move')}</span>` : '';
+  const inverseTags = [];
+  if (op.inverseOf) inverseTags.push(`<button type="button" class="tag-link" data-seq="${op.inverseOf}">${esc(t('original',{seq:op.inverseOf}))}</button>`);
+  for (const seq of laterSeqs) inverseTags.push(`<button type="button" class="tag-link" data-seq="${seq}">${esc(t(wasUndone ? 'undoneBy' : 'related',{seq}))}</button>`);
+
+  let footerHtml = '';
+  if (op.events.length) {
+    const abnormal = last.status !== 'done' || op.events.some(e => e.recovered);
+    const seqSpan = op.events.length > 1 ? `#${op.events[0].seq} → #${last.seq}` : `#${last.seq}`;
+    const eventsOl = `<ol class="steps">${op.events.map(event => `<li class="${event.status}"><strong>${t(event.status === 'pending' ? 'prepared' : event.status)} · #${event.seq}</strong><time>${esc(time(event.time))}</time>${event.recovered ? ' · ' + t('recover') : ''}</li>`).join('')}</ol>`;
+    const canUndoSingle = !preview && last.status === 'done' && !wasUndone && op.kind !== 'note';
+    const undoBtn = canUndoSingle ? `<button type="button" class="op-mini-btn" data-copy-seq="${last.seq}">${esc(t('copySingleUndo'))}</button>` : '';
+    const batchNote = selectedBatch === ALL_BATCHES && op.run ? `<span class="batch-id-short" title="${esc(op.run)}">…${esc(op.run.slice(-8))}</span>` : '';
+    if (abnormal) {
+      footerHtml = eventsOl;
+    } else {
+      footerHtml = `<div class="op-foot">
+        <div class="op-foot-left"><span>${esc(shortTime(last.time))}</span><span>·</span><span>${esc(seqSpan)}</span>${batchNote}</div>
+        <div class="op-foot-actions">${undoBtn}</div>
+      </div>
+      <details class="steps-details"><summary>${esc(t('stepDetails'))}</summary>${eventsOl}</details>`;
+    }
+  }
+  const cardCls = `operation kind-${esc(op.kind)}${op.direction ? ' dir-' + esc(op.direction) : ''}${wasUndone ? ' was-undone' : ''}`;
+  return `<article class="${cardCls}" id="operation-${op.id}" tabindex="-1">
+    <div class="op-head"><h3>${heading}</h3><div class="tag-group">${inverseTags.join('')}${crossTag}<span class="tag ${last.status}">${t(data.receiptBlocked ? 'eligible' : last.status)}</span></div></div>
+    ${route}${parents}${footerHtml}</article>`;
+}
+
+function compactRow(op) {
+  const last = op._last;
+  const kind = op.direction ? `${t(op.direction)}·${t(op.kind)}` : t(op.kind);
+  const laterSeqs = op.events.flatMap(event => successors.get(event.seq) || []);
+  const wasUndone = laterSeqs.length > 0 && op.direction !== 'undo';
+  const linkBtns = [
+    ...(op.inverseOf ? [`<button type="button" class="tag-link" data-seq="${op.inverseOf}">#${op.inverseOf}</button>`] : []),
+    ...laterSeqs.map(seq => `<button type="button" class="tag-link" data-seq="${seq}">${esc(t(wasUndone ? 'undoneBy' : 'related',{seq}))}</button>`),
+  ].join(' ');
+  const seqLabel = preview ? `#${op.id}` : `#${last.seq}`;
+  const timeCell = preview ? seqLabel : `${esc(shortTime(last.time))} · ${seqLabel}`;
+  const canUndoSingle = !preview && last.status === 'done' && !wasUndone && op.kind !== 'note';
+  const undoBtn = canUndoSingle ? ` <button type="button" class="op-mini-btn" data-copy-seq="${last.seq}">${esc(t('copySingleUndo'))}</button>` : '';
+  return `<tr id="operation-${op.id}" tabindex="-1" class="${wasUndone ? 'was-undone' : ''}">
+    <td><strong>${esc(kind)}</strong></td>
+    <td class="compact-path" title="${esc(op.before || '')}">${esc(relPath(op.before) || '—')}</td>
+    <td class="compact-path" title="${esc(op.after || '')}">${esc(relPath(op.after) || '—')}</td>
+    <td class="muted" style="white-space:nowrap">${timeCell}</td>
+    <td><span class="tag ${last.status}">${t(data.receiptBlocked ? 'eligible' : last.status)}</span> ${linkBtns}${undoBtn}</td>
+  </tr>`;
+}
+
+function renderGroupBody(dest, list) {
+  const limit = groupRenderLimit.get(dest) ?? 20;
+  const slice = list.slice(0, limit);
+  const left = list.length - slice.length;
+  const moreBtn = left > 0
+    ? `<button type="button" class="load-more-btn" data-load-group="${esc(dest)}">${esc(t('loadMore', {count: Math.min(50, left), left}))}</button>` : '';
+  return slice.map(operationCard).join('') + moreBtn;
 }
 
 function render(jump) {
   const query = $('search').value.trim().toLocaleLowerCase();
+  const normQuery = query.replace(/\//g, '\\');
+  const numQuery = query.replace(/^#/, '');
   const status = preview ? 'all' : $('status').value;
-  const matches = data.operations.filter(op =>
-    (status === 'all' || current(op).status === status) &&
-    (!query || [op.run,op.before,op.after].some(value => value?.toLocaleLowerCase().includes(query)) ||
-      (preview ? String(op.id) === query.replace(/^#/, '') :
-        op.events.some(event => String(event.seq) === query.replace(/^#/, '')))));
-  const available = new Set(matches.map(op => op.run));
-  const selected = jump?.run ?? $('batch').value;
-  $('batch').innerHTML = batches.filter(run => available.has(run)).map(run =>
-    `<option value="${esc(run)}">${esc(time(batchLatest.get(run).time))} · ${esc(run || '—')}</option>`).join('')
-      || `<option>${t('noBatch')}</option>`;
-  if (available.has(selected)) $('batch').value = selected;
-  $('batch').disabled = !matches.length;
-  const entries = preview ? matches : matches.filter(op => op.run === $('batch').value);
-  const numPages = Math.max(1,Math.ceil(entries.length / pageSize));
-  if (jump) page = Math.max(0,Math.floor(entries.indexOf(jump) / pageSize));
-  page = Math.max(0,Math.min(page,numPages-1));
-  $('result').textContent = entries.length ? t(preview ? (data.receiptBlocked ? 'eligibleResult' : 'previewResult') : 'result',{count:entries.length}) :
-    t(data.operations.length ? 'noMatch' : preview ? 'previewEmpty' : 'empty');
-  $('operations').innerHTML = entries.slice(page * pageSize,(page + 1) * pageSize).map(operationCard).join('');
+  const kindFilter = $('kind').value;
+  const matches = [];
+  const matchCountsByRun = new Map();
+  for (const op of data.operations) {
+    const st = op._last.status;
+    if (status !== 'all' && (status === 'other' ? knownStatuses.has(st) : st !== status)) continue;
+    if (kindFilter !== 'all' && op.kind !== kindFilter) continue;
+    if (query && !op._hay.includes(normQuery) && !(preview ? String(op.id) === numQuery : op._seqs.has(numQuery))) continue;
+    matches.push(op);
+    matchCountsByRun.set(op.run, (matchCountsByRun.get(op.run) || 0) + 1);
+  }
+  if (jump && !preview) selectedBatch = jump.run;
+  renderBatchStrip(matchCountsByRun);
+  const batchOps = preview || selectedBatch === ALL_BATCHES
+    ? data.operations
+    : data.operations.filter(op => op.run === selectedBatch);
+  renderFlowMap(batchOps, false);
+
+  const entries = preview || selectedBatch === ALL_BATCHES
+    ? matches
+    : matches.filter(op => op.run === selectedBatch);
+  $('result').textContent = entries.length
+    ? t(preview ? (data.receiptBlocked ? 'eligibleResult' : 'previewResult') : (selectedBatch === ALL_BATCHES ? 'resultAll' : 'result'), {count: entries.length})
+    : t(data.operations.length ? 'noMatch' : preview ? 'previewEmpty' : 'empty');
+  $('pathModeBtn').textContent = t(showFullPath ? 'pathFull' : 'pathRel');
+  for (const b of $('viewToggle').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.view === viewMode));
+  for (const statEl of $('summary').querySelectorAll('[data-stat-filter]')) {
+    statEl.classList.toggle('active-stat', !preview && $('status').value === statEl.dataset.statFilter);
+  }
+
+  $('toggleGroupsBtn').hidden = viewMode !== 'grouped' || !entries.length;
+  $('pageSizeSelect').hidden = viewMode === 'grouped' || !entries.length;
+
+  if (viewMode === 'grouped' && entries.length) {
+    groupedData = new Map();
+    groupRenderLimit.clear();
+    for (const op of entries) {
+      const destRaw = op.kind === 'mkdir' ? (op.after || t('noDest')) : (parentDir(op.after) || t('noDest'));
+      const dest = relPath(destRaw) || destRaw;
+      if (!groupedData.has(dest)) groupedData.set(dest, []);
+      groupedData.get(dest).push(op);
+    }
+    const autoOpenAll = entries.length <= 30 && groupedData.size <= 8;
+    let idx = 0;
+    $('operations').innerHTML = [...groupedData.entries()].map(([dest, list]) => {
+      const open = autoOpenAll || idx === 0 || (jump && list.includes(jump));
+      idx++;
+      return `<details class="dest-group" data-dest-group="${esc(dest)}"${open ? ' open' : ''}>
+        <summary><span>${esc(dest)}</span><span class="tag">${esc(t('groupCount',{count:list.length}))}</span></summary>
+        <div class="dest-group-body">${open ? renderGroupBody(dest, list) : ''}</div>
+      </details>`;
+    }).join('');
+    $('toggleGroupsBtn').textContent = t(autoOpenAll ? 'collapseAllGroups' : 'expandAllGroups');
+    $('pages').hidden = true;
+    if (jump) $(`operation-${jump.id}`)?.focus();
+    return;
+  }
+
+  const numPages = Math.max(1, Math.ceil(entries.length / pageSize));
+  if (jump) page = Math.max(0, Math.floor(entries.indexOf(jump) / pageSize));
+  page = Math.max(0, Math.min(page, numPages - 1));
+  const slice = entries.slice(page * pageSize, (page + 1) * pageSize);
+
+  if (viewMode === 'compact' && slice.length) {
+    $('operations').innerHTML = `<div class="compact-table-wrap"><table class="compact-table">
+      <thead><tr><th>${t('colOp')}</th><th>${t('colFrom')}</th><th>${t('colTo')}</th><th>${t('colTime')}</th><th>${t('colState')}</th></tr></thead>
+      <tbody>${slice.map(compactRow).join('')}</tbody></table></div>`;
+  } else {
+    $('operations').innerHTML = slice.map(operationCard).join('');
+  }
   $('pages').hidden = numPages === 1;
-  $('pageNumber').textContent = `${page + 1} / ${numPages}`;
-  $('previous').disabled = page === 0;
-  $('next').disabled = page + 1 >= numPages;
+  $('pageInput').max = String(numPages);
+  $('pageInput').value = String(page + 1);
+  $('pageTotal').textContent = `/ ${numPages}`;
+  $('firstPage').disabled = $('previous').disabled = page === 0;
+  $('next').disabled = $('lastPage').disabled = page + 1 >= numPages;
   if (jump) $(`operation-${jump.id}`)?.focus();
 }
 
-for (const id of ['batchLabel','searchLabel','statusLabel','previous','next']) $(id).textContent = t(id);
-document.title = $('title').textContent = t(preview ? 'previewTitle' : 'title');
-$('root').textContent = data.root;
-$('search').placeholder = t(preview ? 'previewHint' : 'searchHint');
-$('status').innerHTML = ['all','done','pending','aborted','failed','other'].map(key => `<option value="${key}">${t(key)}</option>`).join('');
-const summary = preview ? {[data.receiptBlocked ? 'eligible' : 'ready']:data.operations.length,blocked:data.blocked.length} : {batches:batches.length,...totals};
-$('summary').innerHTML = Object.entries(summary).map(([key,value]) => `<div><dt>${t(key)}</dt><dd>${value}</dd></div>`).join('');
-$('mirror').textContent = t('mirror');
-$('mirror').hidden = !data.mirrorDiffers;
-$('hidden').textContent = t('hidden',{count:data.hidden ?? 0});
-$('hidden').hidden = !data.hidden;
-$('snapshot').textContent = t(preview ? 'previewSnapshot' : 'snapshot',{time:time(data.captured)});
-if (preview) {
-  $('filters').classList.add('preview');
-  $('batch').parentElement.hidden = $('status').parentElement.hidden = true;
-  $('searchLabel').textContent = t('previewSearch');
-  if (data.blocked.length) {
-    $('blockers').innerHTML = `<strong>${t(data.receiptBlocked ? 'blockedReceipt' : 'blockers')}</strong><ul>${data.blocked.map(message => `<li>${esc(message)}</li>`).join('')}</ul>`;
-    $('blockers').hidden = false;
+function applyLanguage(next) {
+  lang = next;
+  document.documentElement.lang = lang;
+  $('language').value = lang;
+  for (const id of ['searchLabel','kindLabel','statusLabel','firstPage','previous','next','lastPage','viewList','viewCompact','viewGrouped']) $(id).textContent = t(id);
+  for (const opt of $('pageSizeSelect').options) opt.textContent = t('perPage', {n: opt.value});
+  document.title = $('title').textContent = t(preview ? 'previewTitle' : 'title');
+  $('root').textContent = data.root;
+  $('search').placeholder = t(preview ? 'previewHint' : 'searchHint');
+  const prevKind = $('kind').value || 'all';
+  $('kind').innerHTML = ['all','move','cross-move','rename','mkdir'].map(key => `<option value="${key}">${t(key === 'all' ? 'allKinds' : key)}</option>`).join('');
+  $('kind').value = prevKind;
+  const prevStatus = $('status').value || 'all';
+  $('status').innerHTML = ['all','done','pending','aborted','failed','other'].map(key => `<option value="${key}">${t(key)}</option>`).join('');
+  $('status').value = prevStatus;
+  const summaryCards = preview
+    ? [
+        [data.receiptBlocked ? 'eligible' : 'ready', data.operations.length, data.receiptBlocked ? '' : 'tone-good', ''],
+        ['blocked', data.blocked.length, data.blocked.length ? 'tone-danger' : '', ''],
+        ...(crossTotal ? [['crossCount', crossTotal, 'tone-warn', '']] : []),
+        ...(uniqueParents.size ? [['newDirs', uniqueParents.size, '', '']] : []),
+      ]
+    : [
+        ['batches', batches.length, '', 'all'],
+        ['done', totals.done, 'tone-good', 'done'],
+        ['pending', totals.pending, totals.pending ? 'tone-warn' : '', 'pending'],
+        ['otherStates', totals.otherStates, totals.otherStates ? 'tone-warn' : '', 'other'],
+      ];
+  $('summary').innerHTML = summaryCards.map(([key,value,tone,filterKey]) =>
+    `<div class="${tone}${filterKey ? ' clickable' : ''}"${filterKey ? ` data-stat-filter="${filterKey}"` : ''}><dt>${t(key)}</dt><dd>${value}</dd></div>`
+  ).join('');
+  $('mirror').textContent = t('mirror');
+  $('mirror').hidden = !data.mirrorDiffers;
+  $('hidden').textContent = t('hidden',{count:data.hidden ?? 0});
+  $('hidden').hidden = !data.hidden;
+  $('snapshot').textContent = t(preview ? 'previewSnapshot' : 'snapshot',{time:time(data.captured)});
+  if (preview) {
+    $('filters').classList.add('preview');
+    $('statusWrap').hidden = true;
+    $('searchLabel').textContent = t('previewSearch');
+    if (data.blocked.length) {
+      $('blockers').innerHTML = `<strong>${t(data.receiptBlocked ? 'blockedReceipt' : 'blockers')}</strong><ul>${data.blocked.map(message => `<li>${esc(message)}</li>`).join('')}</ul>`;
+      $('blockers').hidden = false;
+    }
   }
+  lastFlowKey = '';
+  render();
 }
-for (const id of ['search','status','batch']) $(id).addEventListener(id === 'search' ? 'input' : 'change',() => {page = 0; render();});
+$('summary').addEventListener('click', event => {
+  const card = event.target.closest('[data-stat-filter]');
+  if (!card || preview) return;
+  const next = card.dataset.statFilter;
+  $('status').value = $('status').value === next ? 'all' : next;
+  page = 0;
+  render();
+});
+$('batchStrip').addEventListener('click', event => {
+  const card = event.target.closest('[data-batch]');
+  if (!card) return;
+  selectedBatch = card.dataset.batch;
+  page = 0;
+  render();
+});
+$('batchJump').addEventListener('change', event => {
+  selectedBatch = event.target.value;
+  page = 0;
+  render();
+});
+$('issueBatchesBtn').addEventListener('click', () => {
+  onlyIssueBatches = !onlyIssueBatches;
+  page = 0;
+  render();
+});
+$('undoDrawerBtn').addEventListener('click', () => {
+  undoDrawerOpen = !undoDrawerOpen;
+  renderBatchStrip();
+});
+$('flowToggleBtn').addEventListener('click', () => {
+  flowCollapsed = !flowCollapsed;
+  lastFlowKey = '';
+  render();
+});
+$('flowSvg').addEventListener('click', event => {
+  const node = event.target.closest('[data-filter-path]');
+  if (!node) return;
+  const val = node.getAttribute('data-filter-path');
+  $('search').value = $('search').value === val ? '' : val;
+  page = 0;
+  render();
+});
+$('pathModeBtn').addEventListener('click', () => { showFullPath = !showFullPath; lastFlowKey = ''; render(); });
+$('pageSizeSelect').addEventListener('change', event => { pageSize = Number(event.target.value) || 24; page = 0; render(); });
+$('toggleGroupsBtn').addEventListener('click', () => {
+  const all = [...$('operations').querySelectorAll('details.dest-group')];
+  const openAll = all.some(d => !d.open);
+  for (const d of all) {
+    d.open = openAll;
+    if (openAll) {
+      const body = d.querySelector('.dest-group-body');
+      const dest = d.dataset.destGroup;
+      if (body && !body.childElementCount && groupedData.has(dest)) body.innerHTML = renderGroupBody(dest, groupedData.get(dest));
+    }
+  }
+  $('toggleGroupsBtn').textContent = t(openAll ? 'collapseAllGroups' : 'expandAllGroups');
+});
+$('operations').addEventListener('toggle', event => {
+  const d = event.target;
+  if (!d.matches?.('details.dest-group') || !d.open) return;
+  const body = d.querySelector('.dest-group-body');
+  const dest = d.dataset.destGroup;
+  if (body && !body.childElementCount && groupedData.has(dest)) body.innerHTML = renderGroupBody(dest, groupedData.get(dest));
+}, true);
+$('language').addEventListener('change', event => applyLanguage(event.target.value));
+$('theme').addEventListener('click', () => {
+  const current = document.documentElement.dataset.theme;
+  const dark = current ? current === 'dark' : matchMedia('(prefers-color-scheme:dark)').matches;
+  const next = dark ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try {localStorage.setItem(themeKey,next);} catch (_) {}
+});
+$('viewToggle').addEventListener('click', event => {
+  const btn = event.target.closest('button[data-view]');
+  if (!btn) return;
+  viewMode = btn.dataset.view;
+  page = 0;
+  render();
+});
+$('search').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { page = 0; render(); }, 110);
+});
+for (const id of ['status','kind']) $(id).addEventListener('change',() => {page = 0; render();});
+$('firstPage').addEventListener('click',() => {page = 0; render();});
 $('previous').addEventListener('click',() => {page--; render();});
 $('next').addEventListener('click',() => {page++; render();});
+$('lastPage').addEventListener('click',() => {page = 999999; render();});
+$('pageInput').addEventListener('change', event => {
+  const target = Number(event.target.value);
+  if (Number.isFinite(target) && target >= 1) { page = target - 1; render(); }
+});
 $('operations').addEventListener('click',event => {
+  const moreBtn = event.target.closest('[data-load-group]');
+  if (moreBtn) {
+    const dest = moreBtn.dataset.loadGroup;
+    groupRenderLimit.set(dest, (groupRenderLimit.get(dest) ?? 20) + 50);
+    const body = moreBtn.closest('.dest-group-body');
+    if (body && groupedData.has(dest)) body.innerHTML = renderGroupBody(dest, groupedData.get(dest));
+    return;
+  }
+  const copyBtn = event.target.closest('[data-copy-seq]');
+  if (copyBtn) {
+    const seq = copyBtn.dataset.copySeq;
+    const cmd = `tidy-file-tree undo --journal "${journalPath.replace(/"/g,'\\"')}" --seq ${seq}${sysFlag} --dry-run`;
+    copyCmdText(cmd, copyBtn, 'copySingleUndo');
+    return;
+  }
   const op = bySeq.get(Number(event.target.closest('[data-seq]')?.dataset.seq));
   if (!op) return;
   $('search').value = '';
   $('status').value = 'all';
+  $('kind').value = 'all';
   render(op);
 });
-render();
+applyLanguage(lang);
 </script>
 </body>
 </html>

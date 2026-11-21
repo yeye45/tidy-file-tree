@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 import sys
 
-from safety import (SafetyError, assert_no_links, block_kind, is_reparse, key,
-                    load_markers, normal, within)
+from safety import (SafetyError, assert_no_links, block_kind, is_reparse,
+                    is_system_attr, is_system_root, key, load_markers, nested_verdict,
+                    normal, organize_dir, within)
 
 SKIP_NAMES = {
     '$recycle.bin', 'system volume information', '_organize',
@@ -30,7 +31,7 @@ def _units_ok(value):
 def cross_departures(root):
     from executor import active_events, completed, cross_scopes, meta, read_journal
 
-    rows = read_journal(Path(root)/'_organize/journal.tsv')
+    rows = read_journal(organize_dir(root)/'journal.tsv')
     active = active_events(rows)
     result = []
     for row in completed(rows):
@@ -78,6 +79,8 @@ def check(root, probe):
 
     for entry in os.scandir(root):
         if entry.name.casefold() in SKIP_NAMES or is_reparse(entry.path):
+            continue
+        if is_system_root(root) and (is_system_attr(entry.path) or not nested_verdict(entry.path)[0]):
             continue
         if entry.is_dir(follow_symlinks=False):
             add(entry.path)
@@ -159,7 +162,7 @@ def main(argv=None):
     parser.add_argument('--json',action='store_true')
     args = parser.parse_args(argv)
     try:
-        rows = check(args.root,args.probe or Path(args.root)/'_organize/probe')
+        rows = check(args.root, args.probe or organize_dir(args.root)/'probe')
     except (OSError,ValueError):
         rows = [{'node':'<根目录或标记读取错误>','status':'ERROR',
                  'missing':['无法安全读取覆盖范围']}]

@@ -27,7 +27,7 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Run generated-board browser regression
         env:
-          PACKTIDY_BROWSER_USE_INSTALLED: '1'
+          TIDY_FILE_TREE_BROWSER_USE_INSTALLED: '1'
         run: python -B -m unittest discover -s tests -p test_browser_regression.py -v
 
   windows-cross-volume:
@@ -56,7 +56,7 @@ jobs:
             exit 0
           }
           $target = "$($second.DriveLetter):\"
-          "PACKTIDY_TEST_CROSS_VOLUME_DIR=$target" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "TIDY_FILE_TREE_TEST_CROSS_VOLUME_DIR=$target" | Add-Content -LiteralPath $env:GITHUB_ENV
           "found=1" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           Write-Host "使用已有的 NTFS 卷 $target；不创建、不格式化任何卷。"
       - name: Run real cross-volume NTFS acceptance tests
@@ -83,28 +83,26 @@ jobs:
         run: |
           python -m pip install --upgrade build
           python -m build --wheel
-          python -c "from pathlib import Path; from zipfile import ZipFile; w=next(Path('dist').glob('*.whl')); z=ZipFile(w); n=set(z.namelist()); required={'tidy_file_tree.py','packtidy.py','core/__init__.py','core/signals.py','core/wire_ui.html','core/wire_ui.en.json','rules/__init__.py','rules/default.json'}; missing=required-n; print('wheel:', w); print('wheel entries:'); print(chr(10).join(sorted(n))); assert not missing, f'missing wheel entries: {missing}'"
+          python -c "from pathlib import Path; from zipfile import ZipFile; w=next(Path('dist').glob('*.whl')); z=ZipFile(w); n=set(z.namelist()); required={'tidy_file_tree.py','core/__init__.py','core/signals.py','core/wire_ui.html','core/wire_ui.en.json','rules/__init__.py','rules/default.json'}; missing=required-n; print('wheel:', w); print('wheel entries:'); print(chr(10).join(sorted(n))); assert not missing, f'missing wheel entries: {missing}'; assert 'packtidy.py' not in n, 'retired compatibility module is still packaged'"
       - name: Install wheel and smoke test outside the checkout
         # 从临时目录加载已安装的包，避免从工作区导入源码。
         run: |
           python -c "
           import pathlib, sys, os
           from importlib.metadata import distribution
-          target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'packtidy-install'
+          target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'tidy-file-tree-install'
           import subprocess
           subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-deps', '--target', str(target), *map(str, pathlib.Path('dist').glob('*.whl'))])
 
           sys.path.insert(0, str(target))
           entries = {e.name: e.value for e in distribution('tidy-file-tree').entry_points if e.group == 'console_scripts'}
-          assert entries['tidy-file-tree'] == entries['packtidy'] == 'tidy_file_tree:main'
-          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'packtidy-smoke'
+          assert entries == {'tidy-file-tree': 'tidy_file_tree:main'}, entries
+          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'tidy-file-tree-smoke'
           (work / 'input').mkdir(parents=True, exist_ok=True)
           (work / 'input' / 'sample.txt').write_text('smoke\n', encoding='utf-8')
           os.chdir(work)
 
           from tidy_file_tree import main
-          from packtidy import main as legacy_main
-          assert legacy_main is main
           assert main(['scan', 'input', '--json']) == 0
           assert main(['rules', 'show']) == 0
           assert main(['ui', 'input', '--out', 'board.html']) == 0
@@ -112,6 +110,6 @@ jobs:
           html = pathlib.Path('board.html').read_text(encoding='utf-8')
           assert 'TidyFileTree' in html
           assert 'wires' in html, 'board.html 里没有连线元素'
-          assert '__PACKTIDY_DATA__' not in html, '数据占位符没被替换'
+          assert '__TIDY_FILE_TREE_DATA__' not in html, '数据占位符没被替换'
           print('smoke OK: wheel 安装后 scan / rules / ui 都可用')
           "

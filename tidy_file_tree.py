@@ -77,7 +77,8 @@ def cmd_scan(args):
 
 def cmd_coverage(args):
     cov = _load("coverage", "coverage.py")
-    probe = Path(args.probe) if args.probe else Path(args.root) / "_organize" / "probe"
+    from safety import organize_dir
+    probe = Path(args.probe) if args.probe else organize_dir(args.root) / "probe"
     rows = cov.check(args.root, probe)
     bad = [r for r in rows if r.get("status") not in ("ok", "stale")]
     if args.json:
@@ -106,6 +107,8 @@ def cmd_plan(args):
         argv += ["--out", args.out]
     if args.dry_run:
         argv.append("--dry-run")
+    if args.allow_system_drive:
+        argv.append("--allow-system-drive")
     return ex.main(argv)
 
 
@@ -132,6 +135,8 @@ def cmd_apply(args):
         argv += ["--batch-size", str(args.batch_size)]
     if args.allow_cross_drive:
         argv.append("--allow-cross-drive")
+    if args.allow_system_drive:
+        argv.append("--allow-system-drive")
     for destination_root in args.destination_root:
         argv += ["--destination-root", destination_root]
     return ex.main(argv)
@@ -152,12 +157,17 @@ def cmd_undo(args):
         sys.exit("undo 需要 --run-id、--last、--seq 或 --list 之一")
     if args.dry_run:
         argv.append("--dry-run")
+    if args.allow_system_drive:
+        argv.append("--allow-system-drive")
     return ex.main(argv)
 
 
 def cmd_recover(args):
     ex = _load("executor", "executor.py")
-    return ex.main(["recover", "--root", args.root])
+    argv = ["recover", "--root", args.root]
+    if args.allow_system_drive:
+        argv.append("--allow-system-drive")
+    return ex.main(argv)
 
 
 def cmd_history(args):
@@ -176,6 +186,8 @@ def cmd_ui(args):
         argv += ["--out", args.out]
     if args.open:
         argv.append("--open")
+    if args.allow_system_drive:
+        argv.append("--allow-system-drive")
     old = sys.argv
     sys.argv = ["ui"] + argv
     try:
@@ -195,6 +207,8 @@ def cmd_decisions(args):
         argv += ["--out", args.out]
     if args.probe:
         argv += ["--probe", args.probe]
+    if args.allow_system_drive:
+        argv.append("--allow-system-drive")
     old = sys.argv
     sys.argv = ["decisions"] + argv
     try:
@@ -255,6 +269,8 @@ def cmd_setup(args):
         if not ans:
             sys.exit("用法: tidy-file-tree setup apply <root> <answers.json>")
         argv += [args.root, ans]
+        if getattr(args, "allow_system_drive", False):
+            argv.append("--allow-system-drive")
     else:
         argv.append(args.root)
     old = sys.argv
@@ -292,6 +308,11 @@ def main(argv=None):
         description = text(zh, en)
         return sub.add_parser(name, help=description, description=description)
 
+    sys_drive_help = text(
+        "显式允许整理系统盘根目录（如 C:\\），状态写入用户目录而非 C:\\_organize",
+        "Explicitly allow organizing the system drive root (state is stored in user app data)",
+    )
+
     s = command("scan", "观察目录的信号（只读）", "Inspect directory structure (read-only)")
     s.add_argument("paths", nargs="*")
     s.add_argument("--json", action="store_true")
@@ -305,6 +326,7 @@ def main(argv=None):
     s.add_argument("root")
     s.add_argument("--probe")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_coverage)
 
     s = command("plan", "生成待批清单", "Generate an action plan")
@@ -314,6 +336,7 @@ def main(argv=None):
                                         "Approval policy and optional additional protected paths"))
     s.add_argument("--out")
     s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_plan)
 
     s = command("apply", "执行", "Preview or apply file actions")
@@ -333,6 +356,7 @@ def main(argv=None):
     s.add_argument("--destination-root", action="append", default=[],
                    help=text("显式授权的外部目标根目录，可重复指定",
                              "Authorized external destination root; may be repeated"))
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_apply)
 
     s = command("undo", "逆序撤销", "Undo recorded actions in reverse order")
@@ -342,10 +366,12 @@ def main(argv=None):
     s.add_argument("--seq", type=int)
     s.add_argument("--list", action="store_true")
     s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_undo)
 
     s = command("recover", "中断恢复", "Recover interrupted actions")
     s.add_argument("root")
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_recover)
 
     s = command("history", "生成只读执行历史", "Generate read-only execution history")
@@ -354,12 +380,14 @@ def main(argv=None):
                                       "Output HTML; defaults to _organize/history.html"))
     s.add_argument("--open", action="store_true")
     s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_history)
 
     s = command("setup", "整理前的一次性确认", "Configure sorting preferences before organizing")
     s.add_argument("action", choices=("ask", "apply", "show"))
     s.add_argument("root")
     s.add_argument("answers_pos", nargs="?", help=text("apply 时的答案文件", "Answer file for setup apply"))
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_setup)
 
     s = command("decisions", "算建议 / 生成 AI 问题 / 回填答案",
@@ -370,6 +398,7 @@ def main(argv=None):
     s.add_argument("--need-ai", action="store_true",
                    help=text("只输出需要 AI 判断的问题清单", "Output only questions that need AI review"))
     s.add_argument("--answers", help=text("AI 判断结果 JSON，回填", "Import AI answers from JSON"))
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_decisions)
 
     s = command("verify", "回归验证", "Run classification checks")
@@ -394,6 +423,7 @@ def main(argv=None):
     s.add_argument("--out")
     s.add_argument("--open", action="store_true")
     s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_ui)
 
     args = p.parse_args(argv)

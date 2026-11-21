@@ -9,7 +9,8 @@ import secrets
 import webbrowser
 
 from executor import Journal, Protection, guard
-from safety import SafetyError, assert_no_links, block_kind, is_reparse
+from safety import (SafetyError, assert_no_links, block_kind, is_reparse,
+                    is_system_attr, is_system_protected_file, nested_verdict)
 from scan_drafts import INTACT_KINDS, inventory, proposals
 from signals import VID_EXT, bucket, sig_bin_plus_data, sig_sequence, sig_unity, sig_vm
 
@@ -21,15 +22,19 @@ KINDS = {'img': 'images', 'vid': 'videos', 'aud': 'audio', 'arc': 'archives', 'd
 
 
 def scan_protection(root):
-    journal = Journal(root)
+    journal = Journal(root, allow_system_drive=True)
     root = journal.root
     assert_no_links(root)
     scopes = [journal]
     for parent in root.parents:
-        scope = Journal(parent)
+        try:
+            scope = Journal(parent, allow_system_drive=True)
+        except SafetyError:
+            continue
+        state = scope.state_dir
         if any(os.path.lexists(path) for path in (
-                parent / '_organize/markers.tsv', parent / '_organize/policy.json',
-                parent / '_organize/marker-update.json', scope.mirror_dir / 'markers.tsv',
+                state / 'markers.tsv', state / 'policy.json',
+                state / 'marker-update.json', scope.mirror_dir / 'markers.tsv',
                 scope.mirror_dir / 'marker-update.json')):
             scopes.append(scope)
     markers, names = [], set()
@@ -61,15 +66,18 @@ def inspect_level(path, root, protection):
             is_dir = item.is_dir(follow_symlinks=False)
             if is_dir:
                 try:
-                    if marker or is_reparse(item.path):
+                    if marker or is_reparse(item.path) or is_system_attr(item.path):
                         raise SafetyError('protected')
-                    guard(item.path, root, protection)
+                    guard(item.path, root, protection, allow_container=True)
                 except SafetyError:
                     children.append((Path(item.path), marker or 'protected'))
                     hidden += 1
                     continue
                 children.append((Path(item.path), None))
-            elif marker or not item.is_file(follow_symlinks=False):
+            elif (marker or not item.is_file(follow_symlinks=False)
+                  or is_system_attr(item.path)
+                  or is_system_protected_file(item.path)
+                  or not nested_verdict(item.path)[0]):
                 hidden += 1
                 continue
             entries.append({'name': item.name, 'dir': is_dir})

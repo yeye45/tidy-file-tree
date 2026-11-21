@@ -1,4 +1,4 @@
-"""Run with PACKTIDY_TEST_CROSS_VOLUME_DIR on a second local volume for a real transfer."""
+"""Run with TIDY_FILE_TREE_TEST_CROSS_VOLUME_DIR on a second local volume for a real transfer."""
 from argparse import Namespace
 import contextlib
 import io
@@ -25,11 +25,11 @@ class CrossVolumeCase(unittest.TestCase):
         # 也不能直接共用一个项目内目录——CI 并发跑多个 job 会互相踩。
         # 折中：建在项目目录下，但每次用独立子目录。
         import uuid
-        slot = PROJECT / '.packtidy-cross' / uuid.uuid4().hex[:12]
+        slot = PROJECT / '.tidy-file-tree-cross' / uuid.uuid4().hex[:12]
         slot.mkdir(parents=True)
         source = tempfile.TemporaryDirectory(prefix='src-', dir=slot)
         self.addCleanup(source.cleanup)
-        external = os.environ.get('PACKTIDY_TEST_CROSS_VOLUME_DIR')
+        external = os.environ.get('TIDY_FILE_TREE_TEST_CROSS_VOLUME_DIR')
         target = tempfile.TemporaryDirectory(prefix='dst-',
                                              dir=external or slot)
         self.addCleanup(target.cleanup)

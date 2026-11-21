@@ -99,7 +99,7 @@ ZONES = [
 
 def main():
     base = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(
-        tempfile.mkdtemp(prefix="packtidy-fixture-"))
+        tempfile.mkdtemp(prefix="tidy-file-tree-fixture-"))
     root = base / "root"
 
     # 先清空——重复运行不能叠加旧数据

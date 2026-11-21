@@ -1,1 +1,1 @@
-"""packtidy implementation modules."""
+"""TidyFileTree implementation modules."""

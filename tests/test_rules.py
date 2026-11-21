@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """规则包加载与校验的测试。"""
+from argparse import Namespace
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 CORE = HERE.parent / "core"
@@ -18,7 +21,7 @@ def minimal(**over):
     """v2 最小合法结构。"""
     base = {
         "version": 2,
-        "minPacktidy": "0.1.0",
+        "minTidyFileTree": "0.1.0",
         "protected": ["windows"],
         "categories": {
             "video": {"label": "视频", "keys": ["电影", "影片"],
@@ -33,6 +36,19 @@ class TestValidate(unittest.TestCase):
     def test_minimal_ok(self):
         ok, problems = rules.validate(minimal())
         self.assertTrue(ok, problems)
+
+    def test_legacy_minimum_version_field_is_accepted(self):
+        data = minimal()
+        data["minPacktidy"] = data.pop("minTidyFileTree")
+        self.assertTrue(rules.validate(data)[0])
+
+    def test_new_minimum_version_field_takes_precedence(self):
+        data = minimal(minTidyFileTree="2.0", minPacktidy="1.0")
+        self.assertTrue(rules.validate(data)[0])
+        self.assertEqual(rules._minimum_version(data), "2.0")
+
+    def test_invalid_legacy_minimum_version_is_rejected_even_with_new_field(self):
+        self.assertFalse(rules.validate(minimal(minPacktidy=1))[0])
 
     def test_missing_required(self):
         data = minimal()
@@ -119,12 +135,12 @@ class TestLoad(unittest.TestCase):
             with self.assertRaises(rules.RulesError):
                 rules.load(p)
 
-    def test_load_uses_dynamic_cache(self):
+    def test_load_uses_new_dynamic_cache(self):
         with tempfile.TemporaryDirectory() as d:
             old = os.environ.get("LOCALAPPDATA")
             try:
                 os.environ["LOCALAPPDATA"] = d
-                p = Path(d) / "packtidy" / "rules" / "remote.json"
+                p = Path(d) / "tidy-file-tree" / "rules" / "remote.json"
                 p.parent.mkdir(parents=True)
                 p.write_text(json.dumps(minimal(version=7)), encoding="utf-8")
                 self.assertEqual(rules.load()["version"], 7)
@@ -133,6 +149,51 @@ class TestLoad(unittest.TestCase):
                     os.environ.pop("LOCALAPPDATA", None)
                 else:
                     os.environ["LOCALAPPDATA"] = old
+
+    def test_load_falls_back_to_valid_legacy_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = os.environ.get("LOCALAPPDATA")
+            try:
+                os.environ["LOCALAPPDATA"] = d
+                p = Path(d) / "packtidy" / "rules" / "remote.json"
+                p.parent.mkdir(parents=True)
+                p.write_text(json.dumps(minimal(version=6)), encoding="utf-8")
+                self.assertEqual(rules.load()["version"], 6)
+            finally:
+                if old is None:
+                    os.environ.pop("LOCALAPPDATA", None)
+                else:
+                    os.environ["LOCALAPPDATA"] = old
+
+    def test_new_cache_wins_over_legacy_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = os.environ.get("LOCALAPPDATA")
+            try:
+                os.environ["LOCALAPPDATA"] = d
+                for subdir, version in (("packtidy", 6), ("tidy-file-tree", 7)):
+                    p = Path(d) / subdir / "rules" / "remote.json"
+                    p.parent.mkdir(parents=True)
+                    p.write_text(json.dumps(minimal(version=version)), encoding="utf-8")
+                self.assertEqual(rules.load()["version"], 7)
+            finally:
+                if old is None:
+                    os.environ.pop("LOCALAPPDATA", None)
+                else:
+                    os.environ["LOCALAPPDATA"] = old
+
+    def test_sync_writes_legacy_rule_data_in_current_cache_format(self):
+        data = minimal()
+        data["minPacktidy"] = data.pop("minTidyFileTree")
+        response = io.BytesIO(json.dumps(data).encode("utf-8"))
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"LOCALAPPDATA": directory}):
+            with patch("urllib.request.urlopen", return_value=response):
+                self.assertEqual(rules.cmd_sync(Namespace(url="https://example.com/rules.json")), 0)
+            home = Path(directory)
+            new = home / "tidy-file-tree" / "rules" / "remote.json"
+            stored = json.loads(new.read_text(encoding="utf-8"))
+            self.assertEqual(stored["minTidyFileTree"], data["minPacktidy"])
+            self.assertNotIn("minPacktidy", stored)
+            self.assertFalse((home / "packtidy").exists())
 
     def test_root_policy_relative_rules_path(self):
         with tempfile.TemporaryDirectory() as d:

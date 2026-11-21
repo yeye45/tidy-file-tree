@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 from executor import Journal, atomic_write, cross_scopes, meta, read_journal
-from safety import SafetyError, assert_no_links, block_kind, within
+from safety import SafetyError, assert_no_links, block_kind, is_system_root, within
 
 
 TEMPLATE = Path(__file__).with_name('history_ui.html')
@@ -92,7 +92,9 @@ def collect_history(journal, protection):
         if operation['inverseOf'] not in visible_seqs:
             operation['inverseOf'] = None
     return {
-        'root': str(journal.root), 'captured': datetime.now(timezone.utc).isoformat(),
+        'root': str(journal.root), 'journalPath': str(journal.path),
+        'systemDrive': bool(is_system_root(journal.root)),
+        'captured': datetime.now(timezone.utc).isoformat(),
         'mirrorDiffers': mirror_differs,
         'hidden': len(hidden), 'operations': visible,
     }
@@ -146,10 +148,10 @@ def write_preview(journal, out, prepared, blocked, external_roots, receipt_reque
 
 
 def main(args):
-    journal = Journal(args.root)
+    journal = Journal(args.root, allow_system_drive=getattr(args, 'allow_system_drive', False))
     assert_no_links(journal.root)
     protection = journal.protection()
-    out = Path(args.out) if args.out else journal.root / '_organize/history.html'
+    out = Path(args.out) if args.out else journal.state_dir / 'history.html'
     write_report(out, collect_history(journal, protection), args.lang, protection)
     print(f'Created: {out}' if args.lang == 'en' else f'已生成执行历史：{out}')
     if args.open:

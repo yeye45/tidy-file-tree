@@ -23,10 +23,11 @@ import uuid
 
 import cross_volume
 import rules
-from safety import (SafetyError, MARKER_FIELDS, NESTED_DENY, PROTECTED_NAMES, assert_no_links,
-                    nested_verdict,
-                    block_kind, encode_tsv, is_reparse, key, load_markers,
-                    normal, read_tsv, replace_path, within)
+from safety import (BENIGN_SYSTEM_DESCENDANTS, SafetyError, MARKER_FIELDS, NESTED_DENY,
+                    PROTECTED_NAMES, assert_no_links, block_kind, encode_tsv, is_reparse,
+                    is_skeleton_path, is_system_attr, is_system_protected_file, is_system_root,
+                    key, load_markers, nested_verdict, normal, organize_dir, read_tsv,
+                    replace_path, state_home, within)
 
 FIELDS = ('seq', 'run_id', 'ts', 'op', 'before', 'after', 'reason', 'status')
 PATH_KEYS = {'path', 'src', 'dst', 'target', 'merge_target', 'before', 'after',
@@ -229,23 +230,54 @@ def active_events(rows):
 
 
 class Journal:
-    def __init__(self, root, path=None):
+    def __init__(self, root, path=None, *, allow_system_drive=False):
         self.root = Path(normal(root))
         if not self.root.is_dir():
             raise SafetyError('整理根目录不存在')
+        if is_system_root(self.root) and not allow_system_drive:
+            raise SafetyError(
+                '整理系统盘根目录或 Users 根目录需显式确认；'
+                '请加 --allow-system-drive，或改为指定具体子目录（如 Downloads 或资料目录）'
+            )
         if any(part.casefold() in PROTECTED_NAMES for part in self.root.parts):
             raise SafetyError('整理根目录位于受保护目录内')
-        self.path = Path(path or self.root/'_organize/journal.tsv')
+        self.allow_system_drive = bool(allow_system_drive)
+        self.state_dir = organize_dir(self.root)
+        self.path = Path(path or self.state_dir/'journal.tsv')
         token = digest(key(self.path).encode('utf-8'))[:24]
-        local = os.environ.get('LOCALAPPDATA')
-        if not local:
-            local = os.environ.get('XDG_STATE_HOME') or str(Path.home()/'.local/state')
-        self.mirror_dir = Path(local)/'packtidy-mirror'/token
-        self.mirror = self.mirror_dir/'journal.tsv'
-        self.tx_dir = self.root/'_organize/transactions'
+        self._state_home = state_home()
+        self._mirror_dir = self._state_home/'tidy-file-tree-mirror'/token
+        self._legacy_mirror_dir = self._state_home/'packtidy-mirror'/token
+        self.tx_dir = self.state_dir/'transactions'
+
+    @property
+    def mirror_dir(self):
+        current = os.path.lexists(self._mirror_dir)
+        legacy = os.path.lexists(self._legacy_mirror_dir)
+        if current and legacy:
+            raise SafetyError('同一根目录存在新旧两套日志镜像，请人工核对')
+        return self._legacy_mirror_dir if legacy else self._mirror_dir
+
+    @property
+    def mirror(self):
+        return self.mirror_dir/'journal.tsv'
+
+    def _migrate_mirror(self):
+        """Publish the old state as a single directory while holding the executor lock."""
+        old = self.mirror_dir
+        if old != self._legacy_mirror_dir:
+            return
+        for path in (old, self._mirror_dir):
+            assert_no_links(path)
+            if not within(path, self._state_home, inclusive=False):
+                raise SafetyError('日志镜像路径超出本机状态目录')
+        if not old.is_dir():
+            raise SafetyError('旧日志镜像不是目录，请人工核对')
+        self._mirror_dir.parent.mkdir(parents=True, exist_ok=True)
+        rename_noreplace(old, self._mirror_dir)
 
     def check_marker_files(self, repair=False):
-        primary = self.root/'_organize/markers.tsv'
+        primary = self.state_dir/'markers.tsv'
         mirror = self.mirror_dir/'markers.tsv'
         assert_no_links(primary)
         assert_no_links(mirror)
@@ -301,6 +333,7 @@ class Journal:
     def ensure_ready(self, repair=False):
         """Both destinations must work before any user file is mutated."""
         assert_no_links(self.path)
+        self._migrate_mirror()
         assert_no_links(self.mirror)
         self.mirror_dir.mkdir(parents=True, exist_ok=True)
         if repair and self.mirror.exists():
@@ -319,6 +352,15 @@ class Journal:
         if mirror_rows and rows[:len(mirror_rows)] != mirror_rows:
             raise SafetyError('主日志与本机镜像不一致；请先恢复日志')
         header = encode_tsv([], FIELDS)
+        if is_system_root(self.root):
+            scope_file = self.state_dir/'scope.json'
+            assert_no_links(scope_file)
+            if scope_file.exists():
+                scope_data = json.loads(scope_file.read_text(encoding='utf-8-sig'))
+                if not isinstance(scope_data, dict) or key(scope_data.get('root', '')) != key(self.root):
+                    raise SafetyError('系统盘状态目录的作用域记录不匹配，停止操作')
+            else:
+                atomic_write(scope_file, json.dumps({'root': str(self.root)}, ensure_ascii=False, indent=2).encode('utf-8'))
         if not self.path.exists():
             atomic_write(self.path, header)
         if not self.mirror.exists() or len(mirror_rows) < len(rows):
@@ -336,7 +378,7 @@ class Journal:
 
     def pending_marker_update(self):
         candidates=[]
-        for path in (self.mirror_dir/'marker-update.json',self.root/'_organize/marker-update.json'):
+        for path in (self.mirror_dir/'marker-update.json',self.state_dir/'marker-update.json'):
             assert_no_links(path)
             if path.exists():
                 data=json.loads(path.read_text(encoding='utf-8-sig'))
@@ -354,10 +396,10 @@ class Journal:
     def save_marker_update(self, data):
         encoded=json.dumps(data,ensure_ascii=False,indent=2).encode('utf-8')
         atomic_write(self.mirror_dir/'marker-update.json',encoded)
-        atomic_write(self.root/'_organize/marker-update.json',encoded)
+        atomic_write(self.state_dir/'marker-update.json',encoded)
 
     def update_markers(self, data):
-        path=self.root/'_organize/markers.tsv'
+        path=self.state_dir/'markers.tsv'
         tx={'id':uuid.uuid4().hex,'state':'pending',
             'before_hash':digest(path.read_bytes()) if path.exists() else None,
             'after_hash':digest(data),'after':data.decode('utf-8')}
@@ -368,7 +410,7 @@ class Journal:
         tx=self.pending_marker_update()
         if not tx:
             return
-        path=self.root/'_organize/markers.tsv'
+        path=self.state_dir/'markers.tsv'
         current=digest(path.read_bytes()) if path.exists() else None
         if current not in (tx['before_hash'],tx['after_hash']):
             raise SafetyError('保护标记被外部修改；保留现场等待人工核对')
@@ -427,7 +469,7 @@ class Journal:
             raise SafetyError('恢复记录格式无效')
         if tx.get('effect') not in ('move','mkdir','rmdir','cross-move'):
             raise SafetyError('恢复记录动作无效')
-        if tx.get('staging') and not within(tx['staging'],self.root/'_organize/staging',inclusive=False):
+        if tx.get('staging') and not within(tx['staging'],self.state_dir/'staging',inclusive=False):
             raise SafetyError('恢复暂存路径越界')
         if tx['effect'] == 'cross-move':
             cross_scopes(self.root, tx.get('cross', {}), tx.get('before'), tx.get('after'))
@@ -438,8 +480,8 @@ class Journal:
                     raise SafetyError('恢复记录路径越界')
         for edit in tx.get('edits',[]):
             path = edit.get('path','')
-            if not (key(path)==key(self.root/'_organize/markers.tsv') or
-                    within(path,self.root/'_organize/probe',inclusive=False)):
+            if not (key(path)==key(self.state_dir/'markers.tsv') or
+                    within(path,self.state_dir/'probe',inclusive=False)):
                 raise SafetyError('恢复引用路径越界')
             if digest(edit['after'].encode('utf-8')) != edit['after_hash']:
                 raise SafetyError('恢复引用内容校验失败')
@@ -473,7 +515,7 @@ def no_go_markers(root, policy):
     return markers
 
 
-def guard(path, root, protection, descendants=False, allow_root=False):
+def guard(path, root, protection, descendants=False, allow_root=False, allow_container=False):
     if not os.path.isabs(str(path)):
         raise SafetyError('动作路径必须是绝对路径')
     path = normal(path)
@@ -483,7 +525,14 @@ def guard(path, root, protection, descendants=False, allow_root=False):
     if kind:
         raise SafetyError('凭据类路径已排除' if kind == 'SECRET' else '命中保护标记 ' + kind)
     assert_no_links(path)
-    # 嵌套判定：受保护区内可以有允许点（C:\Program Files\x\Downloads 可动）
+    if not allow_root:
+        if not allow_container and is_skeleton_path(path):
+            raise SafetyError('不能移动或修改系统盘骨架目录或用户主目录本身')
+        if not allow_container and is_system_attr(path):
+            raise SafetyError('命中 Windows 系统属性文件或目录，禁止操作')
+        if is_system_protected_file(path):
+            raise SafetyError('命中 Windows 系统关键文件，禁止操作')
+    # 嵌套判定：受保护区内可以有允许点（如 Games\某游戏\Screenshots），系统强制禁区永久锁死
     allowed, why = nested_verdict(path)
     if not allowed:
         raise SafetyError('命中受保护目录：' + why)
@@ -494,7 +543,7 @@ def guard(path, root, protection, descendants=False, allow_root=False):
         def fail(exc):
             raise exc
         # 保护检查分两级：
-        #   一、绝对不能出现在树里的：链接 / 重解析点（移了会断）
+        #   一、绝对不能出现在树里的：链接 / 重解析点（移了会断）、系统骨架与系统属性项
         #   二、作为「目标本身」时拒绝的：venv / node_modules 等环境目录
         #
         # 第二类只在它是被移动对象本身时才算危险——移动整个项目（内部含 venv）
@@ -511,12 +560,20 @@ def guard(path, root, protection, descendants=False, allow_root=False):
                 child = Path(folder)/name
                 if is_reparse(child):
                     raise SafetyError('目录包含链接或重解析项')
-                if name.casefold() in protection.extra_names and child.is_dir():
+                child_is_dir = child.is_dir()
+                if child_is_dir and is_skeleton_path(child):
+                    raise SafetyError('目录包含系统盘骨架目录或用户主目录')
+                lower_name = name.casefold()
+                if is_system_attr(child) and (child_is_dir or lower_name not in BENIGN_SYSTEM_DESCENDANTS):
+                    raise SafetyError('目录包含 Windows 系统属性文件或目录')
+                if not child_is_dir and lower_name not in BENIGN_SYSTEM_DESCENDANTS and is_system_protected_file(child):
+                    raise SafetyError('目录包含 Windows 系统关键文件')
+                if lower_name in protection.extra_names and child_is_dir:
                     raise SafetyError('目录包含规则包保护目录')
-                if name.casefold() not in PROTECTED_NAMES or not child.is_dir():
+                if lower_name not in PROTECTED_NAMES or not child_is_dir:
                     continue
                 depth = len(Path(child).relative_to(path).parts)
-                if name.casefold() in env_dirs:
+                if lower_name in env_dirs:
                     # 环境目录只在两种情况下拦：
                     #   1. 它本身就是被移动对象
                     #   2. 它在项目根下一层（典型 venv 位置）
@@ -524,7 +581,7 @@ def guard(path, root, protection, descendants=False, allow_root=False):
                     # （如 PyCharm 的 typeshed/stdlib/venv 只是类型存根目录）
                     if key(child) != root_key and depth > 2:
                         continue
-                elif name.casefold() in SYSTEM_LIKE:
+                elif lower_name in SYSTEM_LIKE:
                     # 系统类名字只对浅层有意义：
                     #   windows / program files / appdata 出现在第三层以下
                     #   多半是程序自己的资源目录（PyCharm 的 pydevd\windows）
@@ -538,7 +595,7 @@ def guard(path, root, protection, descendants=False, allow_root=False):
 def reference_edits(root, old, new):
     """Prepare all edits before mutation; update only schema path fields."""
     edits = []
-    directory = Path(root)/'_organize'
+    directory = organize_dir(root)
     markers = directory/'markers.tsv'
     if markers.exists():
         rows = load_markers(root)
@@ -589,7 +646,7 @@ def finish_references(edits):
 
 def sync_reference_mirror(journal, edits):
     for edit in edits:
-        if key(edit['path']) == key(journal.root/'_organize/markers.tsv'):
+        if key(edit['path']) == key(journal.state_dir/'markers.tsv'):
             atomic_write(journal.mirror_dir/'markers.tsv',edit['after'].encode('utf-8'))
 
 
@@ -636,10 +693,10 @@ def cross_guard(journal, authority, before, after):
     protections = {journal.root: Protection(markers, primary.extra_names),
                    external: Protection(markers, other.extra_names)}
     for root in protections:
-        if block_kind(root/'_organize'/'cross-volume', markers, descendants=True):
+        if block_kind(organize_dir(root)/'cross-volume', markers, descendants=True):
             raise SafetyError('跨卷暂存区域命中保护标记')
     for path, root in ((before, source_root), (after, target_root)):
-        if within(path, root/'_organize'):
+        if within(path, organize_dir(root)) or within(path, root/'_organize'):
             raise SafetyError('跨卷移动拒绝内部状态目录')
         if block_kind(path, markers, descendants=True):
             raise SafetyError('跨卷路径命中两端的保护标记')
@@ -674,8 +731,8 @@ def cross_lock(journal, authority, before, after):
 
 def transfer_paths(journal, tx):
     source, target = cross_scopes(journal.root, tx['cross'], tx['before'], tx['after'])
-    return (source/'_organize'/'cross-volume'/f"{tx['id']}.original",
-            target/'_organize'/'cross-volume'/f"{tx['id']}.stage"/'payload')
+    return (organize_dir(source)/'cross-volume'/f"{tx['id']}.original",
+            organize_dir(target)/'cross-volume'/f"{tx['id']}.stage"/'payload')
 
 
 def make_transfer_parent(path, volume):
@@ -846,7 +903,7 @@ def execute_transaction(journal, run, op, effect, before, after, reason, inverse
     else:
         tx['lineage']=None
     if effect=='mkdir':
-        tx['staging']=str(journal.root/'_organize/staging'/tx['id'])
+        tx['staging']=str(journal.state_dir/'staging'/tx['id'])
     elif effect == 'cross-move':
         tx.update(cross=cross, cross_tree=tree, cross_fingerprint=fingerprint)
     journal.save_manifest(tx)
@@ -993,10 +1050,10 @@ def plan(args):
 
     删除永不自动生成（policy 里没有这个开关）。
     """
-    journal = Journal(args.root)
+    journal = Journal(args.root, allow_system_drive=getattr(args, 'allow_system_drive', False))
     root = journal.root
     assert_no_links(root)
-    probe = Path(args.probe) if args.probe else root/'_organize'/'probe'
+    probe = Path(args.probe) if args.probe else journal.state_dir/'probe'
     assert_no_links(probe)
     if not probe.is_dir():
         raise SafetyError('探针结果目录不存在')
@@ -1083,7 +1140,7 @@ def plan(args):
         else:
             skipped.append((path,f'未处理的 action={op}'))
 
-    out = Path(args.out) if args.out else root/'_organize'/'plan.tsv'
+    out = Path(args.out) if args.out else journal.state_dir/'plan.tsv'
     wrote = not args.dry_run and (bool(actions) or os.path.lexists(out))
     if wrote:
         atomic_write(out,encode_tsv(actions,('op','src','dst','reason')))
@@ -1115,7 +1172,7 @@ def read_actions(args):
         raise SafetyError('决策表不存在')
     rows = read_tsv(args.plan,('path','hypothesis','evidence','verdict','confidence','target','note'))
     actions = []
-    protection = Journal(args.root).protection()
+    protection = Journal(args.root, allow_system_drive=getattr(args, 'allow_system_drive', False)).protection()
     has_secrets = any(marker['kind'] == 'SECRET' for marker in protection.markers)
     for row in rows:
         if row['confidence'] not in ('high','medium'):
@@ -1192,7 +1249,9 @@ def preflight(root, actions, journal=None, external_roots=(), review=False, repo
                             raise SafetyError('跨卷移动目标已被占用')
                         cross_volume.inventory(src, identity(src)['dev'], check, content=False)
                     else:
-                        destination = guard(dst,root,protection)
+                        if is_system_root(dst):
+                            raise SafetyError('不能直接将文件移入系统盘根目录或 Users 根目录')
+                        destination = guard(dst,root,protection,allow_container=True)
                         if os.path.lexists(destination) and not os.path.isdir(destination):
                             raise SafetyError('move 的目标必须是目录')
                         if key(Path(src).parent) == key(destination):
@@ -1241,8 +1300,11 @@ def preflight(root, actions, journal=None, external_roots=(), review=False, repo
 
 def receipt_path(value):
     path = Path(normal(value))
-    if path.suffix.casefold() != '.json' or any(p.casefold() == '_organize' for p in path.parts):
-        raise SafetyError('预演清单须为 _organize 以外的 JSON 文件')
+    sys_state_root = state_home() / 'tidy-file-tree-system-state'
+    if (path.suffix.casefold() != '.json'
+            or any(p.casefold() == '_organize' for p in path.parts)
+            or within(path, sys_state_root)):
+        raise SafetyError('预演清单须为 _organize 及状态目录以外的 JSON 文件')
     assert_no_links(path)
     return path
 
@@ -1275,7 +1337,7 @@ def write_receipt(path, state, journal):
     for external in state['destination_roots']:
         if within(path, external['path']):
             guard(path, external['path'], Journal(external['path']).protection())
-    fd, temporary = tempfile.mkstemp(prefix='.packtidy-preview-', dir=path.parent)
+    fd, temporary = tempfile.mkstemp(prefix='.tidy-file-tree-preview-', dir=path.parent)
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as file:
             json.dump(state, file, ensure_ascii=False, indent=2)
@@ -1335,7 +1397,7 @@ def apply(args):
         if any(within(external, item['root']) or within(item['root'], external) for item in external_roots):
             raise SafetyError('授权的跨卷目标根不能重复或重叠')
         external_roots.append(cross_authority(root, external))
-    journal = Journal(root)
+    journal = Journal(root, allow_system_drive=getattr(args, 'allow_system_drive', False))
     run = run_id()
 
     def execute():
@@ -1422,15 +1484,38 @@ def inverse_action(row):
     raise SafetyError('日志动作无法撤销')
 
 
+def resolve_journal_root(path):
+    """Resolve and verify the root directory belonging to a journal.tsv path."""
+    path = Path(normal(path))
+    if path.name != 'journal.tsv':
+        raise SafetyError('撤销需使用 <root>/_organize/journal.tsv，镜像日志请先恢复到原位置')
+    if path.parent.name == '_organize':
+        return path.parent.parent, False
+    sys_state_root = state_home() / 'tidy-file-tree-system-state'
+    scope_file = path.parent / 'scope.json'
+    if (key(path.parent.parent) == key(sys_state_root)
+            and os.path.isfile(scope_file)):
+        assert_no_links(scope_file)
+        try:
+            data = json.loads(scope_file.read_text(encoding='utf-8-sig'))
+        except (OSError, ValueError) as exc:
+            raise SafetyError('系统盘状态目录的作用域记录无效') from exc
+        scope_root = data.get('root') if isinstance(data, dict) else None
+        if (isinstance(scope_root, str) and os.path.isabs(scope_root)
+                and is_system_root(scope_root)
+                and key(organize_dir(scope_root) / 'journal.tsv') == key(path)):
+            return Path(normal(scope_root)), True
+    raise SafetyError('撤销需使用 <root>/_organize/journal.tsv，镜像日志请先恢复到原位置')
+
+
 def undo(args):
     if args.seq is not None and args.seq < 0:
         raise SafetyError('Seq 不能为负数')
     path = Path(normal(args.journal))
-    if path.parent.name != '_organize' or path.name != 'journal.tsv':
-        raise SafetyError('撤销需使用 <root>/_organize/journal.tsv，镜像日志请先恢复到原位置')
-    root,run = path.parent.parent,run_id('undo')
     assert_no_links(path)
-    journal = Journal(root,path)
+    root, _is_sys = resolve_journal_root(path)
+    run = run_id('undo')
+    journal = Journal(root, path, allow_system_drive=getattr(args, 'allow_system_drive', False))
 
     def execute():
         rows = read_journal(path)
@@ -1520,7 +1605,7 @@ def undo(args):
 
 def recover(args):
     """Conservatively reconcile prepares without guessing or overwriting files."""
-    journal = Journal(normal(args.root))
+    journal = Journal(normal(args.root), allow_system_drive=getattr(args, 'allow_system_drive', False))
     with journal.locked(repair=True):
         for tx in journal.unresolved():
             effect,src,dst = tx['effect'],tx['before'],tx['after']
@@ -1575,9 +1660,8 @@ def journal_command(args):
                                first=group[0]['ts'],last=group[-1]['ts']))
         print(json.dumps(result,ensure_ascii=False))
     else:
-        if path.parent.name != '_organize' or path.name != 'journal.tsv':
-            raise SafetyError('日志必须位于 <root>/_organize/journal.tsv')
-        journal = Journal(path.parent.parent,path)
+        root, _is_sys = resolve_journal_root(path)
+        journal = Journal(root, path, allow_system_drive=getattr(args, 'allow_system_drive', False))
         with journal.locked():
             print(journal.append(args.run_id,args.op,args.before,args.after,args.reason,args.status))
     return 0
@@ -1586,7 +1670,7 @@ def journal_command(args):
 def marker_command(args):
     root = normal(args.root)
     assert_no_links(root)
-    journal = Journal(root)
+    journal = Journal(root, allow_system_drive=getattr(args, 'allow_system_drive', False))
 
     def execute():
         if journal.pending_marker_update():
@@ -1656,6 +1740,7 @@ def main(argv=None):
     p.add_argument('--batch-size',type=int,default=50)
     p.add_argument('--allow-cross-drive',action='store_true')
     p.add_argument('--destination-root',action='append',default=[])
+    p.add_argument('--allow-system-drive',action='store_true')
     p = sub.add_parser('undo')
     p.add_argument('--journal',required=True)
     selection = p.add_mutually_exclusive_group(required=True)
@@ -1664,6 +1749,7 @@ def main(argv=None):
     selection.add_argument('--seq',type=int)
     selection.add_argument('--list',action='store_true')
     p.add_argument('--dry-run',action='store_true')
+    p.add_argument('--allow-system-drive',action='store_true')
     p = sub.add_parser('plan')
     p.add_argument('--root',required=True)
     p.add_argument('--probe')
@@ -1671,8 +1757,10 @@ def main(argv=None):
     p.add_argument('--out')
     p.add_argument('--dry-run',action='store_true')
     p.add_argument('--quiet',action='store_true')
+    p.add_argument('--allow-system-drive',action='store_true')
     p = sub.add_parser('recover')
     p.add_argument('--root',required=True)
+    p.add_argument('--allow-system-drive',action='store_true')
     p = sub.add_parser('journal')
     p.add_argument('--path',required=True)
     p.add_argument('--action',choices=('read','runs','append'),required=True)
@@ -1682,6 +1770,7 @@ def main(argv=None):
     p.add_argument('--after',default='-')
     p.add_argument('--reason',default='-')
     p.add_argument('--status',default='done')
+    p.add_argument('--allow-system-drive',action='store_true')
     p = sub.add_parser('markers')
     p.add_argument('--root',required=True)
     p.add_argument('--action',choices=('list','add','remove','check','pending','secrets'),default='list')
@@ -1689,6 +1778,7 @@ def main(argv=None):
     p.add_argument('--kind',choices=('SECRET','FOREIGN','WORKSPACE','NO_TOUCH','ASK','NOTE'))
     p.add_argument('--by',choices=('user','inferred'),default='user')
     p.add_argument('--note',default='-')
+    p.add_argument('--allow-system-drive',action='store_true')
     args = parser.parse_args(argv)
     try:
         return {'apply':apply,'undo':undo,'plan':plan,'recover':recover,

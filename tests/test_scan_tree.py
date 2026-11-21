@@ -201,11 +201,13 @@ class ScanTreeTests(unittest.TestCase):
     def test_unrecovered_ancestor_marker_mirror_blocks_scanning(self):
         from executor import Journal
         with patch.dict('os.environ', {'LOCALAPPDATA': str(self.workspace / 'state')}):
-            mirror = Journal(self.workspace).mirror_dir
+            current = Journal(self.workspace).mirror_dir
+            mirror = self.workspace / 'state' / 'packtidy-mirror' / current.name
             mirror.mkdir(parents=True)
             (mirror / 'markers.tsv').write_bytes(encode_tsv([], MARKER_FIELDS))
             with self.assertRaises(SafetyError):
                 scan_tree.scan_protection(self.root)
+            self.assertFalse(current.exists())
 
     def test_local_server_streams_updates_and_reloads_protection(self):
         child = self.root / 'AfterServerStarts'
@@ -234,3 +236,35 @@ class ScanTreeTests(unittest.TestCase):
             finally:
                 server.shutdown()
                 worker.join()
+
+    def test_system_drive_read_only_scan_protects_system_entries(self):
+        import os
+        if os.name != 'nt':
+            self.skipTest('Windows-specific system drive scan')
+        import ctypes
+        sys_drive = os.environ.get('SystemDrive', 'C:').rstrip('\\/') + '\\'
+        root, protection = scan_tree.scan_protection(sys_drive)
+        entries, children, hidden, _ = scan_tree.inspect_level(root, root, protection)
+        child_map = {child.name.casefold(): marker for child, marker in children}
+        entry_names = {entry['name'].casefold() for entry in entries}
+        for must_skip in ('windows', 'program files', 'programdata'):
+            if must_skip in child_map:
+                self.assertEqual(child_map[must_skip], 'protected', f'{must_skip} must be skipped')
+        if 'users' in child_map:
+            self.assertIsNone(child_map['users'], 'Users must remain browsable as a container')
+        for sys_file in ('pagefile.sys', 'hiberfil.sys', 'swapfile.sys'):
+            self.assertNotIn(sys_file, entry_names)
+        self.assertGreater(hidden, 0)
+
+        # Also verify FILE_ATTRIBUTE_SYSTEM files in a normal root are excluded from scan entries
+        flagged = self.root / 'hidden_sys.dat'
+        flagged.write_text('sys', encoding='utf-8')
+        set_attr = ctypes.windll.kernel32.SetFileAttributesW
+        try:
+            self.assertNotEqual(set_attr(str(flagged), 0x4), 0)
+            r2, p2 = scan_tree.scan_protection(self.root)
+            e2, _, h2, _ = scan_tree.inspect_level(r2, r2, p2)
+            self.assertNotIn('hidden_sys.dat', {item['name'] for item in e2})
+            self.assertGreaterEqual(h2, 1)
+        finally:
+            set_attr(str(flagged), 0x80)

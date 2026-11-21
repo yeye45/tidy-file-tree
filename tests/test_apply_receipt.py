@@ -13,12 +13,12 @@ import unittest
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-CLI = PROJECT / "packtidy.py"
+CLI = PROJECT / "tidy_file_tree.py"
 
 
 class ApplyReceiptCase(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix=".packtidy-receipt-", dir=PROJECT)
+        self.temp = tempfile.TemporaryDirectory(prefix=".tidy-file-tree-receipt-", dir=PROJECT)
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
         self.root = self.base / "root"

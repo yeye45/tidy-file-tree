@@ -28,14 +28,13 @@ Issues = "https://github.com/yeye45/tidy-file-tree/issues"
 
 [project.scripts]
 tidy-file-tree = "tidy_file_tree:main"
-packtidy = "tidy_file_tree:main"
 
 [project.optional-dependencies]
 # 读压缩包条目表用；不装也能跑，只是 peek_archive 的 RAR/7z 支持受限
 archives = ["rarfile>=4.0", "py7zr>=1.0"]
 
 [tool.setuptools]
-py-modules = ["tidy_file_tree", "packtidy"]
+py-modules = ["tidy_file_tree"]
 packages = ["core", "rules"]
 include-package-data = true
 

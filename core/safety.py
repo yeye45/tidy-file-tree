@@ -1,10 +1,12 @@
 """Shared lexical path, marker and reparse rules (Python 3.9+)."""
 import csv
+import hashlib
 import io
 import os
 from pathlib import Path
 import stat
 
+FILE_ATTRIBUTE_SYSTEM = 0x4
 BLOCKING_KINDS = {'SECRET', 'FOREIGN', 'WORKSPACE', 'NO_TOUCH', 'ASK'}
 KINDS = BLOCKING_KINDS | {'NOTE'}
 # 命中即拒绝移动父目录的名字。
@@ -19,25 +21,30 @@ KINDS = BLOCKING_KINDS | {'NOTE'}
 # 含 Python 代码的目录都无法整理。
 PROTECTED_NAMES = {
     'steamlibrary', 'steamapps', 'games', 'my games', 'epic games', 'battle.net',
-    'shaderpacks', 'appdata', 'program files', 'program files (x86)', 'windows',
+    'shaderpacks', 'appdata', 'program files', 'program files (x86)', 'programdata',
+    'windows', 'system32', 'syswow64', 'recovery', 'perflogs', 'msocache', 'windows.old',
+    'config.msi', 'onedrivetemp', '$windows.~bt', '$windows.~ws', '$winreagent',
+    'documents and settings',
     'system volume information', '$recycle.bin', '.git', 'node_modules', '.venv',
-    'site-packages', '_organize',
+    'site-packages', '.ssh', '.gnupg', '.aws', '.kube', '_organize',
 }
 
 
 # ═══════════════════════════════════════════════════════════
 # 嵌套白名单：保护区内可以动的点
 #
-# 场景：C:\Program Files\某软件\ 整体不能动，
-#       但 C:\Users\x\Downloads\ 属于"在受保护区里、但内容该整理"。
+# 场景：D:\Games\某游戏\ 整体不能动，
+#       但 D:\Games\某游戏\Screenshots\ 属于"在受保护区里、但内容该整理"。
+#       而系统级强制禁区（NESTED_DENY，如 Windows / Program Files / AppData / .ssh）
+#       整棵子树永久锁死，绝不允许被 temp / cache / downloads 等反向放行。
 #
-# 判定顺序（后者优先）：
-#   1. 命中 PROTECTED_NAMES  → 默认保护
-#   2. 命中 NESTED_ALLOW     → 放行，可整理
-#   3. 命中 NESTED_DENY      → 强制保护（即使父级被放行）
+# 判定顺序：
+#   1. 命中 NESTED_DENY      → 立即拒绝（强制保护，不可被更深层放行）
+#   2. 命中 PROTECTED_NAMES  → 默认保护
+#   3. 命中 NESTED_ALLOW     → 放行（仅覆盖普通 PROTECTED_NAMES）
 # ═══════════════════════════════════════════════════════════
 
-# 这些名字出现在受保护区内时，其中内容仍可整理
+# 这些名字出现在普通受保护区内时，其中内容仍可整理
 NESTED_ALLOW = {
     "downloads", "download", "桌面", "desktop", "documents", "文档",
     "temp", "tmp", "缓存", "cache", "临时", "捕获", "captures",
@@ -46,13 +53,132 @@ NESTED_ALLOW = {
     "_待删除", "_重复待确认", "_未归类",
 }
 
-# 这些名字即使出现在被放行的区域里，也不动
+# 强制保护区：路径任意一层命中即整棵子树禁止整理（不可被 NESTED_ALLOW 反向放行）
 NESTED_DENY = {
     "node_modules", ".git", "site-packages", "venv", ".venv",
     "steamapps", "appdata", "windows", "system32", "syswow64",
     "program files", "program files (x86)", "programdata",
+    "recovery", "perflogs", "msocache", "windows.old",
+    "config.msi", "onedrivetemp", "$windows.~bt", "$windows.~ws", "$winreagent",
+    "documents and settings",
+    ".ssh", ".gnupg", ".aws", ".kube",
     "$recycle.bin", "system volume information",
 }
+
+# 仅在系统盘根第一层拦截的系统/引导/厂商驱动目录（避免误伤 D:\软件\Drivers 等用户目录）
+SYSTEM_DRIVE_TOP_DENY = {
+    'boot', 'efi', 'intel', 'amd', 'nvidia', 'drivers',
+    'swsetup', 'esupport', 'dell', 'hp', 'lenovo',
+    'inetpub', 'system.sav', 'system repair', 'xboxgames',
+}
+
+# Windows 系统盘关键系统文件 / 注册表配置单元（部分仅设 Hidden 未设 System，如 NTUSER.DAT）
+SYSTEM_PROTECTED_FILES = {
+    'pagefile.sys', 'hiberfil.sys', 'swapfile.sys',
+    'bootmgr', 'bootnxt', 'bootsect.bak', 'bootstat.dat',
+    'dumpstack.log', 'dumpstack.log.tmp',
+    'ntuser.dat', 'ntuser.ini', 'usrclass.dat', 'desktop.ini',
+}
+
+# 随普通用户文件夹一同移动时可放行的资源管理器元数据文件（作为独立目标时仍拦截）
+BENIGN_SYSTEM_DESCENDANTS = {'desktop.ini', 'thumbs.db'}
+
+# 用户主目录下的 Windows 已知 Shell 文件夹：允许扫描进入或作为移动目标容器，但禁止移动/改名其本身
+USER_SHELL_FOLDERS = {
+    'desktop', 'documents', 'downloads', 'pictures', 'music', 'videos',
+    'favorites', 'links', 'contacts', 'saved games', 'searches',
+    'onedrive', '3d objects',
+}
+
+
+def _system_drive():
+    if os.name != 'nt':
+        return ''
+    sys_drive = os.environ.get('SystemDrive', '').rstrip('\\/').casefold()
+    if not sys_drive:
+        sys_root = os.environ.get('SystemRoot', '')
+        sys_drive = os.path.splitdrive(sys_root)[0].casefold()
+    return sys_drive
+
+
+def _system_drive_parts(path):
+    """If path is on the Windows system drive, return its casefolded relative parts; else None."""
+    sys_drive = _system_drive()
+    if not sys_drive:
+        return None
+    norm = normal(path)
+    drive = os.path.splitdrive(norm)[0].casefold()
+    if drive != sys_drive:
+        return None
+    p = Path(norm)
+    return [part.casefold() for part in p.parts[1:]]
+
+
+def is_system_root(path):
+    """Return True if path is the Windows system drive root (e.g. C:\\) or its Users root."""
+    parts = _system_drive_parts(path)
+    if parts is None:
+        return False
+    return len(parts) == 0 or parts == ['users']
+
+
+def is_user_profile_root(path):
+    """Return True if path is C:\\Users\\<username> on the Windows system drive."""
+    parts = _system_drive_parts(path)
+    return parts is not None and len(parts) == 2 and parts[0] == 'users'
+
+
+def is_user_shell_folder(path):
+    """Return True if path is a standard Windows KnownFolder directly under C:\\Users\\<user>\\."""
+    parts = _system_drive_parts(path)
+    return (parts is not None and len(parts) == 3 and parts[0] == 'users'
+            and parts[2] in USER_SHELL_FOLDERS)
+
+
+def is_skeleton_path(path):
+    """Return True for Windows system/profile skeleton directories that must never be moved themselves."""
+    return is_system_root(path) or is_user_profile_root(path) or is_user_shell_folder(path)
+
+
+def is_system_attr(path):
+    """Return True if path exists and has Windows FILE_ATTRIBUTE_SYSTEM set."""
+    if os.name != 'nt':
+        return False
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return bool(getattr(st, 'st_file_attributes', 0) & FILE_ATTRIBUTE_SYSTEM)
+
+
+def is_system_protected_file(path):
+    """Return True if path matches a critical Windows system/registry file name."""
+    if os.name != 'nt':
+        return False
+    name = Path(normal(path)).name.casefold()
+    return name in SYSTEM_PROTECTED_FILES or name.startswith(('ntuser.dat', 'usrclass.dat'))
+
+
+def state_home():
+    """Return the per-user writable state directory."""
+    local = os.environ.get('LOCALAPPDATA')
+    if not local:
+        local = os.environ.get('XDG_STATE_HOME') or str(Path.home() / '.local/state')
+    return Path(normal(local))
+
+
+def organize_dir(root):
+    """Return the metadata/state directory for root.
+
+    Normal roots store state in <root>/_organize.
+    Windows system roots (C:\\, C:\\Users) store state under the user's writable
+    state_home so organizing C: neither pollutes C:\\ nor requires admin rights.
+    """
+    norm = normal(root)
+    if is_system_root(norm):
+        token = hashlib.sha256(key(norm).encode('utf-8')).hexdigest()[:24]
+        return state_home() / 'tidy-file-tree-system-state' / token
+    return Path(norm) / '_organize'
 
 
 def nested_verdict(path):
@@ -66,6 +192,7 @@ def nested_verdict(path):
     try:
         import os as _os
         p = _os.path.abspath(_os.fspath(path))
+        drive = _os.path.splitdrive(p)[0].casefold()
         while True:
             head, tail = _os.path.split(p)
             if not tail:
@@ -79,14 +206,27 @@ def nested_verdict(path):
 
     parts.reverse()   # 从根到叶
 
-    # 从浅到深扫描，后面的覆盖前面的
+    # 系统盘专属强制保护：根级驱动/引导目录、根级隐藏项、用户主目录 dot 配置、关键系统文件
+    sys_drive = _system_drive()
+    if sys_drive and drive == sys_drive and parts:
+        if parts[0] in SYSTEM_DRIVE_TOP_DENY:
+            return (False, f"'{parts[0]}' 属于系统盘根级受保护目录，整棵子树禁止整理")
+        if len(parts) == 1 and parts[0].startswith('.'):
+            return (False, f"'{parts[0]}' 属于系统盘根级隐藏配置项，禁止整理")
+        if len(parts) >= 3 and parts[0] == 'users' and parts[2].startswith('.'):
+            return (False, f"'{parts[2]}' 属于用户主目录隐藏配置，整棵子树禁止整理")
+        leaf = parts[-1]
+        if leaf in SYSTEM_PROTECTED_FILES or leaf.startswith(('ntuser.dat', 'usrclass.dat')):
+            return (False, f"'{leaf}' 属于 Windows 系统关键文件，禁止整理")
+
+    # 从浅到深扫描：NESTED_DENY 命中即永久保护；普通 PROTECTED_NAMES 可被更深的 NESTED_ALLOW 放行
     allow_at = -1
     deny_at = -1
     allow_name = deny_name = ""
 
     for i, seg in enumerate(parts):
         if seg in NESTED_DENY:
-            deny_at, deny_name = i, seg
+            return (False, f"'{seg}' 属于强制保护目录，整棵子树禁止整理")
         elif seg in NESTED_ALLOW:
             allow_at, allow_name = i, seg
         elif seg in PROTECTED_NAMES:
@@ -185,7 +325,7 @@ MARKER_FIELDS = ('path', 'kind', 'by', 'note', 'ts')
 
 
 def load_markers(root):
-    rows = read_tsv(Path(root)/'_organize/markers.tsv', MARKER_FIELDS)
+    rows = read_tsv(organize_dir(root) / 'markers.tsv', MARKER_FIELDS)
     for row in rows:
         if row['kind'] not in KINDS or not os.path.isabs(row['path']):
             raise SafetyError('保护标记格式错误，停止操作')

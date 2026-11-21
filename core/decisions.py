@@ -897,9 +897,9 @@ def load_policy_mapping(root):
     没有 policy.json 时返回空 dict，不报错。
     """
     import json as _json
-    from pathlib import Path as _P
+    from safety import organize_dir
 
-    p = _P(root) / "_organize" / "policy.json"
+    p = organize_dir(root) / "policy.json"
     if not p.is_file():
         return {}, {}
 
@@ -1194,9 +1194,13 @@ def main():
     ap.add_argument('--need-ai', action='store_true',
                     help='只输出需要 AI 判断的，附完整事实')
     ap.add_argument('--answers', help='AI 判断结果 JSON，回填到建议里')
+    ap.add_argument('--allow-system-drive', action='store_true')
     args = ap.parse_args()
 
+    from safety import is_system_root, organize_dir
     root = os.path.abspath(args.root)
+    if is_system_root(root) and not args.allow_system_drive:
+        ap.error('整理系统盘根目录或 Users 根目录需显式加 --allow-system-drive')
     try:
         _boot_rules(root)
     except Exception as exc:
@@ -1209,7 +1213,8 @@ def main():
         print(f"policy.json 映射已生效: {n} 条规则, "
               f"{len(_mapping)} 个类别", file=sys.stderr)
 
-    probe_dir = Path(args.probe) if args.probe else Path(root) / '_organize' / 'probe'
+    state_dir = organize_dir(root)
+    probe_dir = Path(args.probe) if args.probe else state_dir / 'probe'
 
     probes, units, groups = load_probes(probe_dir)
     nodes = build_nodes(root, probes, units, groups)
@@ -1386,7 +1391,7 @@ def main():
                          ensure_ascii=False, indent=2))
         return 1 if data["aiQuestions"] else 0
 
-    out = Path(args.out) if args.out else Path(root) / '_organize' / 'decisions.json'
+    out = Path(args.out) if args.out else state_dir / 'decisions.json'
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                    encoding='utf-8')

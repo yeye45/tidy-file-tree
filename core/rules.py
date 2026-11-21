@@ -25,10 +25,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_RULES = HERE.parent / "rules" / "default.json"
-CACHE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "packtidy" / "rules"
+CACHE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "tidy-file-tree" / "rules"
 
-REQUIRED = {"version", "minPacktidy", "protected", "categories"}
-OPTIONAL = {"nestedAllow", "nestedDeny", "mapping", "updated", "changelog"}
+REQUIRED = {"version", "protected", "categories"}
+OPTIONAL = {"minTidyFileTree", "minPacktidy", "nestedAllow", "nestedDeny", "mapping", "updated", "changelog"}
 # v1 字段（向后兼容）
 LEGACY = {"crossRules", "newCategories", "categoryNodes"}
 LIST_FIELDS = {"protected", "nestedAllow", "nestedDeny", "categoryNodes"}
@@ -54,6 +54,8 @@ def validate(data):
     for key in REQUIRED:
         if key not in data:
             problems.append(f"缺少必需字段: {key}")
+    if "minTidyFileTree" not in data and "minPacktidy" not in data:
+        problems.append("缺少必需字段: minTidyFileTree（或兼容字段 minPacktidy）")
 
     # 未知字段只警告，不影响合法性——前向兼容：
     # 新版本写的规则包，旧版本应该能用了解的字段，忽略不认识的
@@ -65,6 +67,8 @@ def validate(data):
     # 类型检查
     if "version" in data and (not isinstance(data["version"], int) or isinstance(data["version"], bool)):
         problems.append("version 必须是整数")
+    if "minTidyFileTree" in data and not isinstance(data["minTidyFileTree"], str):
+        problems.append("minTidyFileTree 必须是字符串")
     if "minPacktidy" in data and not isinstance(data["minPacktidy"], str):
         problems.append("minPacktidy 必须是字符串")
     if "protected" in data:
@@ -130,7 +134,17 @@ def validate(data):
 def _cache_path():
     # Resolve at call time so applications/tests that set LOCALAPPDATA after
     # importing this module still use the intended per-user cache.
+    return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "tidy-file-tree" / "rules" / "remote.json"
+
+
+def _legacy_cache_path():
+    """Previous cache location, read only for upgrades from packtidy."""
     return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "packtidy" / "rules" / "remote.json"
+
+
+def _minimum_version(data):
+    """Prefer the current name; legacy packages remain readable."""
+    return data.get("minTidyFileTree", data.get("minPacktidy"))
 
 
 def _load_file(p, missing_ok=False):
@@ -156,12 +170,23 @@ def load(path=None):
     cached = _cache_path()
     if cached.is_file():
         return _load_file(cached)
+    legacy = _legacy_cache_path()
+    if legacy.is_file():
+        return _load_file(legacy)
     return _load_file(DEFAULT_RULES, missing_ok=True)
+
+
+def _policy_path(root):
+    try:
+        from safety import organize_dir
+        return organize_dir(root) / "policy.json"
+    except ImportError:
+        return Path(root) / "_organize" / "policy.json"
 
 
 def load_root_policy(root):
     """读取 root 的 policy；文件缺失返回空对象，损坏或链接拒绝。"""
-    p = Path(root) / "_organize" / "policy.json"
+    p = _policy_path(root)
     try:
         from safety import assert_no_links
         assert_no_links(p)
@@ -183,7 +208,7 @@ def load_root_policy(root):
 def load_for_root(root, policy=None):
     """按 root 的规则选择：policy.rules、同步缓存、内置规则。"""
     root = Path(root)
-    policy_file = root / "_organize" / "policy.json"
+    policy_file = _policy_path(root)
     policy = load_root_policy(root) if policy is None else policy
     if not isinstance(policy, dict):
         raise RulesError("policy 必须是对象")
@@ -290,11 +315,12 @@ def cmd_show(args):
         return 0
 
     cached = _cache_path()
-    source = args.file or (cached if cached.is_file() else DEFAULT_RULES)
+    legacy = _legacy_cache_path()
+    source = args.file or (cached if cached.is_file() else legacy if legacy.is_file() else DEFAULT_RULES)
     print(f"规则包: {source}")
     print(f"  版本    {data.get('version')}")
     print(f"  更新    {data.get('updated', '—')}")
-    print(f"  兼容    TidyFileTree >= {data.get('minPacktidy')}")
+    print(f"  兼容    TidyFileTree >= {_minimum_version(data)}")
     print()
     for field in ("protected", "nestedAllow", "nestedDeny", "categoryNodes"):
         if field in data:
@@ -329,7 +355,7 @@ def cmd_sync(args):
         print("需要 --url。规则包不内置默认来源，由使用者决定信任谁。",
               file=sys.stderr)
         print("\n示例:", file=sys.stderr)
-        print("  python core/rules.py sync --url https://example.com/packtidy-rules.json",
+        print("  python core/rules.py sync --url https://example.com/tidy-file-tree-rules.json",
               file=sys.stderr)
         return 1
 
@@ -354,6 +380,8 @@ def cmd_sync(args):
             print(f"  - {p}", file=sys.stderr)
         return 1
 
+    if "minPacktidy" in data:
+        data.setdefault("minTidyFileTree", data.pop("minPacktidy"))
     out = _cache_path()
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

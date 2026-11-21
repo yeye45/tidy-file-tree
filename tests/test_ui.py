@@ -33,8 +33,8 @@ class ReviewPageCase(unittest.TestCase):
         self.assertIn('/root/&lt;example&gt;', page)
 
     def test_placeholder_like_data_never_changes_where_payload_is_inserted(self):
-        page = render_html('/root/__PACKTIDY_DATA__', {'text':'__ROOT__'})
-        self.assertIn('<small title="/root/__PACKTIDY_DATA__">', page)
+        page = render_html('/root/__TIDY_FILE_TREE_DATA__', {'text':'__ROOT__'})
+        self.assertIn('<small title="/root/__TIDY_FILE_TREE_DATA__">', page)
         self.assertIn('const DATA = {"text": "__ROOT__"};', page)
 
     def test_english_board_keeps_data_and_embeds_locale(self):

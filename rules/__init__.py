@@ -1,1 +1,1 @@
-"""Bundled packtidy rule data."""
+"""Bundled TidyFileTree rule data."""

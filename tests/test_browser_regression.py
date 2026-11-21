@@ -25,7 +25,7 @@ from ui import group_key
 @unittest.skipIf(sync_playwright is None, "install the browser extra: pip install playwright")
 class BrowserRegression(unittest.TestCase):
     def test_scan_drafts_export_ai_questions_and_import_only_current_answers(self):
-        with tempfile.TemporaryDirectory(prefix=".packtidy-browser-ai-", dir=PROJECT) as temp:
+        with tempfile.TemporaryDirectory(prefix=".tidy-file-tree-browser-ai-", dir=PROJECT) as temp:
             root = Path(temp) / "library"
             for title, season_episodes in (("Sky", (1, 1)), ("Morning", (1, 2))):
                 for index, episode in enumerate(season_episodes):
@@ -34,7 +34,7 @@ class BrowserRegression(unittest.TestCase):
                     (batch / f"{title}.S01E{episode:02}.mkv").touch()
             before = sorted(root.rglob("*"))
             env = os.environ.copy()
-            if env.get("PACKTIDY_BROWSER_USE_INSTALLED") != "1":
+            if env.get("TIDY_FILE_TREE_BROWSER_USE_INSTALLED") != "1":
                 env["PYTHONPATH"] = str(PROJECT) + os.pathsep + env.get("PYTHONPATH", "")
             env["LOCALAPPDATA"] = str(Path(temp) / "appdata")
             env["XDG_STATE_HOME"] = str(Path(temp) / "state")
@@ -98,7 +98,7 @@ class BrowserRegression(unittest.TestCase):
             self.assertEqual(sorted(root.rglob("*")), before)
 
     def test_review_board_to_receipted_apply_and_undo(self):
-        with tempfile.TemporaryDirectory(prefix=".packtidy-browser-", dir=PROJECT) as temp:
+        with tempfile.TemporaryDirectory(prefix=".tidy-file-tree-browser-", dir=PROJECT) as temp:
             root = Path(temp) / "library"
             source = root / "incoming"
             source.mkdir(parents=True)
@@ -126,7 +126,7 @@ class BrowserRegression(unittest.TestCase):
             }), encoding="utf-8")
             board = Path(temp) / "review.html"
             env = os.environ.copy()
-            if env.get("PACKTIDY_BROWSER_USE_INSTALLED") != "1":
+            if env.get("TIDY_FILE_TREE_BROWSER_USE_INSTALLED") != "1":
                 env["PYTHONPATH"] = str(PROJECT) + os.pathsep + env.get("PYTHONPATH", "")
             env["LOCALAPPDATA"] = str(Path(temp) / "appdata")
             env["XDG_STATE_HOME"] = str(Path(temp) / "state")
@@ -145,12 +145,31 @@ class BrowserRegression(unittest.TestCase):
                 page = browser.new_page(accept_downloads=True)
                 page.set_default_timeout(5000)
                 page.goto(board.as_uri())
+                card = page.locator("article.card").filter(has=page.get_by_role("heading", name="Sample Set"))
+                card.locator("summary").click()
+                first_key = card.locator("button.port[data-source][data-unit]").first.get_attribute("data-unit")
+                page.evaluate("""([path,key]) => {
+                    localStorage.setItem('packtidy-wires-v1:' + path,JSON.stringify([[key,'@keep']]));
+                    localStorage.setItem('packtidy-theme','dark');
+                }""", [str(root), first_key])
+                page.reload()
+                self.assertEqual(page.evaluate("window.foState().placements"), {first_key: "@keep"})
+                self.assertEqual(page.locator("html").get_attribute("data-theme"), "dark")
+                self.assertEqual(page.evaluate("path => JSON.parse(localStorage.getItem('tidy-file-tree-wires-v1:' + path))", str(root)),
+                                 [[first_key, "@keep"]])
+                self.assertEqual(page.evaluate("localStorage.getItem('tidy-file-tree-theme')"), "dark")
+                page.evaluate("""path => {
+                    localStorage.setItem('tidy-file-tree-wires-v1:' + path,'[]');
+                    localStorage.setItem('tidy-file-tree-theme','light');
+                }""", str(root))
+                page.reload()
+                self.assertEqual(page.evaluate("window.foState().linked"), 0)
+                self.assertEqual(page.locator("html").get_attribute("data-theme"), "light")
                 self.assertIn("TidyFileTree", page.title())
                 self.assertEqual(page.locator("html").get_attribute("lang"), "en")
                 self.assertEqual(page.locator("#groupSearch").get_attribute("placeholder"), "Group or source")
                 archive_target = page.locator("[data-target]").filter(has=page.locator(".target-label", has_text="archive"))
                 page.locator("#groupSearch").fill("Sample Set")
-                card = page.locator("article.card").filter(has=page.get_by_role("heading", name="Sample Set"))
                 card.locator("summary").click()
                 card.locator("button.port[data-source][data-unit]").first.click()
                 self.assertEqual(page.locator('[data-target="@keep"] .target-label').inner_text(), "Keep in place")

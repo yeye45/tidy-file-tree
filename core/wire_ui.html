@@ -6,90 +6,206 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
 <title data-i18n="TidyFileTree · 连线工作台">TidyFileTree · 连线工作台</title>
 <style>
-:root{color-scheme:light dark;--bg:#f3f6fb;--paper:#fff;--tint:#ecf2fa;--ink:#152039;--muted:#566781;--line:#d1dceb;--accent:#245bcc;--wire:#3470e7;--ok:#176b54;--warn:#884405;--focus:#235dce}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101620;--paper:#182331;--tint:#223145;--ink:#eaf1fb;--muted:#a9b9d1;--line:#384c66;--accent:#9abbff;--wire:#83adff;--ok:#81dac2;--warn:#ffc88a;--focus:#9abbff}}
-:root[data-theme="dark"]{color-scheme:dark;--bg:#101620;--paper:#182331;--tint:#223145;--ink:#eaf1fb;--muted:#a9b9d1;--line:#384c66;--accent:#9abbff;--wire:#83adff;--ok:#81dac2;--warn:#ffc88a;--focus:#9abbff}
+:root{color-scheme:light dark;--bg:#f4f7fb;--paper:#fff;--tint:#eef3fa;--tint-2:#e5eefb;--ink:#142038;--muted:#586a84;--line:#d6e0ee;--accent:#245bcc;--accent-soft:#eaf1ff;--wire:#3470e7;--ok:#126b52;--ok-bg:#e8f7f1;--warn:#8c4a08;--warn-bg:#fff4e5;--danger:#b42318;--danger-bg:#fef0ef;--focus:#245bcc;--shadow:0 1px 2px rgba(15,28,50,.05)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1621;--paper:#172231;--tint:#1e2c40;--tint-2:#253750;--ink:#ebf2fc;--muted:#9cb0ca;--line:#2f425b;--accent:#8ab4ff;--accent-soft:#1c3150;--wire:#75a6ff;--ok:#78dbb9;--ok-bg:#17352c;--warn:#ffca85;--warn-bg:#3b2b18;--danger:#ff9b93;--danger-bg:#3c1e22;--focus:#8ab4ff;--shadow:0 1px 3px rgba(0,0,0,.3)}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#0f1621;--paper:#172231;--tint:#1e2c40;--tint-2:#253750;--ink:#ebf2fc;--muted:#9cb0ca;--line:#2f425b;--accent:#8ab4ff;--accent-soft:#1c3150;--wire:#75a6ff;--ok:#78dbb9;--ok-bg:#17352c;--warn:#ffca85;--warn-bg:#3b2b18;--danger:#ff9b93;--danger-bg:#3c1e22;--focus:#8ab4ff;--shadow:0 1px 3px rgba(0,0,0,.3)}
 :root[data-theme="light"]{color-scheme:light}
 *{box-sizing:border-box}
-body{margin:0;height:100dvh;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,"Microsoft YaHei",sans-serif}
+[hidden]{display:none!important}
+body{margin:0;height:100dvh;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
 button,input,select{font:inherit;color:inherit}
-button{cursor:pointer;border:1px solid var(--line);border-radius:7px;background:var(--paper);padding:5px 9px}
-button:hover{border-color:var(--accent)}
-button:disabled{opacity:.55;cursor:default}
+button{cursor:pointer;border:1px solid var(--line);border-radius:7px;background:var(--paper);padding:5px 10px;transition:border-color .15s,background-color .15s,color .15s}
+button:hover:not(:disabled){border-color:var(--accent);background:var(--tint)}
+button:disabled{opacity:.48;cursor:default}
+input,select{background:var(--paper);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
-header{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:14px 19px;background:var(--paper);border-bottom:1px solid var(--line)}
-h1{font-size:20px;margin:0}
-header small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
-header>div:first-child{min-width:0}
+header{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:11px 20px;background:var(--paper);border-bottom:1px solid var(--line)}
+.brand-group{display:flex;align-items:center;gap:10px;min-width:0}
+.brand-icon{display:inline-block;position:relative;width:18px;height:13px;border:1.8px solid var(--accent);border-radius:3px;flex:none;margin-top:3px}
+.brand-icon::before{content:"";position:absolute;left:-1.8px;top:-5px;width:8px;height:4.5px;border:1.8px solid var(--accent);border-bottom:0;border-radius:2px 2px 0 0}
+header h1{font-size:17px;margin:0;letter-spacing:-.01em}
+header small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px}
 .actions{display:flex;align-items:center;gap:6px;flex:none}
+.ghost-btn{border-color:transparent;background:transparent;color:var(--muted);padding:5px 8px}
+.ghost-btn:hover:not(:disabled){border-color:var(--line);background:var(--tint);color:var(--ink)}
 .primary{background:var(--accent);color:var(--paper);border-color:var(--accent);font-weight:650}
-.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 19px;font-size:13px;color:var(--muted)}
-.toolbar strong{color:var(--ink)}
-#board{display:grid;grid-template-columns:minmax(0,1.15fr) clamp(52px,10vw,136px) minmax(0,1fr);min-height:0;position:relative;padding:0 12px;overflow:hidden}
+.primary:hover:not(:disabled){background:var(--accent);border-color:var(--accent);filter:brightness(1.08)}
+.status-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 14px;padding:8px 20px;font-size:13px;background:var(--paper);border-bottom:1px solid var(--line)}
+.status-metrics{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.metric-pill{display:inline-flex;align-items:center;gap:5px;font-weight:650;color:var(--ink)}
+.metric-pill.warn{color:var(--warn)}
+.metric-pill.ok{color:var(--ok)}
+.metric-note{color:var(--muted);font-size:12.5px}
+.conflict-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600;color:var(--danger);background:var(--danger-bg);border:1px solid var(--danger)}
+.filter-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:99px;font-size:12px;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent)}
+.filter-chip button{border:0;background:transparent;padding:0 2px;font-weight:700;color:inherit}
+.wire-mode-btn{font-size:12px;padding:2px 9px;border-radius:99px;color:var(--muted)}
+.wire-mode-btn[aria-pressed="true"]{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);font-weight:600}
+.load-more-btn{display:block;width:100%;margin:4px 0 8px;font-size:12.5px;color:var(--accent);background:var(--paper);border-style:dashed}
+#board{display:grid;grid-template-columns:minmax(310px,1.08fr) clamp(88px,15vw,220px) minmax(280px,.92fr);min-height:0;position:relative;padding:0 16px;overflow:hidden;background:var(--bg);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:18px 18px}
 .pane{display:grid;grid-template-rows:auto minmax(0,1fr);min-width:0;min-height:0}
 .left{grid-column:1}.right{grid-column:3}
-.pane-head{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:7px 4px}
-.pane-head h2{font-size:14px;margin:0 auto 0 0}
-.pane-head input{min-width:60px;width:min(100%,200px)}
-input,select{background:var(--paper);border:1px solid var(--line);border-radius:7px;padding:5px 6px}
-.pane-scroll{overflow:auto;min-height:0;padding:3px 5px 12px;scrollbar-width:thin}
-.card,.target{background:var(--paper);border:1px solid var(--line);border-radius:9px;margin-bottom:7px;position:relative;min-width:0}
-.card{padding:10px 39px 8px 10px}
-.card.selected,.target.hot{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.pane-head{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 4px 8px}
+.pane-head h2{font-size:13.5px;margin:0 auto 0 0;font-weight:650;color:var(--muted)}
+.pane-head input{min-width:88px;width:min(100%,170px);font-size:13px;padding:4px 8px}
+.tabs{display:inline-flex;flex-wrap:wrap;gap:3px;background:var(--tint);padding:3px;border-radius:9px;border:1px solid var(--line)}
+.tab{border:0;background:transparent;color:var(--muted);font-size:12.5px;padding:4px 9px;border-radius:6px;font-weight:550}
+.tab:hover:not(:disabled){background:var(--tint-2);color:var(--ink)}
+.tab[aria-selected="true"]{background:var(--paper);color:var(--ink);font-weight:650;box-shadow:var(--shadow)}
+.tab .cnt{opacity:.72;margin-left:3px;font-variant-numeric:tabular-nums}
+.pane-scroll{overflow:auto;min-height:0;padding:4px 12px 20px 4px;scrollbar-width:thin;position:relative}
+.right .pane-scroll{padding:4px 12px 20px 14px}
+.card,.target{background:var(--paper);border:1px solid var(--line);border-radius:10px;margin-bottom:8px;position:relative;min-width:0;box-shadow:var(--shadow);transition:border-color .14s,box-shadow .14s,background-color .14s}
+.card{padding:10px 24px 9px 12px;cursor:pointer}
+.card:hover{border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
+.card.focused{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft),var(--shadow)}
+.card.selected,.target.hot{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent),0 0 0 3px var(--accent-soft)}
+.card.is-linked{border-left:3px solid var(--wire);background:color-mix(in srgb,var(--paper) 94%,var(--tint))}
+.card.is-keep{border-left:3px solid var(--ok)}
+.card.conflict-card{border-color:var(--danger);box-shadow:inset 0 0 0 1px var(--danger)}
+.card-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.card-title-wrap{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;min-width:0}
 .card h3,.target-label{margin:0;font-size:14px;overflow-wrap:anywhere;font-weight:650}
 .meta{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
-.note{margin:5px 0;color:var(--muted)}
-.badge{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-right:5px;font-size:11px}
-.tier-full,.partial{color:var(--warn);background:var(--tint)}
-.linked{color:var(--ok)}
-summary{cursor:pointer;color:var(--accent);width:fit-content;margin:5px 0;font-size:12px}
-.evidence{padding:5px 0;font-size:12px}
-.evidence ul{padding-left:18px;margin:4px 0}
-.unit{position:relative;padding:7px 32px 7px 7px;margin-right:-31px;border-top:1px solid var(--line);overflow-wrap:anywhere}
-.unit.selected{background:var(--tint)}
-.port{position:absolute;display:grid;place-items:center;top:50%;transform:translateY(-50%);width:32px;height:32px;border:0;background:transparent;padding:0;z-index:4;touch-action:none}
-.port::after{content:'';width:11px;height:11px;border:2px solid var(--wire);border-radius:50%;background:var(--paper)}
-.port:hover::after,.port.active::after{background:var(--wire);box-shadow:0 0 0 4px var(--tint)}
-.source-port{right:0;cursor:crosshair}
-.group-port{top:25px}
-.target-port{left:0}
-.target{padding:8px 8px 8px 34px;display:flex;gap:6px;align-items:center}
-.target-label{flex:1}
-.zone-title{display:flex;align-items:center;gap:5px;margin:5px 0}
-.zone-title button{padding:1px 5px}
-.target.child{padding-left:43px}
+.guidance{margin:5px 0 0;font-size:12.5px;color:var(--muted);display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.guidance strong{color:var(--ink);font-weight:600}
+.badge{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:11px;line-height:1.4;background:var(--tint);color:var(--muted);white-space:nowrap}
+.badge.decide{color:var(--warn);background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.badge.ai-pick{color:var(--accent);background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 35%,transparent);font-weight:650}
+.badge.alt-pick{color:var(--muted);background:var(--tint)}
+.badge.linked{color:var(--ok);background:var(--ok-bg);border-color:color-mix(in srgb,var(--ok) 35%,transparent);font-weight:600}
+.badge.partial{color:var(--warn);background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.badge-btn{cursor:pointer}
+.badge-btn:hover{border-color:var(--accent)}
+.card-footer{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:7px}
+.card-btn{padding:3px 9px;font-size:12px;border-radius:6px}
+.card-btn.accept-btn{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:var(--accent-soft);font-weight:600}
+.card-btn.accept-btn:hover{background:var(--accent);color:var(--paper)}
+.card-btn.skip-btn{color:var(--muted);border-color:transparent;background:transparent;padding:3px 6px}
+.card-btn.skip-btn:hover{color:var(--ink);background:var(--tint)}
+details{margin-top:4px}
+summary{cursor:pointer;color:var(--muted);width:fit-content;font-size:12px;user-select:none}
+summary:hover{color:var(--accent)}
+.evidence{padding:7px 9px;margin:5px 0 6px;font-size:12px;background:var(--tint);border-radius:7px;display:grid;gap:4px}
+.unit{position:relative;padding:7px 26px 7px 8px;margin-right:-16px;border-top:1px solid var(--line);overflow-wrap:anywhere;border-radius:4px;cursor:pointer}
+.unit:hover{background:var(--tint)}
+.unit.selected{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+/* Node-editor edge-straddling ports */
+.port{position:absolute;display:grid;place-items:center;top:50%;transform:translateY(-50%);width:26px;height:26px;border:0;background:transparent;padding:0;z-index:4;touch-action:none}
+.port:hover:not(:disabled){background:transparent}
+.port::after{content:'';width:12px;height:12px;border:2px solid var(--wire);border-radius:50%;background:var(--paper);transition:transform .12s,background-color .12s,box-shadow .12s}
+.port.filled::after{background:var(--wire)}
+.port.filled-keep::after{border-color:var(--ok);background:var(--ok)}
+.port:hover::after,.port.active::after{background:var(--wire);transform:scale(1.2);box-shadow:0 0 0 4px var(--accent-soft)}
+.source-port{right:-13px;cursor:crosshair}
+.group-port{top:24px}
+.target-port{left:-13px}
+.section-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0 6px;font-size:12px;font-weight:650;color:var(--muted);padding:0 2px}
+.section-label.ai-head{color:var(--accent);margin-top:0}
+.for-pill{font-size:11px;font-weight:600;padding:1px 7px;border-radius:99px;background:var(--paper);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));color:var(--ink);max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rec-box{padding:10px 10px 3px 10px;margin:0 -10px 14px -10px;border-radius:12px;background:color-mix(in srgb,var(--accent-soft) 62%,transparent);border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line))}
+.target{padding:8px 10px 8px 18px;display:flex;gap:7px;align-items:center}
+#right.can-connect .target{cursor:pointer}
+#right.can-connect .target:hover{border-color:var(--accent);background:var(--accent-soft)}
+#right.can-connect .target.keep-target:hover{border-color:var(--ok);background:var(--ok-bg)}
+.connect-cue{display:none;font-size:11px;font-weight:650;padding:1px 7px;border-radius:99px;background:var(--accent);color:var(--paper);white-space:nowrap;flex:none}
+.target.keep-target .connect-cue{background:var(--ok)}
+#right.can-connect .target:hover .connect-cue{display:inline-flex}
+.target.is-primary-rec{border-color:var(--accent);background:var(--paper);box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 12%,transparent)}
+.target.keep-target{border-style:dashed}
+.target.keep-target .port::after{border-color:var(--ok)}
+.target.keep-target .port:hover::after{background:var(--ok)}
 .target.active-target{border-color:var(--ok)}
+.target.linked-peer{box-shadow:0 0 0 2px var(--accent-soft);border-color:var(--accent)}
+.target.flash-target{animation:flashRing 1.1s ease-out}
+@keyframes flashRing{0%{box-shadow:0 0 0 4px var(--accent)}100%{box-shadow:var(--shadow)}}
+.target-ico{width:15px;height:15px;flex:none;color:var(--muted);display:inline-flex;align-items:center;justify-content:center}
+.target.is-primary-rec .target-ico{color:var(--accent)}
+.target.keep-target .target-ico{color:var(--ok)}
+.target-main{flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.target-hint{font-size:11px;color:var(--muted)}
+.target-expand{width:20px;height:20px;padding:0;border-radius:5px;font-size:11px;display:grid;place-items:center;color:var(--muted);background:var(--tint);flex:none}
+.target.child{margin-left:18px;padding-left:16px}
+.target.child::before{content:"";position:absolute;left:-11px;top:-9px;bottom:50%;width:10px;border-left:1px solid var(--line);border-bottom:1px solid var(--line);border-bottom-left-radius:4px;pointer-events:none}
+.count-btn{padding:1px 7px;border-radius:99px;font-size:11px;font-weight:650;color:var(--ok);background:var(--ok-bg);border:1px solid color-mix(in srgb,var(--ok) 40%,transparent);font-variant-numeric:tabular-nums;flex:none}
+.count-btn:hover,.count-btn.filtering{background:var(--ok);color:var(--paper);border-color:var(--ok)}
+.new-target-form{display:flex;gap:6px;margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}
+.new-target-form input{flex:1;min-width:0;font-size:12.5px}
+.new-target-form button{font-size:12.5px;padding:4px 10px}
 .wire-svg{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
-.wire{fill:none;stroke:var(--wire);stroke-width:2.4;opacity:.86;pointer-events:none}
-.wire-hit{fill:none;stroke:transparent;stroke-width:18;pointer-events:stroke;cursor:pointer}
-.wire-hit:hover+.wire{stroke-width:4;opacity:1}
-.draft{stroke-dasharray:6 5;opacity:.75}
-.unlink{margin-top:4px;padding:2px 6px;font-size:12px}
-.empty{color:var(--muted);padding:9px}
-footer{padding:8px 15px;color:var(--muted);border-top:1px solid var(--line);background:var(--paper);font-size:12px}
-dialog{width:min(740px,calc(100% - 22px));max-height:85vh;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:14px}
-dialog::backdrop{background:#0713239a}
-dialog h2{font-size:18px;margin:0 0 8px}
-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);padding:9px;max-height:49vh;overflow:auto}
-.dialog-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.wire{fill:none;stroke:var(--wire);stroke-width:2.3;stroke-linecap:round;opacity:.85;pointer-events:none;transition:opacity .12s,stroke-width .12s,stroke .12s}
+.wire.keep-wire{stroke:var(--ok);stroke-dasharray:5 4}
+.wire.suggest-wire{stroke:var(--accent);stroke-width:2;stroke-dasharray:5 5;opacity:.62;animation:flowDash 1.1s linear infinite}
+.wire.hover-preview-wire{stroke:var(--accent);stroke-width:2.5;stroke-dasharray:6 4;opacity:.92;animation:flowDash .8s linear infinite}
+.wire.hover-preview-wire.keep-wire{stroke:var(--ok)}
+@keyframes flowDash{to{stroke-dashoffset:-20}}
+@media(prefers-reduced-motion:reduce){.wire.suggest-wire{animation:none}}
+.wire.offscreen-wire{stroke-dasharray:3 4;opacity:.42}
+.wire.dimmed{opacity:.14}
+.wire.emph{stroke-width:3.4;opacity:1}
+.wire-hit{fill:none;stroke:transparent;stroke-width:16;pointer-events:stroke;cursor:pointer}
+.wire-hit:hover+.wire{stroke:var(--danger);stroke-width:3.5;opacity:1;stroke-dasharray:none}
+.draft{stroke-dasharray:6 5;opacity:.92;stroke-width:2.6}
+.unlink{padding:2px 8px;font-size:12px;border-radius:6px}
+.empty{color:var(--muted);padding:20px 12px;text-align:center;font-size:13px;background:var(--paper);border:1px dashed var(--line);border-radius:10px}
+footer{padding:7px 20px;color:var(--muted);border-top:1px solid var(--line);background:var(--paper);font-size:12px}
+dialog{width:min(780px,calc(100% - 22px));max-height:86vh;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:0;box-shadow:0 16px 48px rgba(7,19,35,.3)}
+dialog[open]{display:flex;flex-direction:column}
+dialog::backdrop{background:#0713239a;backdrop-filter:blur(2px)}
+.dialog-head{padding:14px 18px 10px;border-bottom:1px solid var(--line)}
+.dialog-head h2{font-size:18px;margin:0}
+.dialog-body{padding:12px 18px;overflow:auto;flex:1;min-height:0}
+dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:36vh;overflow:auto;font-size:12px}
+.conflict-box{padding:10px 12px;margin:0 0 12px;border-radius:8px;background:var(--danger-bg);border:1px solid var(--danger);color:var(--danger);font-size:13px}
+.conflict-box ul{margin:6px 0 0;padding-left:18px;overflow-wrap:anywhere}
+.cli-box{margin:10px 0 14px;padding:10px 12px;border-radius:8px;background:var(--tint);border:1px solid var(--line)}
+.cli-box-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;font-size:12px;font-weight:650;color:var(--muted)}
+.cli-box code{display:block;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;color:var(--ink)}
+.dialog-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;padding:10px 18px;border-top:1px solid var(--line);background:var(--paper);border-radius:0 0 14px 14px}
+#proposalList{padding-left:18px;margin:8px 0}
 #proposalList li{margin-bottom:12px}
-#correctionRows{display:grid;gap:10px;margin:10px 0 16px}.correction-row{display:grid;grid-template-columns:minmax(110px,1fr) repeat(3,minmax(120px,1.25fr));gap:8px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--tint)}.correction-row label{display:grid;gap:4px;font-size:12px;color:var(--muted)}.correction-row input{width:100%;min-width:0;color:var(--ink)}
-@media(max-width:690px){.correction-row{grid-template-columns:1fr 1fr}.correction-row strong{grid-column:1/-1}}
-@media(max-width:690px){header{padding:8px 10px;align-items:flex-start;gap:5px}h1{font-size:16px}.actions{flex-wrap:wrap;justify-content:flex-end}.actions button{font-size:12px}.toolbar{padding:6px 10px}#board{padding:0 2px;grid-template-columns:minmax(0,1.1fr) 38px minmax(0,1fr)}.pane-head{font-size:12px}.card h3,.target-label{font-size:12px}.target.child{padding-left:34px}.pane-scroll{padding-left:3px;padding-right:3px}}
+#correctionRows{display:grid;gap:10px;margin:10px 0 6px}
+.correction-row{display:grid;grid-template-columns:minmax(110px,1fr) repeat(3,minmax(120px,1.25fr));gap:8px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--tint)}
+.correction-row label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
+.correction-row input{width:100%;min-width:0;color:var(--ink)}
+@media(max-width:740px){.correction-row{grid-template-columns:1fr 1fr}.correction-row strong{grid-column:1/-1}header{padding:8px 10px;align-items:flex-start;gap:5px}header h1{font-size:15px}.actions{flex-wrap:wrap;justify-content:flex-end}.actions button,.actions select{font-size:12px}.status-bar{padding:6px 10px}#board{padding:0 4px;grid-template-columns:minmax(0,1.1fr) 42px minmax(0,1fr)}.pane-head{font-size:12px}.card h3,.target-label{font-size:12.5px}.target.child{margin-left:10px}.pane-scroll{padding:4px 8px 14px 2px}.right .pane-scroll{padding:4px 2px 14px 8px}}
 </style>
 </head>
 <body>
 <header>
-  <div><h1 data-i18n="TidyFileTree 连线工作台">TidyFileTree 连线工作台</h1><small title="__ROOT__">__ROOT__</small></div>
-  <div class="actions"><select id="language" aria-label="语言" data-i18n-aria-label="语言"><option value="zh-CN">简体中文</option><option value="en">English</option></select><button id="undoButton" aria-label="撤销连线" data-i18n-aria-label="撤销连线" data-i18n="撤销">撤销</button><button id="redoButton" aria-label="重做连线" data-i18n-aria-label="重做连线" data-i18n="重做">重做</button><button id="proposalsButton" data-i18n="候选类别">候选类别</button><button id="reviewButton" class="primary" data-i18n="复核清单">复核清单</button><button id="theme" aria-label="切换明暗主题" data-i18n-aria-label="切换明暗主题">◐</button></div>
+  <div class="brand-group"><span class="brand-icon" aria-hidden="true"></span><div><h1 data-i18n="TidyFileTree 连线工作台">TidyFileTree 连线工作台</h1><small title="__ROOT__">__ROOT__</small></div></div>
+  <div class="actions">
+    <select id="language" aria-label="语言" data-i18n-aria-label="语言"><option value="zh-CN">简体中文</option><option value="en">English</option></select>
+    <button id="undoButton" class="ghost-btn" aria-label="撤销连线" data-i18n-aria-label="撤销连线" data-i18n="撤销">撤销</button>
+    <button id="redoButton" class="ghost-btn" aria-label="重做连线" data-i18n-aria-label="重做连线" data-i18n="重做">重做</button>
+    <button id="proposalsButton" class="ghost-btn" data-i18n="候选类别">候选类别</button>
+    <button id="reviewButton" class="primary" data-i18n="导出计划">导出计划</button>
+    <button id="theme" class="ghost-btn" aria-label="切换明暗主题" data-i18n-aria-label="切换明暗主题">◐</button>
+  </div>
 </header>
-<div class="toolbar"><strong id="progress"></strong><span id="summary"></span></div>
+<div class="status-bar">
+  <div class="status-metrics">
+    <span class="metric-pill" id="decideMetric"></span>
+    <span class="metric-pill ok" id="moveMetric"></span>
+    <span class="metric-note" id="keepMetric" hidden></span>
+    <button type="button" class="conflict-pill" id="conflictPill" hidden></button>
+    <span class="filter-chip" id="targetFilterChip" hidden><span id="targetFilterText"></span><button type="button" id="clearTargetFilter" aria-label="清除目标筛选" data-i18n-aria-label="清除目标筛选">×</button></span>
+    <button type="button" class="wire-mode-btn" id="focusWiresBtn" aria-pressed="false" hidden></button>
+  </div>
+  <span class="metric-note" data-i18n="未连线项将留在原处，只连需要移动的即可">未连线项将留在原处，只连需要移动的即可</span>
+</div>
 <main id="board" aria-label="整理连线" data-i18n-aria-label="整理连线">
   <svg class="wire-svg" id="wires" aria-hidden="true"></svg>
   <section class="pane left" aria-label="来源" data-i18n-aria-label="来源">
-    <div class="pane-head"><h2 data-i18n="整理分组">整理分组</h2><label><select id="statusFilter" aria-label="按连线状态筛选" data-i18n-aria-label="按连线状态筛选">
-      <option value="all" data-i18n="全部">全部</option><option value="pending" data-i18n="待连">待连</option><option value="partial" data-i18n="部分已连">部分已连</option><option value="linked" data-i18n="已连完">已连完</option>
-    </select></label><input id="groupSearch" type="search" aria-label="搜索分组" data-i18n-aria-label="搜索分组" placeholder="分组或来源" data-i18n-placeholder="分组或来源"></div>
+    <div class="pane-head">
+      <div class="tabs" id="viewTabs" role="tablist">
+        <button type="button" class="tab" role="tab" data-tab="decide" aria-selected="false"></button>
+        <button type="button" class="tab" role="tab" data-tab="moves" aria-selected="false"></button>
+        <button type="button" class="tab" role="tab" data-tab="linked" aria-selected="false"></button>
+        <button type="button" class="tab" role="tab" data-tab="all" aria-selected="false"></button>
+      </div>
+      <input id="groupSearch" type="search" aria-label="搜索分组" data-i18n-aria-label="搜索分组" placeholder="分组或来源" data-i18n-placeholder="分组或来源">
+    </div>
     <div class="pane-scroll" id="left"></div>
   </section>
   <section class="pane right" aria-label="去向" data-i18n-aria-label="去向">
@@ -97,19 +213,30 @@ dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);pa
     <div class="pane-scroll" id="right"></div>
   </section>
 </main>
-<footer id="hint" role="status" data-i18n="从左侧圆点拖到目标，或依次点选两端。点击线条或「断开」可撤销连线。">从左侧圆点拖到目标，或依次点选两端。点击线条或「断开」可撤销连线。</footer>
+<footer id="hint" role="status" data-i18n="点击卡片查看推荐目标，拖线或点选完成指定；未连线的项默认留在原处。">点击卡片查看推荐目标，拖线或点选完成指定；未连线的项默认留在原处。</footer>
 <dialog id="review" aria-labelledby="reviewTitle">
-  <h2 id="reviewTitle" data-i18n="整理复核清单">整理复核清单</h2><p id="reviewStatus"></p><pre id="reviewText"></pre><section id="corrections"><h3 data-i18n="本地分类修正（可选）">本地分类修正（可选）</h3><p class="meta" data-i18n="仅供你下载整理；不会上传，也不会移动文件。补充“这是什么”，并可修改建议或已选去向标签。">仅供你下载整理；不会上传，也不会移动文件。补充“这是什么”，并可修改建议或已选去向标签。</p><div id="correctionRows"></div></section>
+  <div class="dialog-head"><h2 id="reviewTitle" data-i18n="核对整理计划">核对整理计划</h2></div>
+  <div class="dialog-body">
+    <p id="reviewStatus"></p>
+    <div id="reviewConflicts" class="conflict-box" hidden></div>
+    <div id="reviewCommands" class="cli-box" hidden>
+      <div class="cli-box-head"><span data-i18n="后续终端命令">后续终端命令</span><span><button type="button" class="card-btn" id="copyPreviewCmd" data-i18n="复制预演命令">复制预演命令</button> <button type="button" class="card-btn" id="copyApplyCmd" data-i18n="复制执行命令">复制执行命令</button></span></div>
+      <code id="previewCmdText"></code>
+    </div>
+    <pre id="reviewText"></pre>
+    <section id="corrections"><h3 data-i18n="本地分类修正（可选）">本地分类修正（可选）</h3><p class="meta" data-i18n="可选：记录你改选的原因，仅保存在本地，不会上传也不会移动文件。">可选：记录你改选的原因，仅保存在本地，不会上传也不会移动文件。</p><div id="correctionRows"></div></section>
+  </div>
   <div class="dialog-actions"><form method="dialog"><button data-i18n="关闭">关闭</button></form>
-    <button id="downloadReview" data-i18n="下载复核清单">下载复核清单</button><button id="downloadCorrections" data-i18n="下载本地分类修正">下载本地分类修正</button><button id="downloadActions" class="primary" data-i18n="下载已连动作表">下载已连动作表</button></div>
+    <button id="downloadReview" data-i18n="下载核对摘要 (.md)">下载核对摘要 (.md)</button><button id="downloadCorrections" data-i18n="下载分类修正 (.tsv)">下载分类修正 (.tsv)</button><button id="downloadActions" class="primary" data-i18n="下载动作表 (.tsv)">下载动作表 (.tsv)</button></div>
 </dialog>
 <dialog id="proposals" aria-labelledby="proposalsTitle">
-  <h2 id="proposalsTitle" data-i18n="候选类别">候选类别</h2><p data-i18n="这些建议来自当前整理分组。选择去向后，实际目录由执行步骤创建。">这些建议来自当前整理分组。选择去向后，实际目录由执行步骤创建。</p>
-  <ul id="proposalList"></ul><form method="dialog"><button data-i18n="关闭">关闭</button></form>
+  <div class="dialog-head"><h2 id="proposalsTitle" data-i18n="候选类别">候选类别</h2></div>
+  <div class="dialog-body"><p data-i18n="这些建议来自当前整理分组。选择去向后，实际目录由执行步骤创建。">这些建议来自当前整理分组。选择去向后，实际目录由执行步骤创建。</p><ul id="proposalList"></ul></div>
+  <div class="dialog-actions"><form method="dialog"><button data-i18n="关闭">关闭</button></form></div>
 </dialog>
 <script>
 'use strict';
-const DATA = __PACKTIDY_DATA__;
+const DATA = __TIDY_FILE_TREE_DATA__;
 const englishMessages = __BOARD_MESSAGES__;
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -120,32 +247,73 @@ function t(source, values={}) {
 }
 const KEEP = '@keep';
 const tierLabels = {direct:'直接定',verify:'需验证',full:'完整验证'};
-const storageKey = 'packtidy-wires-v1:' + DATA.root;
+const storageKey = 'tidy-file-tree-wires-v1:' + DATA.root;
+const themeKey = 'tidy-file-tree-theme';
+const rootSep = /^(?:[A-Za-z]:\\|\\\\)/.test(DATA.root) ? '\\' : '/';
 const targets = new Map([[KEEP,{path:KEEP,label:t('保持原位'),depth:0}], ...DATA.zones.map(z => [z.path,z])]);
 const groups = DATA.nodes.flatMap(node => node.groups.map(group => {
   const id = JSON.stringify([node.id,group.id]);
   const units = group.units.map(unit => ({...unit,key:JSON.stringify([id,unit.id])}));
-  return {...group,id,node,units,keys:units.length ? units.map(u => u.key) : [id]};
+  const hay = [group.name, node.path, ...units.map(u => u.label)].join('\n').toLocaleLowerCase();
+  return {...group,id,node,units,keys:units.length ? units.map(u => u.key) : [id],_hay:hay};
 }));
 const byGroup = new Map(groups.map(g => [g.id,g]));
 const unitKeys = new Set(groups.flatMap(g => g.keys));
 const places = new Map();
 const openGroups = new Set();
-const openZones = new Set(['AI工具','游戏','影视','学习资料']);
+const unitLimits = new Map();
+const openZones = new Set();
 const svgNS = 'http://www.w3.org/2000/svg';
-const hint = '从左侧圆点拖到目标，或依次点选两端。点击线条或「断开」可撤销连线。';
+const defaultHint = '点击卡片查看推荐目标，拖线或点选完成指定；未连线的项默认留在原处。';
 let active = null;
 let pointer = null;
 let frame = 0;
+let dragScrollFrame = 0;
 let exportRows = [];
 let selectionNotice = '';
+let filterTarget = null;
+let hoverFocus = null;
+let currentConflicts = new Set();
+let focusedGroupId = null;
+let leftLimit = 50;
+let focusWiresOnly = false;
 const undoStack = [], redoStack = [];
-try {
-  const saved = JSON.parse(localStorage.getItem(storageKey) || '[]');
-  for (const [id,target] of saved) if (unitKeys.has(id) && targets.has(target)) places.set(id,target);
-  const theme = localStorage.getItem('packtidy-theme');
-  if (theme) document.documentElement.dataset.theme = theme;
-} catch (_) {}
+
+function needsDecision(g) {
+  if (g.suggest.needsCheck || g.tier === 'full' || !g.suggest.target) return true;
+  const c = g.ai?.confirmation;
+  return Boolean(c && (c.holds !== true || c.confidence === 'low'));
+}
+function isSuggestedMove(g) {
+  return Boolean(g.suggest.target && g.suggest.target !== KEEP);
+}
+let currentTab = groups.some(needsDecision) ? 'decide' : groups.some(isSuggestedMove) ? 'moves' : 'all';
+
+function readSetting(key, legacyKey, parse) {
+  try {
+    const current = localStorage.getItem(key);
+    const raw = current ?? localStorage.getItem(legacyKey);
+    if (raw === null) return;
+    const value = parse(raw);
+    if (value !== undefined && current === null) {
+      try { localStorage.setItem(key,raw); } catch (_) {}
+    }
+    return value;
+  } catch (_) {}
+}
+const savedPlaces = readSetting(storageKey, 'packtidy-wires-v1:' + DATA.root, raw => {
+  const saved = JSON.parse(raw);
+  if (Array.isArray(saved)) return saved;
+}) ?? [];
+for (const entry of savedPlaces) {
+  if (!Array.isArray(entry) || entry.length !== 2) continue;
+  const [id,target] = entry;
+  if (unitKeys.has(id) && targets.has(target)) places.set(id,target);
+}
+const savedTheme = readSetting(themeKey, 'packtidy-theme', raw => {
+  if (raw === 'light' || raw === 'dark') return raw;
+});
+if (savedTheme) document.documentElement.dataset.theme = savedTheme;
 for (const group of groups) {
   const assigned = state(group);
   if (assigned.count && !assigned.target) openGroups.add(group.id);
@@ -153,8 +321,66 @@ for (const group of groups) {
 function label(target) {return targets.get(target)?.label || target || '';}
 function state(g) {
   const assigned = g.keys.map(k => places.get(k)).filter(Boolean);
-  const target = assigned.length === g.keys.length && assigned.every(t => t === assigned[0]) ? assigned[0] : null;
+  const target = assigned.length === g.keys.length && assigned.every(x => x === assigned[0]) ? assigned[0] : null;
   return {count:assigned.length,target};
+}
+function normalizePath(value) {
+  return DATA.caseInsensitive ? value.replace(/\\/g,'/').toLocaleLowerCase() : value;
+}
+function computeConflicts() {
+  const sources = new Set(), conflicts = new Set();
+  for (const g of groups) {
+    for (const u of g.units) {
+      const target = places.get(u.key);
+      if (!target || target === KEEP || !u.source) continue;
+      const source = normalizePath(u.source);
+      if (sources.has(source)) conflicts.add(source);
+      sources.add(source);
+    }
+  }
+  for (const source of sources) {
+    for (let sep = source.lastIndexOf('/'); sep > 0; sep = source.lastIndexOf('/',sep-1)) {
+      const ancestor = source.slice(0,sep);
+      if (sources.has(ancestor)) {conflicts.add(source); conflicts.add(ancestor);}
+    }
+  }
+  return conflicts;
+}
+function groupHasConflict(g) {
+  if (!currentConflicts.size) return false;
+  return g.units.some(u => u.source && places.get(u.key) && places.get(u.key) !== KEEP && currentConflicts.has(normalizePath(u.source)));
+}
+// Semantic hints to surface relevant alternative destination candidates alongside the AI primary pick.
+const HINTS = [
+  [['课程','教材','学习','教程','电子书','书','文档','资料','论文','笔记','course','study','book','doc'], ['study','文档','课程','电子书','学习','documents','samples/text']],
+  [['视频','影视','剧集','电影','录屏','动画','video','movie','series','media'], ['media','media/videos','影视','视频']],
+  [['图','照片','相册','壁纸','素材','photo','image','pic'], ['media/images','photos','图','相册']],
+  [['工具','软件','安装','程序','驱动','装机','tool','soft','app','install'], ['tools','study/tools','toolchain','software','工具','软件']],
+  [['镜像','系统','iso','backup','快照','备份'], ['systemimages','oldbackup','backup','archive','镜像','备份']],
+  [['游戏','game','unity'], ['game','游戏']],
+];
+function getCandidates(g) {
+  if (!g) return {primary:null, alts:[]};
+  const primary = g.suggest.target && targets.has(g.suggest.target) ? g.suggest.target : null;
+  const hay = [g.name, g.why || '', g.suggest.reason || '', g.suggest.label || '', ...(g.suggest.evidence || [])].join(' ').toLocaleLowerCase();
+  const primaryZone = primary && primary !== KEEP ? targets.get(primary) : null;
+  const primaryTop = primaryZone ? primaryZone.label.split('/')[0].toLocaleLowerCase() : '';
+  const scored = [];
+  for (const z of DATA.zones) {
+    if (z.path === primary || z.path === g.node.path) continue;
+    const zl = z.label.toLocaleLowerCase();
+    let score = 0;
+    if (primaryTop && zl.split('/')[0] === primaryTop) score += 5;
+    for (const [srcWords, dstWords] of HINTS) {
+      if (srcWords.some(w => hay.includes(w)) && dstWords.some(w => zl.includes(w))) score += 4;
+    }
+    if (g.name.length >= 2 && zl.includes(g.name.toLocaleLowerCase())) score += 6;
+    if (z.new) score += 1;
+    if (score > 0) scored.push([score, z.path]);
+  }
+  scored.sort((a,b) => b[0] - a[0]);
+  const alts = scored.slice(0, 2).map(([,p]) => p);
+  return {primary, alts};
 }
 function save() {try {localStorage.setItem(storageKey,JSON.stringify([...places]));} catch (_) {} updateHistoryButtons();}
 function snapshot() {undoStack.push([...places]); if (undoStack.length > 100) undoStack.shift(); redoStack.length=0; updateHistoryButtons();}
@@ -166,6 +392,7 @@ function sourceAttrs(group,unit) {
 function reason(g) {
   const a = g.ai;
   const rows = [];
+  if (g.tier) rows.push([t('直接定') === t(tierLabels[g.tier]) ? t('确认') : t('需验证'), t(tierLabels[g.tier])]);
   if (g.why) rows.push([t('归组依据'),g.why]);
   if (g.suggest.reason) rows.push([t('规则依据'),g.suggest.reason]);
   if (Array.isArray(g.suggest.evidence)) for (const e of g.suggest.evidence) rows.push([t('证据'),e]);
@@ -178,82 +405,240 @@ function reason(g) {
   }
   return rows.filter(([,value]) => value).map(([title,value]) => `<div><strong>${title}</strong>　${esc(value)}</div>`).join('');
 }
-function renderGroup(g) {
-  const s = state(g);
-  const status = s.target ? '→ ' + label(s.target) :
-    s.count === g.keys.length ? t('已连完 · 多去向') : s.count ? t('已连 {count}/{total}',{count:s.count,total:g.keys.length}) : t('待连');
-  const rec = g.suggest.target ? label(g.suggest.target) : g.suggest.label;
-  const units = g.units.map(u => {
+function guidanceLine(g) {
+  const rec = g.suggest.target ? (g.suggest.target === KEEP ? null : label(g.suggest.target)) : g.suggest.label;
+  const parts = [];
+  if (rec) parts.push(`<strong>${esc(t('建议 → {target}',{target:rec}))}</strong>`);
+  else if (g.suggest.target === KEEP) parts.push(`<span>${esc(t('建议不动'))}</span>`);
+  else parts.push(`<strong>${esc(t('去向不确定，请手动指定'))}</strong>`);
+  const note = g.ai?.confirmation?.residualRisk || g.ai?.hypothesis || g.suggest.reason;
+  if (note) parts.push(`<span>· ${esc(note)}</span>`);
+  return parts.join(' ');
+}
+function visibleGroups() {
+  const query = $('groupSearch').value.trim().toLocaleLowerCase();
+  return groups.filter(g => {
+    const {count} = state(g);
+    if (filterTarget) return g.keys.some(k => places.get(k) === filterTarget);
+    if (query) return g._hay.includes(query);
+    if (currentTab === 'decide') return needsDecision(g);
+    if (currentTab === 'moves') return isSuggestedMove(g);
+    if (currentTab === 'linked') return count > 0;
+    return true;
+  });
+}
+function ensureFocus(list) {
+  if (!list.length) { focusedGroupId = null; return; }
+  if (active && list.some(g => g.id === active.group)) { focusedGroupId = active.group; return; }
+  if (focusedGroupId && list.some(g => g.id === focusedGroupId)) return;
+  focusedGroupId = (list.find(g => state(g).count < g.keys.length) || list[0]).id;
+}
+function advanceFocus(afterId) {
+  const list = visibleGroups();
+  const idx = list.findIndex(g => g.id === afterId);
+  const tail = list.slice(idx + 1).concat(list.slice(0, Math.max(0, idx)));
+  const next = tail.find(g => state(g).count < g.keys.length) || tail[0];
+  if (next) focusedGroupId = next.id;
+}
+function renderDetailsBody(g) {
+  const limit = unitLimits.get(g.id) ?? 30;
+  const slice = g.units.slice(0, limit);
+  const left = g.units.length - slice.length;
+  const units = slice.map(u => {
     const target = places.get(u.key);
+    const portFill = target === KEEP ? ' filled-keep' : target ? ' filled' : '';
     return `<div class="unit" ${sourceAttrs(g.id,u.key)}>
       <div>${esc(u.label)}</div>
-      <div class="meta">${u.source ? '' : t('仅复核 · ')}${target ? esc('→ ' + label(target)) : t('待连')}</div>
-      ${target ? `<button class="unlink" data-action="unlink" ${sourceAttrs(g.id,u.key)}>${t('断开')}</button>` : ''}
-      <button class="port source-port" data-source ${sourceAttrs(g.id,u.key)} aria-label="${esc(t('从 {name} 连线',{name:u.label}))}"></button>
+      <div class="meta">${u.source ? '' : t('仅复核 · ')}${target ? esc('→ ' + label(target)) : t('保持原位')}</div>
+      ${target ? `<button type="button" class="unlink" data-action="unlink" ${sourceAttrs(g.id,u.key)}>${t('取消')}</button>` : ''}
+      <button type="button" class="port source-port${portFill}" data-source ${sourceAttrs(g.id,u.key)} aria-label="${esc(t('从 {name} 连线',{name:u.label}))}"></button>
     </div>`;
   }).join('');
-  return `<article class="card" data-card="${esc(g.id)}">
-    <h3>${esc(g.name)}</h3><div class="meta">${esc(g.node.name)} · ${t('{count} 项',{count:g.count})}</div>
-    <div class="note"><span class="badge tier-${esc(g.tier)}" title="${esc(g.tier)}">${esc(t(tierLabels[g.tier]))}</span>
-      <span class="badge ${s.count === g.keys.length ? 'linked' : s.count ? 'partial' : ''}">${esc(status)}</span></div>
-    ${rec ? `<div class="meta">${esc(t('建议 {target}',{target:rec}))}${g.suggest.needsCheck ? t(' · 需复核') : ''}</div>` : ''}
-    <button class="port source-port group-port" data-source ${sourceAttrs(g.id)} aria-label="${esc(t('从整组 {name} 连线',{name:g.name}))}"></button>
-    ${s.count ? `<button class="unlink" data-action="unlink" ${sourceAttrs(g.id)}>${t('断开整组')}</button>` : ''}
-    ${s.count ? `<button class="unlink" data-action="override-group" ${sourceAttrs(g.id)}>${t('覆盖整组去向…')}</button>` : ''}
-    <details data-details="${esc(g.id)}" ${openGroups.has(g.id) ? 'open' : ''}>
-      <summary>${t('依据与单元')}${g.ai ? t(' · AI 判断链') : ''}</summary>
-      <div class="evidence">${reason(g) || t('暂无判断依据。')}</div>
-      ${units || `<div class="meta">${t('只记录了数量。此组可连线复核，无法生成文件动作。')}</div>`}
+  const moreUnits = left > 0
+    ? `<button type="button" class="load-more-btn" data-action="more-units" data-group="${esc(g.id)}">${esc(t('再显示 {count} 项（剩余 {left} 项）',{count:Math.min(50,left),left}))}</button>` : '';
+  return `<div class="evidence">${reason(g) || t('暂无判断依据。')}</div>` +
+    (g.units.length ? units + moreUnits : `<div class="meta">${t('仅记录数量，可标记复核，不生成移动动作。')}</div>`);
+}
+function renderGroup(g, listLen) {
+  const s = state(g);
+  const isFocused = g.id === focusedGroupId;
+  const isFullLinked = s.count === g.keys.length;
+  const isOpen = openGroups.has(g.id);
+  const canAccept = g.suggest.target && g.suggest.target !== KEEP && targets.has(g.suggest.target) && s.count < g.keys.length;
+  let statusBadge = '';
+  if (s.target) {
+    statusBadge = `<button type="button" class="badge linked badge-btn" data-action="jump-target" data-dest="${esc(s.target)}" title="${esc(t('定位到右侧目标'))}">→ ${esc(label(s.target))}</button>`;
+  } else if (isFullLinked) {
+    statusBadge = `<span class="badge linked">${esc(t('已指定 · 多目标'))}</span>`;
+  } else if (s.count) {
+    statusBadge = `<span class="badge partial">${esc(t('已指定 {count}/{total}',{count:s.count,total:g.keys.length}))}</span>`;
+  } else if (needsDecision(g)) {
+    statusBadge = `<span class="badge decide">${esc(t('待确认'))}</span>`;
+  }
+  const portClass = s.target === KEEP ? ' filled-keep' : s.count ? ' filled' : '';
+  const cardClasses = ['card'];
+  if (isFocused) cardClasses.push('focused');
+  if (s.count) cardClasses.push(s.target === KEEP ? 'is-keep' : 'is-linked');
+  if (groupHasConflict(g)) cardClasses.push('conflict-card');
+  const actionsHtml = [];
+  if (canAccept) actionsHtml.push(`<button type="button" class="card-btn accept-btn" data-action="apply-suggestion" ${sourceAttrs(g.id)}>${esc(t('采用建议'))}</button>`);
+  if (!s.count && isFocused && listLen > 1) actionsHtml.push(`<button type="button" class="card-btn skip-btn" data-action="skip-next" ${sourceAttrs(g.id)}>${esc(t('先跳过'))}</button>`);
+  if (s.count) {
+    actionsHtml.push(`<button type="button" class="unlink" data-action="unlink" ${sourceAttrs(g.id)}>${esc(t('取消连线'))}</button>`);
+    actionsHtml.push(`<button type="button" class="unlink" data-action="override-group" ${sourceAttrs(g.id)}>${esc(t('改选目标…'))}</button>`);
+  }
+  return `<article class="${cardClasses.join(' ')}" data-card="${esc(g.id)}">
+    <div class="card-top">
+      <div class="card-title-wrap"><h3>${esc(g.name)}</h3><span class="meta">${esc(g.node.name)} · ${t('{count} 项',{count:g.count})}</span></div>
+      ${statusBadge}
+    </div>
+    <div class="guidance">${guidanceLine(g)}</div>
+    <button type="button" class="port source-port group-port${portClass}" data-source ${sourceAttrs(g.id)} aria-label="${esc(t('从整组 {name} 连线',{name:g.name}))}"></button>
+    ${actionsHtml.length ? `<div class="card-footer">${actionsHtml.join('')}</div>` : ''}
+    <details data-details="${esc(g.id)}" ${isOpen ? 'open' : ''}>
+      <summary>${t('查看依据与单项')}${g.ai ? t(' · AI 推理') : ''}</summary>
+      <div class="details-body">${isOpen ? renderDetailsBody(g) : ''}</div>
     </details>
   </article>`;
 }
 function renderLeft() {
-  const query = $('groupSearch').value.trim().toLocaleLowerCase();
-  const filter = $('statusFilter').value;
-  const filtered = groups.filter(g => {
-    const {count} = state(g);
-    if (filter === 'pending' && count || filter === 'partial' && !(count && count < g.keys.length)
-        || filter === 'linked' && count !== g.keys.length) return false;
-    return !query || [g.name,g.node.path,...g.units.map(u => u.label)].some(t => t.toLocaleLowerCase().includes(query));
-  });
-  $('left').innerHTML = filtered.map(renderGroup).join('') || `<p class="empty">${t('没有匹配的分组。')}</p>`;
+  const list = visibleGroups();
+  ensureFocus(list);
+  const query = $('groupSearch').value.trim();
+  const emptyMsg = query || filterTarget ? t('没有匹配的分组。') : t('当前分类下暂无分组。未连线项会留在原处，可切换「全部」查看，或直接复核导出。');
+  const slice = list.slice(0, leftLimit);
+  if (focusedGroupId && !slice.some(g => g.id === focusedGroupId)) {
+    const fg = list.find(g => g.id === focusedGroupId);
+    if (fg) slice.push(fg);
+  }
+  const leftRem = Math.max(0, list.length - slice.length);
+  const moreBtn = leftRem > 0
+    ? `<button type="button" class="load-more-btn" data-action="more-groups">${esc(t('显示更多分组（剩余 {count} 组）',{count:leftRem}))}</button>` : '';
+  $('left').innerHTML = slice.length ? slice.map(g => renderGroup(g, list.length)).join('') + moreBtn : `<p class="empty">${emptyMsg}</p>`;
+  const counts = {
+    decide: groups.filter(g => needsDecision(g) && state(g).count < g.keys.length).length,
+    moves: groups.filter(isSuggestedMove).length,
+    linked: groups.filter(g => state(g).count > 0).length,
+    all: groups.length,
+  };
+  const tabLabels = {decide:'待确认',moves:'建议移动',linked:'已安排',all:'全部'};
+  for (const btn of $('viewTabs').querySelectorAll('.tab')) {
+    const id = btn.dataset.tab;
+    btn.setAttribute('aria-selected', String(currentTab === id && !query && !filterTarget));
+    btn.innerHTML = `${esc(t(tabLabels[id]))}<span class="cnt">${counts[id]}</span>`;
+  }
 }
 function renderRight() {
   const query = $('targetSearch').value.trim().toLocaleLowerCase();
   const counts = new Map();
   for (const target of places.values()) counts.set(target,(counts.get(target) || 0)+1);
-  const tops = new Map();
-  const rows = [];
-  function row(target) {
+  const focused = byGroup.get(active?.group || focusedGroupId);
+  const cands = !query && focused ? getCandidates(focused) : {primary:null, alts:[]};
+  const elevated = new Set([cands.primary, ...cands.alts].filter(Boolean));
+
+  function row(target, opts={}) {
     const count = counts.get(target.path);
-    return `<div class="target${target.depth > 1 ? ' child' : ''}${count ? ' active-target' : ''}" data-target="${esc(target.path)}">
-      <button class="port target-port" aria-label="${esc(t('连到 {name}',{name:target.label}))}"></button>
-      <span class="target-label" title="${esc(target.path)}">${esc(target.label)}${target.new ? t(' · 新建') : ''}</span>
-      ${count ? `<span class="badge linked">${count}</span>` : ''}
+    const isKeep = target.path === KEEP;
+    const cls = ['target'];
+    if (isKeep) cls.push('keep-target');
+    if (opts.child) cls.push('child');
+    if (count) cls.push('active-target');
+    if (opts.tag === 'primary') cls.push('is-primary-rec');
+    const portFill = count ? (isKeep ? ' filled-keep' : ' filled') : '';
+    const displayLabel = opts.leaf && target.depth > 1 ? target.label.split('/').slice(1).join('/') : target.label;
+    const expandBtn = opts.expandable
+      ? `<button type="button" class="target-expand" data-zone="${esc(opts.zoneName)}" aria-expanded="${opts.expanded}">${opts.expanded ? '▾' : '▸'}</button>` : '';
+    const tagBadge = opts.tag === 'primary' ? `<span class="badge ai-pick">${esc(t('推荐'))}</span>`
+      : opts.tag === 'alt' ? `<span class="badge alt-pick">${esc(t('备选'))}</span>` : '';
+    const keepHint = isKeep ? `<span class="target-hint">${esc(t('不连默认不动'))}</span>` : '';
+    const iconSvg = isKeep
+      ? '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="5.5"/><path d="M5.5 8h5"/></svg>'
+      : target.new
+      ? '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.8 4.2A1.2 1.2 0 0 1 3 3h3l1.3 1.5H13a1.2 1.2 0 0 1 1.2 1.2v6.1A1.2 1.2 0 0 1 13 13H3a1.2 1.2 0 0 1-1.2-1.2z"/><path d="M8 6.8v3.6M6.2 8.6h3.6"/></svg>'
+      : '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.8 4.2A1.2 1.2 0 0 1 3 3h3l1.3 1.5H13a1.2 1.2 0 0 1 1.2 1.2v6.1A1.2 1.2 0 0 1 13 13H3a1.2 1.2 0 0 1-1.2-1.2z"/></svg>';
+    return `<div class="${cls.join(' ')}" data-target="${esc(target.path)}">
+      <button type="button" class="port target-port${portFill}" aria-label="${esc(t('连到 {name}',{name:target.label}))}"></button>
+      ${expandBtn}
+      <span class="target-ico" aria-hidden="true">${iconSvg}</span>
+      <div class="target-main">
+        <span class="target-label" title="${esc(target.path)}">${esc(displayLabel)}${target.new ? t(' · 新建') : ''}</span>
+        ${tagBadge}${keepHint}
+      </div>
+      <span class="connect-cue" aria-hidden="true">${esc(t(isKeep ? '标为不动' : '连到这里'))}</span>
+      ${count ? `<button type="button" class="count-btn${filterTarget === target.path ? ' filtering' : ''}" data-filter-target="${esc(target.path)}" title="${esc(t('筛选目标：{name}',{name:target.label}))}">${count}</button>` : ''}
     </div>`;
   }
-  rows.push(row(targets.get(KEEP)));
-  for (const t of DATA.zones) {
-    if (query && ![t.label,t.path].some(value => value.toLocaleLowerCase().includes(query))) continue;
-    const top = t.label.split('/')[0];
+
+  const html = [];
+  if (!query && elevated.size) {
+    const recRows = [];
+    if (cands.primary) recRows.push(row(targets.get(cands.primary), {tag:'primary'}));
+    for (const alt of cands.alts) recRows.push(row(targets.get(alt), {tag:'alt'}));
+    html.push(`<div class="rec-box"><div class="section-label ai-head"><span>${esc(t('推荐目标'))}</span><span class="for-pill" title="${esc(focused.name)}">${esc(t('针对：{name}',{name:focused.name}))}</span></div>${recRows.join('')}</div>`);
+  }
+
+  html.push(`<div class="section-label"><span>${esc(t(query || !elevated.size ? '全部目录' : '其他目录'))}</span></div>`);
+  if (!elevated.has(KEEP)) html.push(row(targets.get(KEEP)));
+
+  const tops = new Map();
+  for (const zone of DATA.zones) {
+    if (!query && elevated.has(zone.path)) continue;
+    if (query && ![zone.label,zone.path].some(v => v.toLocaleLowerCase().includes(query))) continue;
+    const top = zone.label.split('/')[0];
     if (!tops.has(top)) tops.set(top,[]);
-    tops.get(top).push(t);
+    tops.get(top).push(zone);
   }
-  for (const [name,list] of tops) {
-    const hasChildren = list.some(t => t.depth > 1);
-    const expanded = !!query || openZones.has(name) || list.some(t => counts.has(t.path) && t.depth > 1);
-    if (hasChildren && !query) rows.push(`<div class="zone-title"><button data-zone="${esc(name)}" aria-expanded="${expanded}">${expanded ? '−' : '+'}</button><span>${esc(name)}</span></div>`);
-    for (const target of list) if (!hasChildren || expanded || target.depth <= 1) rows.push(row(target));
+  let renderedZones = 0;
+  for (const [name, list] of tops) {
+    const parentRow = list.find(z => z.depth <= 1);
+    const children = list.filter(z => z.depth > 1);
+    const expanded = !!query || openZones.has(name) || children.some(z => counts.has(z.path));
+    if (parentRow) {
+      html.push(row(parentRow, {expandable: children.length > 0 && !query, zoneName: name, expanded}));
+      renderedZones++;
+      if (expanded) for (const child of children) { html.push(row(child, {child: true, leaf: !query})); renderedZones++; }
+    } else {
+      for (const child of children) { html.push(row(child)); renderedZones++; }
+    }
   }
-  $('right').innerHTML = rows.join('');
+  if (query && !renderedZones) html.push(`<p class="empty">${t('没有匹配的目标目录。')}</p>`);
+
+  html.push(`<form class="new-target-form" id="newTargetForm"><input id="newTargetInput" type="text" placeholder="${esc(t('新建目录（如 学习/编程）…'))}" aria-label="${esc(t('新建目录（如 学习/编程）…'))}"><button type="submit">${esc(t('添加'))}</button></form>`);
+  $('right').innerHTML = html.join('');
 }
 function refresh() {
+  currentConflicts = computeConflicts();
+  if (filterTarget && ![...places.values()].includes(filterTarget)) filterTarget = null;
   renderLeft(); renderRight();
-  const total = unitKeys.size;
-  $('progress').textContent = t('已连 {count} / {total} 项',{count:places.size,total});
-  $('summary').textContent = t('{groups} 组 · {answers} 份已回填判断',{groups:groups.length,answers:DATA.matchedAnswers});
-  $('proposalsButton').textContent = t('候选类别 {count}',{count:Object.keys(DATA.proposedCategories).length});
-  markActive(); scheduleDraw();
+  let keepCount = 0;
+  for (const target of places.values()) if (target === KEEP) keepCount++;
+  const moveCount = places.size - keepCount;
+  const undecided = groups.filter(g => needsDecision(g) && state(g).count < g.keys.length).length;
+  $('decideMetric').className = 'metric-pill ' + (undecided ? 'warn' : 'ok');
+  $('decideMetric').textContent = undecided ? t('{count} 组待确认',{count:undecided}) : t('待确认项已处理完');
+  $('moveMetric').textContent = t('已安排移动 {count} 项',{count:moveCount});
+  $('keepMetric').hidden = !keepCount;
+  if (keepCount) $('keepMetric').textContent = t('标记不动 {count} 项',{count:keepCount});
+  const propCount = Object.keys(DATA.proposedCategories).length;
+  $('proposalsButton').hidden = !propCount;
+  $('proposalsButton').textContent = t('候选类别 {count}',{count:propCount});
+  $('reviewButton').textContent = moveCount ? t('导出计划 ({count})',{count:moveCount}) : t('导出计划');
+  $('conflictPill').hidden = !currentConflicts.size;
+  if (currentConflicts.size) $('conflictPill').textContent = t('存在 {count} 处路径冲突',{count:currentConflicts.size});
+  $('targetFilterChip').hidden = !filterTarget;
+  if (filterTarget) $('targetFilterText').textContent = t('筛选目标：{name}',{name:label(filterTarget)});
+  const linkedGroupsCount = groups.filter(g => state(g).count > 0).length;
+  $('focusWiresBtn').hidden = linkedGroupsCount < 6;
+  $('focusWiresBtn').setAttribute('aria-pressed', String(focusWiresOnly));
+  $('focusWiresBtn').textContent = t(focusWiresOnly ? '显示全部连线' : '仅看聚焦连线');
+  markActive();
+  scheduleDraw();
+}
+function connectSource() {
+  if (active) return active;
+  const g = byGroup.get(focusedGroupId);
+  if (g && state(g).count < g.keys.length) return {group: g.id, unit: ''};
+  return null;
 }
 function markActive() {
   for (const port of $('left').querySelectorAll('[data-source]')) {
@@ -261,7 +646,15 @@ function markActive() {
     port.classList.toggle('active',!!selected);
     port.setAttribute('aria-pressed',String(!!selected));
   }
-  $('hint').textContent = active ? (active.override ? t('覆盖模式：点击目标可用新去向替换整组；确认后生效，Esc 取消。') : t('已选择来源。松手或点击目标圆点连接，Esc 取消。')) : (selectionNotice || t(hint));
+  for (const card of $('left').querySelectorAll('[data-card]')) {
+    card.classList.toggle('selected', Boolean(active && !active.unit && card.dataset.card === active.group));
+    card.classList.toggle('focused', card.dataset.card === (active?.group || focusedGroupId));
+  }
+  for (const unit of $('left').querySelectorAll('.unit')) {
+    unit.classList.toggle('selected', Boolean(active && active.unit && unit.dataset.group === active.group && unit.dataset.unit === active.unit));
+  }
+  $('right').classList.toggle('can-connect', Boolean(connectSource()));
+  $('hint').textContent = active ? (active.override ? t('改选模式：点击右侧新目标将替换整组去向，确认后生效（Esc 取消）。') : t('已选中来源，点击右侧目标目录即可连接（Esc 取消）。')) : (selectionNotice || t(defaultHint));
   selectionNotice = '';
 }
 function cancelHiddenSelection() {
@@ -276,29 +669,71 @@ function cancelHiddenSelection() {
 function assign(source,target) {
   const g = byGroup.get(source.group);
   if (!g || !targets.has(target)) return;
-  const keys=source.unit ? [source.unit] : (source.override ? g.keys : g.keys.filter(k=>!places.has(k)));
+  const keys = source.unit ? [source.unit] : (source.override ? g.keys : g.keys.filter(k => !places.has(k)));
   if (!keys.length) {
     active = pointer = null;
-    selectionNotice = t('这组已经全部分配。要改去向，请选择「覆盖整组去向」。');
+    selectionNotice = t('该组已全部指定去向；如需调整，请点「改选目标…」。');
     markActive(); scheduleDraw();
     return;
   }
-  const overwrites=keys.filter(k=>places.has(k)&&places.get(k)!==target);
-  if (source.override && overwrites.length && !window.confirm(t('将覆盖此组 {count} 项现有连线。确定继续吗？',{count:overwrites.length}))) {active=pointer=null; markActive(); scheduleDraw(); return;}
-  if (keys.some(k=>places.get(k)!==target)) snapshot();
+  const overwrites = keys.filter(k => places.has(k) && places.get(k) !== target);
+  if (source.override && overwrites.length && !window.confirm(t('将把该组已指定的 {count} 项替换为新目标，确定继续？',{count:overwrites.length}))) {
+    active = pointer = null; markActive(); scheduleDraw(); return;
+  }
+  if (keys.some(k => places.get(k) !== target)) snapshot();
   for (const k of keys) places.set(k,target);
   if (source.unit) openGroups.add(g.id);
   active = pointer = null;
+  if (!source.unit) advanceFocus(g.id);
   save(); refresh();
 }
 function unlink(group,unit) {
   const g = byGroup.get(group);
   if (!g) return;
-  const keys=unit ? [unit] : g.keys;
-  if (keys.some(k=>places.has(k))) snapshot();
+  const keys = unit ? [unit] : g.keys;
+  if (keys.some(k => places.has(k))) snapshot();
   for (const k of keys) places.delete(k);
   active = pointer = null;
+  focusedGroupId = g.id;
   save(); refresh();
+}
+function jumpToTarget(dest) {
+  const info = targets.get(dest);
+  if (!info) return;
+  if (info.depth > 1) {
+    const top = info.label.split('/')[0];
+    if (!openZones.has(top)) { openZones.add(top); renderRight(); }
+  }
+  const findRow = () => [...$('right').querySelectorAll('[data-target]')].find(el => el.dataset.target === dest);
+  if (!findRow()) { $('targetSearch').value = ''; renderRight(); }
+  const resolved = findRow();
+  if (resolved) {
+    resolved.scrollIntoView({behavior:'smooth',block:'center'});
+    resolved.classList.remove('flash-target');
+    void resolved.offsetWidth;
+    resolved.classList.add('flash-target');
+    selectionNotice = t('已定位到 {name}',{name:label(dest)});
+    markActive();
+    setTimeout(scheduleDraw, 180);
+  }
+}
+function addCustomTarget(raw) {
+  const clean = raw.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/');
+  const parts = clean ? clean.split('/') : [];
+  if (!parts.length || parts.some(p => !p || p === '.' || p === '..' || /[\\/:*?"<>|\x00-\x1f]/.test(p) || p.rstrip?.(' .') !== undefined && p.replace(/[ .]+$/,'') !== p || /[ .]$/.test(p))) {
+    selectionNotice = t('目录名无效：不能包含 ..、冒号或非法符号');
+    markActive();
+    return;
+  }
+  const fullPath = DATA.root.replace(/[\\/]$/, '') + rootSep + parts.join(rootSep);
+  if (!targets.has(fullPath)) {
+    const zone = {path: fullPath, label: parts.join('/'), depth: parts.length, files: 0, new: true};
+    targets.set(fullPath, zone);
+    DATA.zones.push(zone);
+  }
+  if (parts.length > 1) openZones.add(parts[0]);
+  renderRight();
+  jumpToTarget(fullPath);
 }
 function scheduleDraw() {
   if (!frame) frame = requestAnimationFrame(() => {frame = 0; draw();});
@@ -308,40 +743,125 @@ function svg(tag,attributes) {
   for (const [key,value] of Object.entries(attributes)) el.setAttribute(key,value);
   return el;
 }
+function wireMatchesFocus(group, unit, target) {
+  const focus = active || hoverFocus;
+  if (!focus) return null;
+  if (focus.target) return focus.target === target;
+  if (focus.unit) return focus.group === group && (unit === focus.unit || !unit);
+  if (focus.group) return focus.group === group;
+  return false;
+}
 function draw() {
   const canvas = $('wires'), board = $('board').getBoundingClientRect();
   const left = $('left').getBoundingClientRect(), right = $('right').getBoundingClientRect();
   const ports = new Map([...$('left').querySelectorAll('[data-source]')].map(p => [p.dataset.unit || p.dataset.group,p]));
   const ends = new Map([...$('right').querySelectorAll('[data-target]')].map(t => [t.dataset.target,t.querySelector('.target-port')]));
   const layer = document.createDocumentFragment();
+  const defs = svg('defs',{});
+  for (const [id, fill] of [['arr-wire','var(--wire)'],['arr-keep','var(--ok)'],['arr-suggest','var(--accent)']]) {
+    const m = svg('marker',{id,viewBox:'0 0 8 8',refX:'7',refY:'4',markerWidth:'6',markerHeight:'6',orient:'auto'});
+    m.append(svg('path',{d:'M1 1.5L7 4L1 6.5z',fill}));
+    defs.append(m);
+  }
+  layer.append(defs);
   function point(port,clip) {
     if (!port || !port.getClientRects().length) return null;
     const r = port.getBoundingClientRect(), x = r.left+r.width/2, y = r.top+r.height/2;
-    if (y < clip.top || y > clip.bottom) return null;
-    return [x-board.left,y-board.top];
+    if (y < clip.top || y > clip.bottom) return {offscreen:y < clip.top ? 'top' : 'bottom', x:x-board.left, y:Math.max(clip.top+6,Math.min(clip.bottom-6,y))-board.top};
+    return {offscreen:null, x:x-board.left, y:y-board.top};
   }
   function curve(a,b) {
     const mid = (a[0]+b[0])/2;
     return `M ${a[0]} ${a[1]} C ${mid} ${a[1]}, ${mid} ${b[1]}, ${b[0]} ${b[1]}`;
   }
-  function edge(group,unit,target) {
+  function edge(group,unit,target,sourceLabel) {
     const a = point(ports.get(unit || group),left), b = point(ends.get(target),right);
-    if (!a || !b) return;
-    const d = curve(a,b);
-    const hit = svg('path',{d,class:'wire-hit','data-wire':unit || group});
-    hit.addEventListener('click',() => unlink(group,unit));
-    layer.append(hit,svg('path',{d,class:'wire'}));
+    if (!a || !b || (a.offscreen && b.offscreen)) return;
+    const isOff = Boolean(a.offscreen || b.offscreen);
+    const p1 = [a.x+6,a.y], p2 = [b.x-7,b.y];
+    const d = isOff
+      ? (a.offscreen ? curve([Math.max(p2[0]-36, p1[0]), p2[1] + (a.offscreen === 'top' ? -14 : 14)], p2)
+                     : curve(p1, [Math.min(p1[0]+36, p2[0]), p1[1] + (b.offscreen === 'top' ? -14 : 14)]))
+      : curve(p1,p2);
+    const match = wireMatchesFocus(group, unit, target);
+    if (focusWiresOnly) {
+      const activeFocus = active || hoverFocus || (focusedGroupId ? {group: focusedGroupId, unit: ''} : null);
+      if (activeFocus) {
+        const hitFocus = activeFocus.target ? activeFocus.target === target
+          : activeFocus.unit ? (activeFocus.group === group && (unit === activeFocus.unit || !unit))
+          : activeFocus.group === group;
+        if (!hitFocus) return;
+      }
+    }
+    const classes = ['wire'];
+    if (target === KEEP) classes.push('keep-wire');
+    if (isOff) classes.push('offscreen-wire');
+    if (match === true) classes.push('emph');
+    else if (match === false) classes.push('dimmed');
+    if (!isOff) {
+      const hit = svg('path',{d,class:'wire-hit','data-wire':unit || group});
+      const tip = svg('title',{});
+      tip.textContent = t('{source} → {target}（点击取消连线）',{source:sourceLabel,target:label(target)});
+      hit.append(tip);
+      hit.addEventListener('click',() => unlink(group,unit));
+      layer.append(hit);
+    }
+    const wireAttrs = {d,class:classes.join(' ')};
+    if (!isOff) wireAttrs['marker-end'] = `url(#${target === KEEP ? 'arr-keep' : 'arr-wire'})`;
+    layer.append(svg('path',wireAttrs));
+  }
+  // Live hover preview wire when hovering a destination while a source is ready to connect;
+  // otherwise show gentle animated recommendation wire for the focused unlinked card.
+  const readySrc = !pointer?.moved ? connectSource() : null;
+  if (readySrc && hoverFocus?.target) {
+    const a = point(ports.get(readySrc.unit || readySrc.group), left);
+    const b = point(ends.get(hoverFocus.target), right);
+    if (a && b && !a.offscreen && !b.offscreen) {
+      const isKeep = hoverFocus.target === KEEP;
+      layer.append(svg('path', {
+        d: curve([a.x+6,a.y], [b.x-7,b.y]),
+        class: 'wire hover-preview-wire' + (isKeep ? ' keep-wire' : ''),
+        'marker-end': `url(#${isKeep ? 'arr-keep' : 'arr-suggest'})`,
+      }));
+    }
+  } else {
+    const guided = byGroup.get(active?.group || focusedGroupId);
+    if (guided && !pointer?.moved && state(guided).count === 0 && guided.suggest.target && guided.suggest.target !== KEEP) {
+      const a = point(ports.get(guided.id), left), b = point(ends.get(guided.suggest.target), right);
+      if (a && b && !a.offscreen && !b.offscreen) {
+        layer.append(svg('path', {d: curve([a.x+6,a.y], [b.x-7,b.y]), class: 'wire suggest-wire', 'marker-end':'url(#arr-suggest)'}));
+      }
+    }
   }
   for (const g of groups) {
     const s = state(g);
-    if (s.target) edge(g.id,null,s.target);
-    else for (const unit of g.units) if (places.has(unit.key)) edge(g.id,unit.key,places.get(unit.key));
+    if (s.target) edge(g.id,null,s.target,g.name);
+    else for (const unit of g.units) if (places.has(unit.key)) edge(g.id,unit.key,places.get(unit.key),unit.label);
   }
   if (pointer?.moved && active) {
     const a = point(ports.get(active.unit || active.group),left);
-    if (a) layer.append(svg('path',{d:curve(a,[pointer.x-board.left,pointer.y-board.top]),class:'wire draft'}));
+    if (a && !a.offscreen) layer.append(svg('path',{d:curve([a.x,a.y],[pointer.x-board.left,pointer.y-board.top]),class:'wire draft'}));
   }
   canvas.replaceChildren(layer);
+}
+function stepDragScroll() {
+  dragScrollFrame = 0;
+  if (!pointer?.moved) return;
+  let scrolled = false;
+  for (const paneId of ['right','left']) {
+    const pane = $(paneId);
+    const rect = pane.getBoundingClientRect();
+    if (pointer.x < rect.left || pointer.x > rect.right) continue;
+    const edge = 48;
+    if (pointer.y < rect.top + edge && pointer.y >= rect.top - 24) {
+      pane.scrollTop -= Math.ceil((rect.top + edge - pointer.y) / 5);
+      scrolled = true;
+    } else if (pointer.y > rect.bottom - edge && pointer.y <= rect.bottom + 24) {
+      pane.scrollTop += Math.ceil((pointer.y - (rect.bottom - edge)) / 5);
+      scrolled = true;
+    }
+  }
+  if (scrolled) { scheduleDraw(); dragScrollFrame = requestAnimationFrame(stepDragScroll); }
 }
 $('left').addEventListener('pointerdown',event => {
   const port = event.target.closest('[data-source]');
@@ -349,8 +869,9 @@ $('left').addEventListener('pointerdown',event => {
   event.preventDefault();
   const prior = active;
   active = {group:port.dataset.group,unit:port.dataset.unit || ''};
+  focusedGroupId = active.group;
   pointer = {id:event.pointerId,x:event.clientX,y:event.clientY,x0:event.clientX,y0:event.clientY,moved:false,prior};
-  markActive(); scheduleDraw();
+  renderRight(); markActive(); scheduleDraw();
 });
 function hitTarget(event) {return document.elementFromPoint(event.clientX,event.clientY)?.closest('[data-target]');}
 document.addEventListener('pointermove',event => {
@@ -358,7 +879,10 @@ document.addEventListener('pointermove',event => {
   pointer.x=event.clientX; pointer.y=event.clientY;
   pointer.moved ||= Math.hypot(pointer.x-pointer.x0,pointer.y-pointer.y0)>5;
   for (const element of $('right').querySelectorAll('.hot')) element.classList.remove('hot');
-  if (pointer.moved) hitTarget(event)?.classList.add('hot');
+  if (pointer.moved) {
+    hitTarget(event)?.classList.add('hot');
+    if (!dragScrollFrame) dragScrollFrame = requestAnimationFrame(stepDragScroll);
+  }
   scheduleDraw();
 });
 document.addEventListener('pointerup',event => {
@@ -383,23 +907,111 @@ document.addEventListener('keydown',event => {
   if ((event.ctrlKey||event.metaKey) && !editing && !modalOpen && event.key.toLowerCase()==='z') {event.preventDefault(); if(event.shiftKey){if(redoStack.length)restore(redoStack.pop(),undoStack);}else if(undoStack.length)restore(undoStack.pop(),redoStack);}
   if ((event.ctrlKey||event.metaKey) && !editing && !modalOpen && event.key.toLowerCase()==='y') {event.preventDefault(); if(redoStack.length)restore(redoStack.pop(),undoStack);}
 });
-$('left').addEventListener('click',event => {
-  const button = event.target.closest('button');
-  if (!button) return;
-  if (button.dataset.action === 'unlink') unlink(button.dataset.group,button.dataset.unit);
-  if (button.dataset.action === 'override-group') {active={group:button.dataset.group,unit:'',override:true}; markActive(); scheduleDraw();}
-  if (button.hasAttribute('data-source') && event.detail === 0) {
-    active = {group:button.dataset.group,unit:button.dataset.unit || ''}; markActive(); scheduleDraw();
+$('left').addEventListener('mouseover',event => {
+  const unit = event.target.closest('.unit');
+  const card = event.target.closest('[data-card]');
+  const next = unit ? {group:unit.dataset.group,unit:unit.dataset.unit} : card ? {group:card.dataset.card,unit:''} : null;
+  if (hoverFocus?.group !== next?.group || hoverFocus?.unit !== next?.unit || hoverFocus?.target) {
+    hoverFocus = next;
+    scheduleDraw();
   }
 });
-$('left').addEventListener('contextmenu',event => {
+$('left').addEventListener('mouseleave',() => {
+  if (hoverFocus?.group) { hoverFocus = null; scheduleDraw(); }
+});
+$('right').addEventListener('mouseover',event => {
+  const row = event.target.closest('[data-target]');
+  const next = row ? {target:row.dataset.target} : null;
+  if (hoverFocus?.target !== next?.target || hoverFocus?.group) {
+    hoverFocus = next;
+    scheduleDraw();
+  }
+});
+$('right').addEventListener('mouseleave',() => {
+  if (hoverFocus?.target) { hoverFocus = null; scheduleDraw(); }
+});
+$('viewTabs').addEventListener('click',event => {
+  const tab = event.target.closest('.tab');
+  if (!tab) return;
+  currentTab = tab.dataset.tab;
+  leftLimit = 50;
+  $('groupSearch').value = '';
+  filterTarget = null;
+  refresh();
+});
+$('focusWiresBtn').addEventListener('click',() => {
+  focusWiresOnly = !focusWiresOnly;
+  $('focusWiresBtn').setAttribute('aria-pressed', String(focusWiresOnly));
+  $('focusWiresBtn').textContent = t(focusWiresOnly ? '显示全部连线' : '仅看聚焦连线');
+  scheduleDraw();
+});
+$('left').addEventListener('click',event => {
+  const button = event.target.closest('button');
+  if (button) {
+    if (button.dataset.action === 'more-groups') { leftLimit += 50; renderLeft(); markActive(); scheduleDraw(); return; }
+    if (button.dataset.action === 'more-units') {
+      const g = byGroup.get(button.dataset.group);
+      if (g) {
+        unitLimits.set(g.id, (unitLimits.get(g.id) ?? 30) + 50);
+        const body = button.closest('.details-body');
+        if (body) body.innerHTML = renderDetailsBody(g);
+        markActive(); scheduleDraw();
+      }
+      return;
+    }
+    if (button.dataset.action === 'unlink') { unlink(button.dataset.group,button.dataset.unit); return; }
+    if (button.dataset.action === 'override-group') {
+      active = {group:button.dataset.group,unit:'',override:true};
+      focusedGroupId = active.group;
+      renderRight(); markActive(); scheduleDraw(); return;
+    }
+    if (button.dataset.action === 'apply-suggestion') {
+      const g = byGroup.get(button.dataset.group);
+      if (g?.suggest.target) assign({group:g.id,unit:''}, g.suggest.target);
+      return;
+    }
+    if (button.dataset.action === 'skip-next') {
+      advanceFocus(button.dataset.group);
+      renderLeft(); renderRight(); markActive(); scheduleDraw();
+      return;
+    }
+    if (button.dataset.action === 'jump-target') { jumpToTarget(button.dataset.dest); return; }
+    if (button.hasAttribute('data-source') && event.detail === 0) {
+      active = {group:button.dataset.group,unit:button.dataset.unit || ''};
+      focusedGroupId = active.group;
+      renderRight(); markActive(); scheduleDraw();
+    }
+    return;
+  }
+  if (event.target.closest('summary')) return;
+  const unit = event.target.closest('.unit');
+  if (unit) {
+    const same = active && active.group === unit.dataset.group && active.unit === unit.dataset.unit;
+    active = same ? null : {group:unit.dataset.group,unit:unit.dataset.unit};
+    focusedGroupId = unit.dataset.group;
+    renderRight(); markActive(); scheduleDraw();
+    return;
+  }
   const card = event.target.closest('[data-card]');
-  if (card && state(byGroup.get(card.dataset.card)).count) {event.preventDefault(); unlink(card.dataset.card);}
+  if (card) {
+    const changed = card.dataset.card !== focusedGroupId || active !== null;
+    active = null;
+    focusedGroupId = card.dataset.card;
+    if (changed) { renderLeft(); renderRight(); markActive(); scheduleDraw(); }
+  }
 });
 $('left').addEventListener('toggle',event => {
   const details = event.target;
   if (!details.dataset.details || !details.isConnected) return;
-  if (details.open) openGroups.add(details.dataset.details); else openGroups.delete(details.dataset.details);
+  const id = details.dataset.details;
+  if (details.open) {
+    openGroups.add(id);
+    const body = details.querySelector('.details-body');
+    const g = byGroup.get(id);
+    if (body && !body.childElementCount && g) body.innerHTML = renderDetailsBody(g);
+  } else {
+    openGroups.delete(id);
+  }
   if (!details.open && active) {cancelHiddenSelection(); markActive();}
   scheduleDraw();
 },true);
@@ -410,21 +1022,56 @@ $('right').addEventListener('click',event => {
     if (openZones.has(name)) openZones.delete(name); else openZones.add(name);
     renderRight(); scheduleDraw(); return;
   }
+  const filterBtn = event.target.closest('[data-filter-target]');
+  if (filterBtn && !active) {
+    const dest = filterBtn.dataset.filterTarget;
+    filterTarget = filterTarget === dest ? null : dest;
+    refresh(); return;
+  }
   const target = event.target.closest('[data-target]');
-  if (active && target) assign(active,target.dataset.target);
+  if (!target) return;
+  const src = connectSource();
+  if (src) {
+    assign(src, target.dataset.target);
+  } else if (focusedGroupId) {
+    selectionNotice = t('该组已全部指定去向；如需调整，请点「改选目标…」。');
+    markActive();
+  }
 });
+$('right').addEventListener('submit',event => {
+  if (event.target.id !== 'newTargetForm') return;
+  event.preventDefault();
+  const input = $('newTargetInput');
+  if (input && input.value.trim()) addCustomTarget(input.value);
+});
+$('clearTargetFilter').addEventListener('click',() => {filterTarget = null; refresh();});
+$('conflictPill').addEventListener('click',showReview);
 for (const id of ['left','right']) $(id).addEventListener('scroll',scheduleDraw,{passive:true});
 window.addEventListener('resize',scheduleDraw);
-$('groupSearch').addEventListener('input',() => {renderLeft(); cancelHiddenSelection(); markActive(); scheduleDraw();});
-$('statusFilter').addEventListener('change',() => {renderLeft(); cancelHiddenSelection(); markActive(); scheduleDraw();});
+$('groupSearch').addEventListener('input',() => {leftLimit = 50; renderLeft(); cancelHiddenSelection(); renderRight(); markActive(); scheduleDraw();});
 $('targetSearch').addEventListener('input',() => {renderRight(); scheduleDraw();});
 $('theme').addEventListener('click',() => {
   const current = document.documentElement.dataset.theme;
   const dark = current ? current === 'dark' : matchMedia('(prefers-color-scheme:dark)').matches;
   const next = dark ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
-  try {localStorage.setItem('packtidy-theme',next);} catch (_) {}
+  try {localStorage.setItem(themeKey,next);} catch (_) {}
 });
+function quoteArg(value) {
+  return '"' + String(value).replace(/"/g, '\\"') + '"';
+}
+async function copyText(text, button, labelKey) {
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = t('已复制');
+    setTimeout(() => { button.textContent = t(labelKey); }, 1500);
+  } catch (_) {
+    const range = document.createRange();
+    range.selectNodeContents($('previewCmdText'));
+    const sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(range);
+  }
+}
 function collectReview() {
   const rows = [], pending = [], reviewOnly = [], kept = [];
   for (const g of groups) {
@@ -438,17 +1085,16 @@ function collectReview() {
       else rows.push(['move',u.source,target,'工作台手动连线']);
     }
   }
-  const normalize = value => DATA.caseInsensitive ? value.replace(/\\/g,'/').toLocaleLowerCase() : value;
-  const sources = new Set(), conflicts = new Set();
+  const sources = new Map(), conflicts = new Map();
   for (const row of rows) {
-    const source = normalize(row[1]);
-    if (sources.has(source)) conflicts.add(source);
-    sources.add(source);
+    const source = normalizePath(row[1]);
+    if (sources.has(source)) conflicts.set(source, row[1]);
+    else sources.set(source, row[1]);
   }
-  for (const source of sources) {
+  for (const [source, raw] of sources) {
     for (let sep = source.lastIndexOf('/'); sep > 0; sep = source.lastIndexOf('/',sep-1)) {
       const ancestor = source.slice(0,sep);
-      if (sources.has(ancestor)) {conflicts.add(source); conflicts.add(ancestor);}
+      if (sources.has(ancestor)) {conflicts.set(source, raw); conflicts.set(ancestor, sources.get(ancestor));}
     }
   }
   return {rows,pending,reviewOnly,kept,conflicts};
@@ -457,12 +1103,22 @@ function showReview() {
   const r = collectReview();
   exportRows = r.conflicts.size ? [] : r.rows;
   const sections = [
-    [t('已连到目录'),r.rows.map(row => `${row[1]} → ${row[2]}`)],
+    [t('待移动'),r.rows.map(row => `${row[1]} → ${row[2]}`)],
     [t('待连'),r.pending],[t('仅复核（缺少已确认来源）'),r.reviewOnly],[t('保持原位'),r.kept],
   ];
   $('reviewStatus').textContent = r.conflicts.size
-    ? t('来源有重复或父子冲突，请断开冲突连线后再下载动作表。')
-    : t('{actions} 个动作可下载，{pending} 项待连。请先用 --dry-run --receipt plan.tidy-file-tree-receipt.json 预演，可加 --preview-html plan.html 生成图形预演。执行时使用同一份 JSON 清单。',{actions:r.rows.length,pending:r.pending.length});
+    ? t('以下来源路径存在重复或父子重叠，请先取消冲突连线后再导出：')
+    : t('共 {actions} 项待移动，{pending} 项未连线将留在原处。下载动作表后，请先运行预演命令核对路径，再使用同一份 receipt 清单执行。',{actions:r.rows.length,pending:r.pending.length});
+  $('reviewConflicts').hidden = !r.conflicts.size;
+  if (r.conflicts.size) {
+    $('reviewConflicts').innerHTML = `<strong>${esc(t('冲突路径（{count}）',{count:r.conflicts.size}))}</strong><ul>${[...r.conflicts.values()].map(p => `<li>${esc(p)}</li>`).join('')}</ul>`;
+  }
+  const previewCmd = `tidy-file-tree apply ${quoteArg(DATA.root)} --actions tidy-file-tree-actions.tsv --dry-run --preview-html plan.html --receipt plan.tidy-file-tree-receipt.json`;
+  const applyCmd = `tidy-file-tree apply ${quoteArg(DATA.root)} --actions tidy-file-tree-actions.tsv --receipt plan.tidy-file-tree-receipt.json`;
+  $('reviewCommands').hidden = !exportRows.length;
+  $('previewCmdText').textContent = previewCmd;
+  $('copyPreviewCmd').onclick = () => copyText(previewCmd, $('copyPreviewCmd'), '复制预演命令');
+  $('copyApplyCmd').onclick = () => copyText(applyCmd, $('copyApplyCmd'), '复制执行命令');
   $('reviewText').textContent = sections.map(([name,items]) => `## ${name} (${items.length})\n${items.join('\n') || t('（无）')}`).join('\n\n');
   $('downloadActions').disabled = !exportRows.length;
   const changed = [];
@@ -478,7 +1134,7 @@ function showReview() {
       if (proposedKey ? target !== proposedKey : chosen !== proposed) changed.push({g,u,proposed,chosen});
     }
   }
-  $('correctionRows').innerHTML=changed.map(({g,u,proposed,chosen})=>`<div class="correction-row" data-node-name="${esc(g.node.name)}" data-group-name="${esc(g.name)}" data-unit-name="${esc(u.label)}"><strong>${esc(g.name)} · ${esc(u.label)}</strong><label>${t('这是什么')} <input data-correction="what" aria-label="${esc(t('{name}：这是什么',{name:u.label}))}"></label><label>${t('建议去向')} <input data-correction="proposed" value="${esc(proposed)}"></label><label>${t('已选去向')} <input data-correction="chosen" value="${esc(chosen)}"></label></div>`).join('') || `<p>${t('目前没有与建议不同的已选去向。')}</p>`;
+  $('correctionRows').innerHTML=changed.map(({g,u,proposed,chosen})=>`<div class="correction-row" data-node-name="${esc(g.node.name)}" data-group-name="${esc(g.name)}" data-unit-name="${esc(u.label)}"><strong>${esc(g.name)} · ${esc(u.label)}</strong><label>${t('这是什么')} <input data-correction="what" aria-label="${esc(t('{name}：这是什么',{name:u.label}))}"></label><label>${t('建议去向')} <input data-correction="proposed" value="${esc(proposed)}"></label><label>${t('已选去向')} <input data-correction="chosen" value="${esc(chosen)}"></label></div>`).join('') || `<p>${t('目前没有与建议不同的改选项。')}</p>`;
   $('downloadCorrections').disabled=!changed.length;
   $('review').showModal();
 }
@@ -493,7 +1149,7 @@ function tsv(value) {
 $('reviewButton').addEventListener('click',showReview);
 $('undoButton').addEventListener('click',()=>{if(undoStack.length) restore(undoStack.pop(),redoStack);});
 $('redoButton').addEventListener('click',()=>{if(redoStack.length) restore(redoStack.pop(),undoStack);});
-$('downloadReview').addEventListener('click',() => download('tidy-file-tree-review.md','# TidyFileTree · '+t('整理复核清单')+'\n\n'+$('reviewText').textContent,'text/markdown;charset=utf-8'));
+$('downloadReview').addEventListener('click',() => download('tidy-file-tree-review.md','# TidyFileTree · '+t('核对整理计划')+'\n\n'+$('reviewText').textContent,'text/markdown;charset=utf-8'));
 $('downloadActions').addEventListener('click',() => {
   if (exportRows.length) download('tidy-file-tree-actions.tsv','op\tsrc\tdst\treason\n'+exportRows.map(row => row.map(tsv).join('\t')).join('\n')+'\n','text/tab-separated-values;charset=utf-8');
 });
@@ -511,7 +1167,7 @@ $('proposalsButton').addEventListener('click',() => {
   const list = Object.entries(DATA.proposedCategories);
   $('proposalList').innerHTML = list.map(([name,p]) => `<li><strong>${esc(name)}</strong>
     <div class="meta">${esc(t('{count} 组',{count:p.count}))}${p.basis ? ' · '+esc(p.basis) : ''}</div>
-    <div>${esc((Array.isArray(p.members) ? p.members : []).join(' · '))}</div></li>`).join('') || `<li>${t('目前没有候选类别。')}</li>`;
+    <div>${esc((Array.isArray(p.members) ? p.members : []).join(' · '))}</div></li>`).join('') || `<li>${t('暂无候选类别。')}</li>`;
   $('proposals').showModal();
 });
 window.foState = () => ({total:unitKeys.size,linked:places.size,placements:Object.fromEntries(places)});
@@ -538,4 +1194,3 @@ applyLanguage(language);
 </script>
 </body>
 </html>
-

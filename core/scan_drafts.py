@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 
 from executor import guard
-from safety import SafetyError
+from safety import SafetyError, is_system_root
 from signals import VID_EXT
 
 
@@ -164,6 +164,8 @@ def proposals(levels, incomplete, root, protection):
             continue
         title = members[0][1]['title']
         parent = levels[parent_id]['path']
+        if is_system_root(parent):
+            continue
         folder = proposed_folder(parent, title)
         issues = set()
         if parent_id in incomplete or levels[parent_id]['limited'] or levels[parent_id]['excluded'] or any(

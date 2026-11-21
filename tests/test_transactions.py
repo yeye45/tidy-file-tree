@@ -115,7 +115,14 @@ class TransactionCase(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.move(source,target)
         self.assertTrue(target.exists())
+        current_dir = self.journal.mirror_dir
+        legacy_dir = self.base/'local'/'packtidy-mirror'/current_dir.name
+        legacy_dir.parent.mkdir()
+        current_dir.rename(legacy_dir)
+        self.assertEqual(executor.Journal(self.root).mirror_dir, legacy_dir)
         self.recover()
+        self.assertEqual(self.journal.mirror_dir, current_dir)
+        self.assertFalse(legacy_dir.exists())
         self.assertEqual(self.journal.path.read_bytes(),self.journal.mirror.read_bytes())
         self.assertEqual(self.undo('test-run'),0)
         self.assertTrue(source.exists())
@@ -241,9 +248,14 @@ class TransactionCase(unittest.TestCase):
         markers = self.root/'_organize'/'markers.tsv'
         markers.parent.mkdir(parents=True, exist_ok=True)
         markers.write_text('path\tkind\tby\tnote\tts\n', encoding='utf-8')
-        self.journal.mirror_dir.mkdir(parents=True, exist_ok=True)
-        self.journal.mirror_dir.joinpath('markers.tsv').write_bytes(markers.read_bytes())
+        current_dir = self.journal.mirror_dir
+        legacy_dir = self.base/'local'/'packtidy-mirror'/current_dir.name
+        legacy_dir.mkdir(parents=True)
+        legacy_dir.joinpath('markers.tsv').write_bytes(markers.read_bytes())
         markers.unlink()
+        with self.assertRaises(SafetyError):
+            self.journal.protection()
+        self.assertFalse(current_dir.exists())
         actions = self.put('_organize/actions.tsv',
                            f'op\tsrc\tdst\treason\nrename\t{source}\tafter.txt\ttest\n')
         args = Namespace(root=str(self.root), actions=str(actions), rename=None, plan=None,
@@ -254,6 +266,17 @@ class TransactionCase(unittest.TestCase):
         self.assertEqual(self.recover(), 0)
         self.assertTrue(markers.exists())
         self.assertEqual(markers.read_bytes(), self.journal.mirror_dir.joinpath('markers.tsv').read_bytes())
+
+    def test_conflicting_mirror_directories_stop_writes(self):
+        current_dir = self.journal.mirror_dir
+        legacy_dir = self.base/'local'/'packtidy-mirror'/current_dir.name
+        for directory in (current_dir, legacy_dir):
+            directory.mkdir(parents=True)
+        with self.assertRaisesRegex(SafetyError, '两套日志镜像'):
+            with self.journal.locked():
+                self.fail('A conflicting mirror must block use of the journal')
+        self.assertFalse(self.journal.path.exists())
+        self.assertTrue(legacy_dir.is_dir() and current_dir.is_dir())
 
     def test_rule_pack_adds_protection_without_removing_builtin_protection(self):
         source = self.put('custom-zone/file.txt').parent
@@ -448,6 +471,131 @@ class TransactionCase(unittest.TestCase):
                 r=subprocess.run([shell,'-NoProfile','-NonInteractive','-File',str(helper)],
                                   capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=30)
                 self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+
+    def test_system_root_and_nested_deny_cannot_be_bypassed(self):
+        from safety import is_system_root, nested_verdict
+        if os.name == 'nt':
+            sys_drive = os.environ.get('SystemDrive', 'C:')
+            self.assertTrue(is_system_root(sys_drive + '\\'))
+            self.assertTrue(is_system_root(sys_drive + '\\Users'))
+            self.assertFalse(is_system_root(self.root))
+            with self.assertRaises(SafetyError):
+                executor.Journal(sys_drive + '\\')
+            if os.path.isdir(sys_drive + '\\Users'):
+                with self.assertRaises(SafetyError):
+                    executor.Journal(sys_drive + '\\Users')
+        for blocked in (
+            self.root / 'Windows' / 'Temp' / 'a.tmp',
+            self.root / 'AppData' / 'Local' / 'Temp' / 'b.tmp',
+            self.root / 'Program Files' / 'App' / 'cache' / 'c.dat',
+            self.root / '.ssh' / 'id_ed25519',
+            self.root / 'Recovery' / 'OEM' / 'img.wim',
+            self.root / 'Downloads' / 'proj' / 'node_modules' / 'pkg' / 'cache',
+        ):
+            allowed, _ = nested_verdict(blocked)
+            self.assertFalse(allowed, f'should block {blocked}')
+        # Ordinary PROTECTED_NAMES (e.g. Games) still allow nested Screenshots/Exports
+        allowed, _ = nested_verdict(self.root / 'Games' / 'MyGame' / 'Screenshots' / 'shot.png')
+        self.assertTrue(allowed)
+
+    def test_system_drive_opt_in_external_state_and_undo_resolution(self):
+        if os.name != 'nt':
+            self.skipTest('Windows-specific system drive policy')
+        from unittest.mock import patch
+        import history
+        import safety
+        sys_drive = os.environ.get('SystemDrive', 'C:').rstrip('\\/') + '\\'
+        fake_local = Path(self.temp.name) / 'fake-localappdata'
+        fake_local.mkdir()
+        with patch.dict(os.environ, {'LOCALAPPDATA': str(fake_local)}):
+            journal = executor.Journal(sys_drive, allow_system_drive=True)
+            self.assertTrue(safety.within(journal.state_dir, fake_local, inclusive=False))
+            self.assertFalse(safety.within(journal.state_dir, Path(sys_drive) / '_organize'))
+            with journal.locked():
+                pass
+            self.assertTrue((journal.state_dir / 'scope.json').is_file())
+            self.assertTrue(journal.path.is_file())
+            resolved_root, is_sys = executor.resolve_journal_root(journal.path)
+            self.assertTrue(is_sys)
+            self.assertEqual(safety.key(resolved_root), safety.key(sys_drive))
+            # Undo rejects system-drive journal unless --allow-system-drive is explicit
+            self.assertNotEqual(executor.main(['undo', '--journal', str(journal.path), '--list']), 0)
+            self.assertEqual(
+                executor.main(['undo', '--journal', str(journal.path), '--list', '--allow-system-drive']),
+                0,
+            )
+            # Forged scope.json outside the canonical system-state dir is rejected
+            forged = self.root / 'forged'
+            forged.mkdir()
+            (forged / 'scope.json').write_text(json.dumps({'root': sys_drive}), encoding='utf-8')
+            (forged / 'journal.tsv').write_bytes(safety.encode_tsv([], executor.FIELDS))
+            with self.assertRaises(SafetyError):
+                executor.resolve_journal_root(forged / 'journal.tsv')
+            # History payload exposes the actual external journal path and systemDrive flag
+            hist = history.collect_history(journal, journal.protection())
+            self.assertEqual(hist['journalPath'], str(journal.path))
+            self.assertTrue(hist['systemDrive'])
+
+    def test_skeleton_paths_dotfiles_and_system_attr_protection(self):
+        if os.name != 'nt':
+            self.skipTest('Windows-specific system drive policy')
+        import ctypes
+        from safety import is_skeleton_path, is_system_attr, nested_verdict
+        sys_drive = os.environ.get('SystemDrive', 'C:').rstrip('\\/') + '\\'
+        self.assertTrue(is_skeleton_path(sys_drive))
+        self.assertTrue(is_skeleton_path(sys_drive + 'Users'))
+        self.assertTrue(is_skeleton_path(sys_drive + 'Users\\alice'))
+        self.assertTrue(is_skeleton_path(sys_drive + 'Users\\alice\\Downloads'))
+        self.assertTrue(is_skeleton_path(sys_drive + 'Users\\alice\\Documents'))
+        self.assertFalse(is_skeleton_path(sys_drive + 'Users\\alice\\Downloads\\book.pdf'))
+        self.assertFalse(is_skeleton_path(sys_drive + 'MyArchive\\note.txt'))
+        for blocked in (
+            sys_drive + 'Drivers\\gpu.inf',
+            sys_drive + 'Boot\\BCD',
+            sys_drive + '.GamingRoot',
+            sys_drive + 'Users\\alice\\.vscode\\settings.json',
+            sys_drive + 'Users\\alice\\.gitconfig',
+            sys_drive + 'Users\\alice\\NTUSER.DAT',
+            sys_drive + 'Users\\alice\\ntuser.dat.LOG1',
+        ):
+            allowed, _ = nested_verdict(blocked)
+            self.assertFalse(allowed, f'expected blocked: {blocked}')
+        # Drivers on a non-system drive is NOT falsely blocked
+        other_drive = 'Z:\\' if not sys_drive.upper().startswith('Z:') else 'Y:\\'
+        self.assertTrue(nested_verdict(other_drive + 'Software\\Drivers\\gpu.inf')[0])
+
+        # guard() blocks skeleton paths as movable targets, but allows user shell folders as containers
+        protection = executor.Protection([], set())
+        with self.assertRaises(SafetyError):
+            executor.guard(sys_drive + 'Users\\alice\\Downloads', sys_drive, protection)
+        executor.guard(sys_drive + 'Users\\alice\\Documents', sys_drive, protection, allow_container=True)
+
+        # Windows FILE_ATTRIBUTE_SYSTEM protection
+        sys_dir = self.root / 'HasSysFile'
+        sys_dir.mkdir()
+        sys_file = sys_dir / 'critical.sys'
+        sys_file.write_text('x', encoding='utf-8')
+        ini_dir = self.root / 'NormalAlbum'
+        ini_dir.mkdir()
+        ini_file = ini_dir / 'desktop.ini'
+        ini_file.write_text('[.ShellClassInfo]\n', encoding='utf-8')
+        set_attr = ctypes.windll.kernel32.SetFileAttributesW
+        try:
+            self.assertNotEqual(set_attr(str(sys_file), 0x4), 0)
+            self.assertNotEqual(set_attr(str(ini_file), 0x6), 0)
+            self.assertTrue(is_system_attr(sys_file))
+            self.assertTrue(is_system_attr(ini_file))
+            with self.assertRaises(SafetyError):
+                executor.guard(sys_file, self.root, protection)
+            with self.assertRaises(SafetyError):
+                executor.guard(sys_dir, self.root, protection, descendants=True)
+            with self.assertRaises(SafetyError):
+                executor.guard(ini_file, self.root, protection)
+            # Moving a normal user folder containing Windows' desktop.ini is allowed
+            executor.guard(ini_dir, self.root, protection, descendants=True)
+        finally:
+            set_attr(str(sys_file), 0x80)
+            set_attr(str(ini_file), 0x80)
 
 
 if __name__=='__main__':

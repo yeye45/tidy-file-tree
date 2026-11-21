@@ -232,7 +232,7 @@ def render_html(root, data, *, lang='zh-CN'):
         raise ValueError('Unsupported board language')
     payload = json.dumps(data, ensure_ascii=False).replace('<', r'\u003c')
     template = TEMPLATE.read_text(encoding='utf-8')
-    before, marker, after = template.partition('__PACKTIDY_DATA__')
+    before, marker, after = template.partition('__TIDY_FILE_TREE_DATA__')
     script_start, locale_marker, script_end = after.partition('__BOARD_MESSAGES__')
     if not marker or not locale_marker:
         raise ValueError('Missing data or language catalog placeholder in board template')
@@ -251,10 +251,11 @@ def main():
     ap.add_argument('--out')
     ap.add_argument('--open', action='store_true')
     ap.add_argument('--lang', choices=('zh-CN', 'en'), default='zh-CN')
+    ap.add_argument('--allow-system-drive', action='store_true')
     args = ap.parse_args()
 
     try:
-        journal = Journal(args.root)
+        journal = Journal(args.root, allow_system_drive=args.allow_system_drive)
         root = journal.root
         assert_no_links(root)
         policy = rules.load_root_policy(root)
@@ -263,10 +264,10 @@ def main():
         mapping, _ = decisions.load_policy_mapping(root)
         if mapping:
             decisions.apply_policy_mapping(mapping)
-        snapshot_path = Path(args.decisions) if args.decisions else root/'_organize/decisions.json'
+        snapshot_path = Path(args.decisions) if args.decisions else journal.state_dir/'decisions.json'
         snapshot = read_json(snapshot_path) if args.decisions or os.path.lexists(snapshot_path) else None
-        board = build_board(root, Path(args.probe) if args.probe else root/'_organize/probe', snapshot, protection)
-        out = Path(args.out) if args.out else root/'_organize/ui.html'
+        board = build_board(root, Path(args.probe) if args.probe else journal.state_dir/'probe', snapshot, protection)
+        out = Path(args.out) if args.out else journal.state_dir/'ui.html'
         atomic_write(out, render_html(root, board, lang=args.lang).encode('utf-8'))
     except (OSError, ValueError) as exc:
         prefix = 'Could not generate the review board' if args.lang == 'en' else '无法生成连线工作台'

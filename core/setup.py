@@ -27,7 +27,7 @@ from pathlib import Path
 
 from executor import atomic_write
 from rules import load_root_policy
-from safety import SafetyError, assert_no_links, normal, within
+from safety import SafetyError, assert_no_links, is_system_root, normal, organize_dir, within
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -124,7 +124,7 @@ QUESTIONS = [
 
 
 def find_policy(root):
-    return Path(root) / "_organize" / "policy.json"
+    return organize_dir(root) / "policy.json"
 
 
 def cmd_ask(args):
@@ -169,6 +169,8 @@ def cmd_apply(args):
         assert_no_links(root)
         if not root.is_dir():
             raise SafetyError("整理根目录不存在")
+        if is_system_root(root) and not getattr(args, "allow_system_drive", False):
+            raise SafetyError("整理系统盘根目录或 Users 根目录需显式加 --allow-system-drive")
         policy = load_root_policy(root)
         if not isinstance(policy.get("setup", {}), dict):
             raise SafetyError("现有 policy 的 setup 必须是对象")
@@ -261,6 +263,7 @@ def main(argv=None):
     s = sub.add_parser("apply", help="把答案写进 policy.json")
     s.add_argument("root")
     s.add_argument("answers")
+    s.add_argument("--allow-system-drive", action="store_true")
     s.set_defaults(func=cmd_apply)
 
     s = sub.add_parser("show", help="看当前配置")
