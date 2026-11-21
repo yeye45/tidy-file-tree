@@ -153,7 +153,7 @@ def env_referenced_paths():
     return result
 
 
-def env_dependency_reason(path, *, allow_ancestor=False):
+def env_dependency_reason(path, *, root=None, allow_ancestor=False):
     """Return a human-readable block reason if path is tied to PATH/env vars, else None.
 
     When allow_ancestor=False (moving/renaming/deleting path itself):
@@ -162,7 +162,12 @@ def env_dependency_reason(path, *, allow_ancestor=False):
       blocks only if path is equal to or inside an env-referenced path.
     """
     norm = normal(path)
+    root_norm = normal(root) if root is not None else None
     for var, ref in env_referenced_paths():
+        # If the user explicitly scoped root inside an outer PYTHONPATH workspace,
+        # don't treat that outer PYTHONPATH entry as blocking subdirectories inside root.
+        if var.upper() == 'PYTHONPATH' and root_norm is not None and within(root_norm, ref, inclusive=False):
+            continue
         if within(norm, ref):
             return f'路径位于环境变量 {var} 引用范围内，移动或改名会破坏依赖'
         if not allow_ancestor and within(ref, norm, inclusive=False):

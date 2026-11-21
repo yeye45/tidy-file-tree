@@ -241,7 +241,7 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
                 continue
             if not nested_verdict(e.path)[0]:
                 continue
-            if env_dependency_reason(e.path, allow_ancestor=True) or toolchain_marker_reason(e.path):
+            if env_dependency_reason(e.path, root=root, allow_ancestor=True) or toolchain_marker_reason(e.path):
                 continue
             try:
                 attrs = getattr(e.stat(follow_symlinks=False),

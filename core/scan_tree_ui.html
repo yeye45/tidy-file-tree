@@ -44,15 +44,15 @@ header.topbar h1{font-size:18px;letter-spacing:-.01em}
 .viewport{overflow:auto;min-height:0;background:var(--bg);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:16px 16px;cursor:grab}
 .viewport.panning{cursor:grabbing;user-select:none}
 .board-stage{transform-origin:0 0;min-width:100%;min-height:100%;display:inline-block}
-.board{--node-width:246px;--gap:44px;position:relative;padding:22px 48px 56px 22px}
+.board{--node-width:232px;--gap:36px;position:relative;padding:18px 44px 48px 18px}
 .wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
-.wire-path{fill:none;stroke:var(--wire);stroke-width:1.5;opacity:.72}
-.wire-path.active{stroke:var(--blue);stroke-width:2.5;opacity:1}
+.wire-path{fill:none;stroke:var(--wire);stroke-width:1.4;opacity:.68}
+.wire-path.active{stroke:var(--blue);stroke-width:2.4;opacity:1}
 .tree,.tree ul{list-style:none;margin:0;padding:0}
 .tree li{display:grid;grid-template-columns:var(--node-width) minmax(0,max-content);gap:var(--gap);align-items:center}
-.tree ul{display:grid;gap:9px}
+.tree ul{display:grid;gap:5px}
 .node-wrap{position:relative;width:var(--node-width)}
-.node{display:grid;gap:4px;min-height:74px;width:100%;min-width:0;position:relative;text-align:left;padding:8px 30px 8px 12px;background:var(--surface);border:1px solid var(--line);border-left:3.5px solid var(--line);border-radius:10px;overflow-wrap:anywhere;box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s,background-color .15s}
+.node{display:grid;gap:2px;min-height:44px;width:100%;min-width:0;position:relative;text-align:left;padding:6px 28px 6px 10px;background:var(--surface);border:1px solid var(--line);border-left:3.5px solid var(--line);border-radius:9px;overflow-wrap:anywhere;box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s,background-color .15s}
 .node.st-judged{border-left-color:var(--green)}
 .node.st-review{border-left-color:var(--purple)}
 .node.st-skipped,.node.st-unreadable{border-left-color:var(--amber)}
@@ -61,26 +61,29 @@ header.topbar h1{font-size:18px;letter-spacing:-.01em}
 .node[aria-pressed="true"]{border-color:var(--blue);background:var(--selected);box-shadow:inset 0 0 0 1px var(--blue),0 0 0 3px color-mix(in srgb,var(--blue) 16%,transparent)}
 .node.dimmed{opacity:.32}
 .node.matched{border-color:var(--amber);box-shadow:0 0 0 2px var(--amber-bg)}
-.node-name{display:flex;align-items:center;gap:7px;font-weight:650;min-width:0}
-.node-title{min-width:0;overflow-wrap:anywhere;word-break:break-word;line-height:1.3}
-.kind-ico{width:15px;height:15px;flex:none;color:var(--blue);display:inline-flex;align-items:center;justify-content:center}
+.node-head{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
+.node-name{display:flex;align-items:center;gap:6px;font-weight:650;font-size:13px;min-width:0;flex:1}
+.node-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3}
+.kind-ico{width:14px;height:14px;flex:none;color:var(--blue);display:inline-flex;align-items:center;justify-content:center}
 .node.st-skipped .kind-ico,.node.st-unreadable .kind-ico{color:var(--amber)}
 .node.st-review .kind-ico{color:var(--purple)}
 .node.st-judged .kind-ico{color:var(--green)}
-.collapse-btn{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:20px;height:20px;padding:0;border-radius:50%;font-size:11px;line-height:1;display:grid;place-items:center;color:var(--muted);background:var(--tint);border:1px solid var(--line);z-index:2}
+.collapse-btn{position:absolute;right:5px;top:50%;transform:translateY(-50%);width:19px;height:19px;padding:0;border-radius:50%;font-size:11px;line-height:1;display:grid;place-items:center;color:var(--muted);background:var(--tint);border:1px solid var(--line);z-index:2}
 .collapse-btn:hover{border-color:var(--blue);color:var(--blue)}
-.collapsed-count{position:absolute;right:-10px;top:-7px;padding:0 5px;border-radius:99px;font-size:10px;font-weight:700;background:var(--blue);color:var(--surface);pointer-events:none;z-index:3}
-.badge{display:inline-flex;align-items:center;gap:5px;width:fit-content;max-width:100%;border-radius:99px;padding:1px 8px;font-size:11.5px;color:var(--muted);background:var(--tint);overflow-wrap:anywhere}
-.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.collapsed-count{position:absolute;right:-9px;top:-6px;padding:0 5px;border-radius:99px;font-size:10px;font-weight:700;background:var(--blue);color:var(--surface);pointer-events:none;z-index:3}
+.badge{display:inline-flex;align-items:center;gap:4px;width:fit-content;max-width:100%;flex:none;border-radius:99px;padding:1px 6px;font-size:10.5px;font-weight:600;color:var(--muted);background:var(--tint);white-space:nowrap}
+.badge::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
 .badge.scanning{color:var(--blue);background:var(--selected)}
 .badge.scanning::before{animation:pulse 1s infinite}
 .badge.judged{color:var(--green);background:var(--green-bg)}
 .badge.review{color:var(--purple);background:var(--purple-bg)}
 .badge.skipped,.badge.unreadable{color:var(--amber);background:var(--amber-bg)}
-.type{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;font-size:12.5px}
-.type span:first-child{color:var(--muted);font-size:11.5px}
-.type strong{font-weight:620}
-.draft-tag{color:var(--blue);font-size:11.5px;font-weight:600}
+.type{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;font-size:11.5px;color:var(--muted)}
+.type strong{font-weight:580;color:var(--muted)}
+.draft-tag{color:var(--blue);font-size:11px;font-weight:600}
+.branch-more-li{display:block!important}
+.branch-more-btn{width:var(--node-width);padding:5px 10px;border-radius:8px;border:1px dashed var(--line);background:var(--tint);color:var(--blue);font-size:12px;font-weight:600;text-align:center}
+.branch-more-btn:hover{border-color:var(--blue);background:var(--selected)}
 .inspector{background:var(--surface);overflow:auto;min-height:0;display:flex;flex-direction:column}
 .details{padding:14px 16px;display:grid;gap:10px}
 .details h2{font-size:16px;overflow-wrap:anywhere}
@@ -206,6 +209,7 @@ const labels = {
   filterSkipped:['受保护 {n}','Protected {n}'], filterDrafts:['有草稿 {n}','Drafts {n}'],
   searchHint:['搜索目录名…','Search folders…'], expandAll:['全部展开','Expand all'], collapseDeep:['收起深层','Collapse deep'], zoomFit:['适应','Fit'],
   showAllRows:['显示全部 {count} 行','Show all {count} rows'],
+  moreChildren:['展开其余 {count} 个子目录','Show {count} more subfolders'],
   collapseNode:['收起子目录','Collapse children'], expandNode:['展开子目录','Expand children'],
   queued:['待检查','Queued'], scanning:['扫描中','Scanning'], judged:['已判断','Assessed'], review:['待复核','Needs review'],
   skipped:['受保护跳过','Protected · skipped'], unreadable:['无法读取','Unreadable'],
@@ -268,6 +272,9 @@ const drafts = new Map();
 const reviewQuestions = new Map();
 const reviewAnswers = new Map();
 const collapsed = new Set();
+const branchLimits = new Map();
+const userToggled = new Set();
+const BRANCH_LIMIT = 8;
 const ANSWER_FORMAT = 'tidy-file-tree-scan-review-answers-v1';
 const recommendations = ['group_together','keep_separate','needs_more_evidence'];
 const confidenceLevels = ['high','medium','low'];
@@ -334,7 +341,7 @@ function addNode(data) {
   button.type = 'button';
   button.className = 'node';
   button.dataset.id = data.id;
-  button.innerHTML = '<span class="node-name"><span class="kind-ico" data-ico aria-hidden="true"></span><span class="node-title">'+esc(data.name)+'</span></span><span data-status></span><span class="type" data-type></span><span class="draft-tag" data-draft hidden></span>';
+  button.innerHTML = '<span class="node-head"><span class="node-name"><span class="kind-ico" data-ico aria-hidden="true"></span><span class="node-title" title="'+esc(data.name)+'">'+esc(data.name)+'</span></span><span data-status></span></span><span class="type" data-type></span><span class="draft-tag" data-draft hidden></span>';
   const collapseBtn = document.createElement('button');
   collapseBtn.type = 'button';
   collapseBtn.className = 'collapse-btn';
@@ -344,18 +351,30 @@ function addNode(data) {
   countBadge.className = 'collapsed-count';
   countBadge.hidden = true;
   wrap.append(button, collapseBtn, countBadge);
+  const moreLi = document.createElement('li');
+  moreLi.className = 'branch-more-li';
+  moreLi.hidden = true;
+  const moreBtn = document.createElement('button');
+  moreBtn.type = 'button';
+  moreBtn.className = 'branch-more-btn';
+  moreBtn.dataset.moreBranch = data.id;
+  moreLi.append(moreBtn);
+  children.append(moreLi);
   item.append(wrap, children);
   const parent = nodes.get(data.parent);
   if (parent) {
     parent.childIds.push(data.id);
-    parent.children.append(item);
+    parent.children.insertBefore(item, parent.moreLi);
+    if (parent.level >= 1 && parent.childIds.length > BRANCH_LIMIT && !userToggled.has(parent.id)) {
+      collapsed.add(parent.id);
+    }
     refreshCollapseControl(parent);
   } else {
     $('tree').append(item);
     $('root').textContent = data.path;
     $('root').title = data.path;
   }
-  return {...data,item,children,button,wrap,collapseBtn,countBadge,childIds:[],level:parent ? parent.level+1 : 0,
+  return {...data,item,children,moreLi,moreBtn,button,wrap,collapseBtn,countBadge,childIds:[],level:parent ? parent.level+1 : 0,
     path:parent ? parent.path.replace(/[\\/]$/, '')+separator(parent.path)+data.name : data.path};
 }
 function refreshNodeCard(node) {
@@ -363,8 +382,14 @@ function refreshNodeCard(node) {
   for (const s of ['queued','scanning','judged','review','skipped','unreadable']) node.button.classList.toggle('st-' + s, node.status === s);
   node.button.querySelector('[data-ico]').innerHTML = kindIcon(node.kind, node.status);
   node.button.querySelector('[data-status]').innerHTML = badge(node.status);
-  const key = node.kind && node.status === 'review' ? 'candidate' : 'type';
-  node.button.querySelector('[data-type]').innerHTML = '<span>'+t(key)+'</span><strong>'+t(node.kind ?? 'unknown')+'</strong>';
+  const typeEl = node.button.querySelector('[data-type]');
+  if (node.status === 'skipped' || node.status === 'unreadable' || node.status === 'queued') {
+    typeEl.hidden = true;
+  } else {
+    typeEl.hidden = false;
+    const prefix = node.kind && node.status === 'review' ? t('candidate') + ' · ' : '';
+    typeEl.innerHTML = '<strong>'+prefix+t(node.kind ?? 'unknown')+'</strong>';
+  }
   refreshCollapseControl(node);
 }
 function update(data) {
@@ -411,6 +436,29 @@ function applyTreeFilters() {
     node.item.hidden = activeFilter && !keepSubtree.has(node.id);
     node.button.classList.toggle('dimmed', activeFilter && !matched);
     node.button.classList.toggle('matched', activeFilter && matched);
+  }
+  // Per-branch child cap when unfiltered so huge folders (e.g. 25+ subfolders) stay compact
+  for (const node of nodes.values()) {
+    if (!node.childIds.length) { node.moreLi.hidden = true; continue; }
+    if (activeFilter || collapsed.has(node.id)) {
+      node.moreLi.hidden = true;
+      continue;
+    }
+    const limit = branchLimits.get(node.id) ?? (node.level === 0 ? 18 : BRANCH_LIMIT);
+    const hiddenKids = Math.max(0, node.childIds.length - limit);
+    if (hiddenKids > 0) {
+      node.childIds.forEach((cid, idx) => {
+        const child = nodes.get(cid);
+        if (child && cid !== selected && !drafts.has(cid) && !inventories.has(cid)) {
+          if (idx >= limit) child.item.hidden = true;
+        }
+      });
+      const actuallyHidden = node.childIds.filter(cid => nodes.get(cid)?.item.hidden).length;
+      node.moreLi.hidden = actuallyHidden === 0;
+      if (actuallyHidden > 0) node.moreBtn.textContent = '+ ' + t('moreChildren', {count: actuallyHidden});
+    } else {
+      node.moreLi.hidden = true;
+    }
   }
   const pillMap = {all:'filterAll',review:'filterReview',judged:'filterJudged',skipped:'filterSkipped',drafts:'filterDrafts'};
   for (const btn of $('status-pills').querySelectorAll('.pill')) {
@@ -515,13 +563,14 @@ function finishDrafts() {
   }
   updateReviewStatus();
   chooser.hidden = $('draft-label').hidden = !drafts.size;
-  if (nodes.size > 45) {
+  if (nodes.size > 24) {
     const keepExpanded = new Set();
     for (const id of [...drafts.keys(), ...inventories.keys()]) {
       for (let p = nodes.get(id); p; p = nodes.get(p.parent)) keepExpanded.add(p.id);
     }
     for (const node of nodes.values()) {
-      if (node.level >= 2 && node.childIds.length && !keepExpanded.has(node.id)) {
+      if (userToggled.has(node.id) || keepExpanded.has(node.id)) continue;
+      if ((node.level >= 2 && node.childIds.length) || (node.level === 1 && node.childIds.length > 6)) {
         collapsed.add(node.id);
         refreshCollapseControl(node);
       }
@@ -535,7 +584,7 @@ function drawLines() {
   const board = $('board');
   const visibleNodes = [...nodes.values()].filter(isVisibleInTree);
   const maxLevel = visibleNodes.reduce((m,n) => Math.max(m,n.level), 0);
-  board.style.width = (70 + (maxLevel + 1) * 246 + maxLevel * 44) + 'px';
+  board.style.width = (70 + (maxLevel + 1) * 232 + maxLevel * 36) + 'px';
   const wiresSvg = $('wires');
   const edges = document.createDocumentFragment();
   if (matchMedia('(min-width:621px)').matches) {
@@ -556,6 +605,21 @@ function drawLines() {
       const path = document.createElementNS(svgNS, 'path');
       path.setAttribute('d', `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
       path.setAttribute('class', 'wire-path' + (selectedRoute.has(node.id) ? ' active' : ''));
+      edges.append(path);
+    }
+    for (const node of visibleNodes) {
+      if (node.moreLi.hidden || collapsed.has(node.id)) continue;
+      const parent = node.button.getBoundingClientRect();
+      const pill = node.moreBtn.getBoundingClientRect();
+      const x1 = (parent.right - boundary.left) / scale;
+      const y1 = ((parent.top + parent.bottom) / 2 - boundary.top) / scale;
+      const x2 = (pill.left - boundary.left) / scale;
+      const y2 = ((pill.top + pill.bottom) / 2 - boundary.top) / scale;
+      const mid = (x1 + x2) / 2;
+      const path = document.createElementNS(svgNS, 'path');
+      path.setAttribute('d', `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
+      path.setAttribute('class', 'wire-path');
+      path.setAttribute('stroke-dasharray', '4 3');
       edges.append(path);
     }
   }
@@ -608,6 +672,8 @@ function start() {
   drafts.clear();
   reviewQuestions.clear();
   collapsed.clear();
+  branchLimits.clear();
+  userToggled.clear();
   expandedDraftTables.clear();
   draftSelection = undefined;
   selected = null;
@@ -685,6 +751,7 @@ $('expand-all').addEventListener('click',() => {
   if (collapsed.size) {
     collapsed.clear();
   } else {
+    branchLimits.clear();
     for (const node of nodes.values()) if (node.level >= 1 && node.childIds.length) collapsed.add(node.id);
   }
   for (const node of nodes.values()) refreshCollapseControl(node);
@@ -830,9 +897,19 @@ $('draft-download').addEventListener('click',() => {
 });
 $('rescan').addEventListener('click',start);
 $('tree').addEventListener('click',event => {
+  const more = event.target.closest('button[data-more-branch]');
+  if (more) {
+    const id = Number(more.dataset.moreBranch);
+    const node = nodes.get(id);
+    const cur = branchLimits.get(id) ?? (node?.level === 0 ? 18 : BRANCH_LIMIT);
+    branchLimits.set(id, cur + 30);
+    render();
+    return;
+  }
   const toggle = event.target.closest('button[data-toggle]');
   if (toggle) {
     const id = Number(toggle.dataset.toggle);
+    userToggled.add(id);
     if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
     refreshCollapseControl(nodes.get(id));
     render();

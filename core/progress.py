@@ -150,7 +150,7 @@ def collect_snapshot(root, probe_override=None):
             if is_sys and (is_system_attr(dir_path) or not nested_verdict(dir_path)[0]):
                 protected_skipped += 1
                 return
-            if env_dependency_reason(dir_path, allow_ancestor=True) or toolchain_marker_reason(dir_path):
+            if env_dependency_reason(dir_path, root=root_path, allow_ancestor=True) or toolchain_marker_reason(dir_path):
                 protected_skipped += 1
                 norm = normal(dir_path)
                 expected[key(norm)] = {

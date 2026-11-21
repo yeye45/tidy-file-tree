@@ -533,7 +533,7 @@ def guard(path, root, protection, descendants=False, allow_root=False, allow_con
             raise SafetyError('命中 Windows 系统属性文件或目录，禁止操作')
         if is_system_protected_file(path):
             raise SafetyError('命中 Windows 系统关键文件，禁止操作')
-        env_why = env_dependency_reason(path, allow_ancestor=allow_container)
+        env_why = env_dependency_reason(path, root=root, allow_ancestor=allow_container)
         if env_why:
             raise SafetyError(env_why)
         tc_why = toolchain_marker_reason(path)
