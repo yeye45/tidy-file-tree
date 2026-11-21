@@ -6,11 +6,13 @@ import os
 from pathlib import Path
 import re
 import secrets
+from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
 from executor import Journal, Protection, guard
 from safety import (SafetyError, assert_no_links, block_kind, is_reparse,
-                    is_system_attr, is_system_protected_file, nested_verdict)
+                    is_system_attr, is_system_protected_file, nested_verdict,
+                    normal, within)
 from scan_drafts import INTACT_KINDS, inventory, proposals
 from signals import VID_EXT, bucket, sig_bin_plus_data, sig_sequence, sig_unity, sig_vm
 
@@ -154,7 +156,9 @@ def observations(root, protection, depth):
             continue
         capped |= limited
         result = classify(entries, excluded, limited)
-        yield {'event': 'node', 'id': node, **result}
+        at_depth_cap = level >= depth and bool(children)
+        yield {'event': 'node', 'id': node, **result,
+               'hasMore': at_depth_cap, 'unloaded': len(children) if at_depth_cap else 0}
         draftable = draftable and result['kind'] not in INTACT_KINDS
         if draftable:
             episodes, unpaired, hidden = inventory(path, entries, root, protection)
@@ -165,16 +169,20 @@ def observations(root, protection, depth):
         if level >= depth:
             capped |= bool(children)
             continue
+        added = 0
         for child, marker in children:
             if next_id >= DIRECTORY_LIMIT:
                 capped = True
                 incomplete.add(node)
+                yield {'event': 'node', 'id': node, 'hasMore': True,
+                       'unloaded': len(children) - added}
                 break
             yield {'event': 'node', 'id': next_id, 'parent': node, 'name': child.name,
                    'status': 'skipped' if marker else 'queued', 'reason': marker}
             if not marker:
                 pending.append((child, next_id, node, level + 1, draftable))
             next_id += 1
+            added += 1
     for node, level in levels.items():
         if level['episodes'] or level['unpaired']:
             yield {'event': 'inventory', 'id': node, 'path': str(level['path']),
@@ -182,6 +190,49 @@ def observations(root, protection, depth):
                                 for episode in level['episodes']], 'unpaired': level['unpaired']}
     yield from proposals(levels, incomplete, root, protection)
     yield {'event': 'done', 'limited': capped}
+
+
+def expand_node(root, protection, rel_path, *, child_limit=200):
+    """Read-only one-level drill-down for an existing directory inside root."""
+    rel = (rel_path or '').strip()
+    if rel in ('', '.'):
+        target = root
+    else:
+        if os.path.isabs(rel):
+            raise SafetyError('只能按相对路径逐级展开扫描')
+        target = Path(normal(root / rel))
+    if not within(target, root, inclusive=True):
+        raise SafetyError('展开路径超出扫描根目录')
+    guard(target, root, protection, allow_root=True)
+    _, children, _, limited = inspect_level(target, root, protection)
+    items = []
+    truncated = limited or len(children) > child_limit
+    for child, marker in children[:child_limit]:
+        if marker:
+            items.append({
+                'name': child.name, 'status': 'skipped', 'reason': marker,
+                'hasMore': False, 'unloaded': 0,
+            })
+            continue
+        try:
+            guard(child, root, protection, allow_root=True)
+            c_entries, c_children, c_excluded, c_limited = inspect_level(child, root, protection)
+            res = classify(c_entries, c_excluded, c_limited)
+            items.append({
+                'name': child.name, **res,
+                'hasMore': bool(c_children), 'unloaded': len(c_children),
+            })
+        except SafetyError:
+            items.append({
+                'name': child.name, 'status': 'skipped', 'reason': 'protected',
+                'hasMore': False, 'unloaded': 0,
+            })
+        except OSError:
+            items.append({
+                'name': child.name, 'status': 'unreadable',
+                'hasMore': False, 'unloaded': 0,
+            })
+    return {'children': items, 'limited': truncated}
 
 
 def make_server(root, depth, lang):
@@ -199,18 +250,37 @@ def make_server(root, depth, lang):
             if self.headers.get('Host') != f'127.0.0.1:{self.server.server_port}':
                 self.send_error(400)
                 return
-            if self.path not in (page_path, page_path + 'events'):
+            parsed = urlsplit(self.path)
+            if parsed.path not in (page_path, page_path + 'events', page_path + 'expand'):
                 self.send_error(404)
                 return
-            stream = self.path.endswith('/events')
+            stream = parsed.path.endswith('/events')
+            expanding = parsed.path.endswith('/expand')
             self.send_response(200)
-            self.send_header('Content-Type', ('text/event-stream' if stream else 'text/html') + '; charset=utf-8')
+            ctype = 'text/event-stream' if stream else 'application/json' if expanding else 'text/html'
+            self.send_header('Content-Type', ctype + '; charset=utf-8')
             self.send_header('Cache-Control', 'no-store')
             self.send_header('Referrer-Policy', 'no-referrer')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Content-Security-Policy', "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'")
-            if not stream:
+            if not stream and not expanding:
                 self.send_header('Content-Length', str(len(page)))
+            if expanding:
+                params = parse_qs(parsed.query)
+                rel = params.get('path', [''])[0]
+                try:
+                    current_root, current_protection = scan_protection(root)
+                    payload = expand_node(current_root, current_protection, rel)
+                except (OSError, ValueError) as exc:
+                    payload = {'error': str(exc) if isinstance(exc, SafetyError) else '无法读取该子目录'}
+                body = json.dumps(payload, ensure_ascii=True).encode('utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                try:
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    return
+                return
             self.end_headers()
             try:
                 if stream:

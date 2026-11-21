@@ -271,3 +271,42 @@ class ScanTreeTests(unittest.TestCase):
             self.assertGreaterEqual(h2, 1)
         finally:
             set_attr(str(flagged), 0x80)
+
+    def test_progressive_drill_down_expand_endpoint_and_traversal_guard(self):
+        deep = self.root / 'Level1' / 'Level2' / 'Level3' / 'Level4'
+        deep.mkdir(parents=True)
+        (deep / 'doc.txt').write_text('ok', encoding='utf-8')
+        secret = self.root / 'Level1' / 'TOP_SECRET_SUB'
+        secret.mkdir()
+        self.markers(self.root, (secret, 'SECRET'))
+
+        # Depth 1 stops at Level1 and flags hasMore=True
+        events = self.stream(depth=1)
+        lvl1 = self.by_name(events)['Level1']
+        self.assertTrue(lvl1['hasMore'])
+        self.assertEqual(lvl1['unloaded'], 1)  # SECRET excluded!
+
+        server, url = scan_tree.make_server(self.root, 1, 'zh-CN')
+        with server:
+            worker = Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                with urlopen(url + 'expand?path=Level1', timeout=3) as res:
+                    data = json.loads(res.read().decode('utf-8'))
+                names = [c['name'] for c in data['children']]
+                self.assertEqual(names, ['Level2'])
+                self.assertTrue(data['children'][0]['hasMore'])
+                self.assertNotIn('TOP_SECRET_SUB', json.dumps(data))
+
+                with urlopen(url + 'expand?path=Level1/Level2/Level3', timeout=3) as res:
+                    data3 = json.loads(res.read().decode('utf-8'))
+                self.assertEqual([c['name'] for c in data3['children']], ['Level4'])
+                self.assertFalse(data3['children'][0]['hasMore'])
+
+                # Traversal escape is rejected
+                with urlopen(url + 'expand?path=../../outside', timeout=3) as res:
+                    bad = json.loads(res.read().decode('utf-8'))
+                self.assertIn('error', bad)
+            finally:
+                server.shutdown()
+                worker.join()

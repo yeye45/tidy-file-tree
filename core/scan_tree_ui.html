@@ -72,7 +72,10 @@ header.topbar h1{font-size:18px;letter-spacing:-.01em}
 .node.st-judged .kind-ico{color:var(--green)}
 .collapse-btn{position:absolute;right:5px;top:50%;transform:translateY(-50%);width:19px;height:19px;padding:0;border-radius:50%;font-size:11px;line-height:1;display:grid;place-items:center;color:var(--muted);background:var(--tint);border:1px solid var(--line);z-index:2}
 .collapse-btn:hover{border-color:var(--blue);color:var(--blue)}
+.collapse-btn.can-drill{background:var(--selected);color:var(--blue);border-color:var(--blue);font-weight:700}
 .collapsed-count{position:absolute;right:-9px;top:-6px;padding:0 5px;border-radius:99px;font-size:10px;font-weight:700;background:var(--blue);color:var(--surface);pointer-events:none;z-index:3}
+.drill-btn{margin-top:4px;width:fit-content;color:var(--blue);border-color:var(--blue);background:var(--selected);font-weight:650;font-size:12.5px}
+.drill-btn:hover:not(:disabled){filter:brightness(0.97)}
 .badge{display:inline-flex;align-items:center;gap:4px;width:fit-content;max-width:100%;flex:none;border-radius:99px;padding:1px 6px;font-size:10.5px;font-weight:600;color:var(--muted);background:var(--tint);white-space:nowrap}
 .badge::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
 .badge.scanning{color:var(--blue);background:var(--selected)}
@@ -210,7 +213,10 @@ const labels = {
   scan:['正在扫描','Scanning'], done:['扫描完成','Scan complete'], incomplete:['扫描完成（已达上限）','Scan complete (scope limit reached)'],
   connection:['扫描连接中断','Scan connection interrupted'], stopped:['无法读取整理范围或保护配置','Unable to read the scan scope or its protection settings'],
   paused:['已停止扫描','Scan stopped'],
-  summary:['{stage} · 共 {nodes} 个目录 · 扫描深度 {depth}（不统计体积）','{stage} · {nodes} folders · depth {depth} (sizes not calculated)'],
+  summary:['{stage} · 共 {nodes} 个目录 · 初始深度 {depth}（点 + 可逐级深入，不统计体积）','{stage} · {nodes} folders · initial depth {depth} (click + to drill deeper)'],
+  drillDown:['继续向下一级扫描 (+{count})','Scan one level deeper (+{count})'],
+  drilling:['正在扫描下一级…','Scanning next level…'],
+  drillError:['无法展开该目录：{error}','Could not expand folder: {error}'],
   filterAll:['全部 {n}','All {n}'], filterReview:['待复核 {n}','Needs review {n}'], filterJudged:['已判断 {n}','Assessed {n}'],
   filterSkipped:['受保护 {n}','Protected {n}'], filterDrafts:['有草稿 {n}','Drafts {n}'],
   searchHint:['搜索目录名…','Search folders…'], expandAll:['全部展开','Expand all'], collapseDeep:['收起深层','Collapse deep'], zoomFit:['适应','Fit'],
@@ -281,7 +287,9 @@ const reviewAnswers = new Map();
 const collapsed = new Set();
 const branchLimits = new Map();
 const userToggled = new Set();
+const expandingNodes = new Set();
 const BRANCH_LIMIT = 8;
+let maxNodeId = 0;
 const ANSWER_FORMAT = 'tidy-file-tree-scan-review-answers-v1';
 const recommendations = ['group_together','keep_separate','needs_more_evidence'];
 const confidenceLevels = ['high','medium','low'];
@@ -323,14 +331,22 @@ function isVisibleInTree(node) {
 }
 function refreshCollapseControl(node) {
   const hasKids = node.childIds.length > 0;
-  node.collapseBtn.hidden = !hasKids;
+  const canDrill = Boolean(node.hasMore);
+  const busy = expandingNodes.has(node.id);
+  node.collapseBtn.hidden = !hasKids && !canDrill;
   const isCollapsed = collapsed.has(node.id);
   node.children.hidden = !hasKids || isCollapsed;
-  node.collapseBtn.textContent = isCollapsed ? '+' : '−';
-  node.collapseBtn.setAttribute('aria-label', t(isCollapsed ? 'expandNode' : 'collapseNode'));
-  node.collapseBtn.setAttribute('aria-expanded', String(!isCollapsed));
-  node.countBadge.hidden = !hasKids || !isCollapsed;
-  if (hasKids && isCollapsed) node.countBadge.textContent = '+' + descendantCount(node.id);
+  node.collapseBtn.classList.toggle('can-drill', canDrill && !hasKids);
+  node.collapseBtn.disabled = busy;
+  node.collapseBtn.textContent = busy ? '…' : (isCollapsed || (!hasKids && canDrill) ? '+' : '−');
+  node.collapseBtn.setAttribute('aria-label', t(isCollapsed || (!hasKids && canDrill) ? 'expandNode' : 'collapseNode'));
+  node.collapseBtn.setAttribute('aria-expanded', String(hasKids && !isCollapsed));
+  const showCount = (hasKids && isCollapsed) || (canDrill && (!hasKids || isCollapsed));
+  node.countBadge.hidden = !showCount;
+  if (showCount) {
+    const count = (hasKids ? descendantCount(node.id) : 0) + (canDrill ? (node.unloaded || 1) : 0);
+    node.countBadge.textContent = '+' + count;
+  }
 }
 function kindIcon(kind, status) {
   if (status === 'skipped' || status === 'unreadable') return '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.2" y="7.2" width="9.6" height="6.3" rx="1.4"/><path d="M5.4 7.2V5.2a2.6 2.6 0 0 1 5.2 0v2"/></svg>';
@@ -403,11 +419,45 @@ function refreshNodeCard(node) {
   refreshCollapseControl(node);
 }
 function update(data) {
+  if (typeof data.id === 'number' && data.id > maxNodeId) maxNodeId = data.id;
   const node = nodes.get(data.id) ?? addNode(data);
   Object.assign(node,data);
   nodes.set(node.id,node);
   if (selected === null) selected = node.id;
   refreshNodeCard(node);
+}
+async function drillDownNode(id) {
+  const node = nodes.get(id);
+  if (!node || !node.hasMore || expandingNodes.has(id)) return;
+  expandingNodes.add(id);
+  refreshCollapseControl(node);
+  renderDetails();
+  try {
+    const rel = id === 0 ? '' : relativePath(node.path).replace(/\\/g, '/');
+    const res = await fetch('expand?path=' + encodeURIComponent(rel), {cache: 'no-store'});
+    const payload = await res.json();
+    if (!res.ok || payload.error) {
+      node.drillError = payload.error || ('HTTP ' + res.status);
+    } else {
+      delete node.drillError;
+      const existing = new Set(node.childIds.map(cid => nodes.get(cid)?.name.toLocaleLowerCase()));
+      for (const child of (payload.children || [])) {
+        if (existing.has(String(child.name || '').toLocaleLowerCase())) continue;
+        const cid = ++maxNodeId;
+        update({...child, id: cid, parent: id});
+      }
+      node.hasMore = false;
+      node.unloaded = 0;
+      collapsed.delete(id);
+      userToggled.add(id);
+    }
+  } catch (err) {
+    node.drillError = String(err?.message || err);
+  } finally {
+    expandingNodes.delete(id);
+    refreshCollapseControl(node);
+    render(true);
+  }
 }
 function applyTreeFilters() {
   const query = $('tree-search').value.trim().toLocaleLowerCase();
@@ -492,7 +542,13 @@ function renderDetails() {
   }
   if (node.excluded) facts.push([t('exclusions'),node.excluded]);
   if (node.limited) facts.push([t('limited'),t('cap')]);
-  $('details').innerHTML = '<div><h2>'+esc(node.name)+'</h2><p class="muted">'+esc(node.path)+'</p><div style="margin-top:6px">'+badge(node.status)+'</div></div>' +
+  const drillBtn = node.hasMore
+    ? '<button type="button" class="drill-btn" data-drill-node="'+node.id+'"'+(expandingNodes.has(node.id) ? ' disabled' : '')+'>'
+      + esc(expandingNodes.has(node.id) ? t('drilling') : t('drillDown', {count: node.unloaded || node.folders || 1}))
+      + '</button>'
+    : '';
+  const drillErr = node.drillError ? '<p class="muted" style="color:var(--amber)">'+esc(t('drillError', {error: node.drillError}))+'</p>' : '';
+  $('details').innerHTML = '<div><h2>'+esc(node.name)+'</h2><p class="muted">'+esc(node.path)+'</p><div style="margin-top:6px">'+badge(node.status)+'</div>'+drillBtn+drillErr+'</div>' +
     (facts.length ? '<dl>'+facts.map(([key,value]) => '<div><dt>'+esc(key)+'</dt><dd>'+esc(value)+'</dd></div>').join('')+'</dl>' : '');
 }
 function selectNode(id) {
@@ -685,6 +741,8 @@ function start() {
   collapsed.clear();
   branchLimits.clear();
   userToggled.clear();
+  expandingNodes.clear();
+  maxNodeId = 0;
   expandedDraftTables.clear();
   draftSelection = undefined;
   selected = null;
@@ -979,6 +1037,10 @@ $('draft-download').addEventListener('click',() => {
   downloadJson('tidy-file-tree-drafts.json',report);
 });
 $('rescan').addEventListener('click',start);
+$('details').addEventListener('click', event => {
+  const btn = event.target.closest('button[data-drill-node]');
+  if (btn) drillDownNode(Number(btn.dataset.drillNode));
+});
 $('tree').addEventListener('click',event => {
   if (suppressNextClick) { event.preventDefault(); event.stopPropagation(); return; }
   const more = event.target.closest('button[data-more-branch]');
@@ -993,9 +1055,14 @@ $('tree').addEventListener('click',event => {
   const toggle = event.target.closest('button[data-toggle]');
   if (toggle) {
     const id = Number(toggle.dataset.toggle);
+    const node = nodes.get(id);
+    if (node && node.hasMore && (!node.childIds.length || !collapsed.has(id))) {
+      drillDownNode(id);
+      return;
+    }
     userToggled.add(id);
     if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
-    refreshCollapseControl(nodes.get(id));
+    refreshCollapseControl(node);
     render();
     return;
   }
@@ -1010,9 +1077,16 @@ $('tree').addEventListener('keydown',event => {
   if (!node) return;
   let targetId = null;
   if (event.key === 'ArrowLeft' && node.parent !== null) targetId = node.parent;
-  else if (event.key === 'ArrowRight' && node.childIds.length) {
-    if (collapsed.delete(node.id)) refreshCollapseControl(node);
-    targetId = node.childIds[0];
+  else if (event.key === 'ArrowRight') {
+    if (node.hasMore && !node.childIds.length) {
+      event.preventDefault();
+      drillDownNode(node.id);
+      return;
+    }
+    if (node.childIds.length) {
+      if (collapsed.delete(node.id)) refreshCollapseControl(node);
+      targetId = node.childIds[0];
+    }
   } else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && node.parent !== null) {
     const siblings = nodes.get(node.parent).childIds;
     const idx = siblings.indexOf(node.id);
