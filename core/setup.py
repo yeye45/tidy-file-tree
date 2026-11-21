@@ -43,6 +43,18 @@ PROBE = Path(__file__).resolve().parent
 # ═══════════════════════════════════════════════════════════
 QUESTIONS = [
     {
+        "id": "goal",
+        "q": "这次的主要目标是整理归类，还是清理腾空间？",
+        "why": "目标不同，扫描和放行范围完全不同：整理归类默认不碰 AppData 与开发缓存；"
+               "清理腾空间则允许检查 AppData、.cache、.gradle 中的已知安全缓存区，汇总后再由你最后确认清理。",
+        "options": [
+            "整理归类（按最小单元整理目录结构，不碰 AppData 与开发缓存）",
+            "清理腾空间（优先识别大体积安全缓存/临时垃圾/重复安装包，允许检查 AppData 安全缓存）",
+            "先腾空间，再整理归类（两步结合，允许检查 AppData 安全缓存）",
+        ],
+        "affects": [],
+    },
+    {
         "id": "adult_separation",
         "q": "成人内容和普通内容要不要分开？",
         "why": "影响最大。混在一起的话，找普通内容会不断撞见成人内容；"
@@ -192,6 +204,12 @@ def cmd_apply(args):
     policy["setup"] = setup
 
     # 把关键回答转成实际配置
+    goal_val = str(setup.get("goal") or "")
+    if goal_val.startswith(("清理", "先腾空间")):
+        policy["allow_cache_cleanup"] = True
+    elif goal_val.startswith("整理"):
+        policy["allow_cache_cleanup"] = False
+
     if setup.get("adult_separation", "").startswith("分开"):
         mapping = policy.setdefault("mapping", {})
         for cat in ("adult_audio", "adult_game", "adult_image"):

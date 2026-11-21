@@ -492,6 +492,7 @@ class Journal:
 class Protection:
     markers: list
     extra_names: set
+    allow_cache_cleanup: bool = False
 
 
 def load_protection(root, policy=None):
@@ -500,7 +501,8 @@ def load_protection(root, policy=None):
     extra_names = ({name.casefold() for name in pack.get('protected', [])} - PROTECTED_NAMES)
     extra_names.update({name.casefold() for name in pack.get('nestedDeny', [])} - NESTED_DENY)
     markers = load_markers(root) + no_go_markers(root, policy)
-    return Protection(markers, extra_names)
+    allow_cache = bool(policy.get('allow_cache_cleanup', False)) if isinstance(policy, dict) else False
+    return Protection(markers, extra_names, allow_cache_cleanup=allow_cache)
 
 
 def no_go_markers(root, policy):
@@ -539,8 +541,10 @@ def guard(path, root, protection, descendants=False, allow_root=False, allow_con
         tc_why = toolchain_marker_reason(path)
         if tc_why:
             raise SafetyError(tc_why)
-    # 嵌套判定：受保护区内可以有允许点（如 Games\某游戏\Screenshots），系统强制禁区永久锁死
-    allowed, why = nested_verdict(path)
+    # 嵌套判定：受保护区内可以有允许点（如 Games\某游戏\Screenshots），系统强制禁区永久锁死；
+    # 清理腾空间模式下按精细白名单放行 AppData 及开发缓存中的已知安全缓存子目录
+    allow_cache = bool(getattr(protection, 'allow_cache_cleanup', False))
+    allowed, why = nested_verdict(path, allow_cache_cleanup=allow_cache, allow_container=allow_container)
     if not allowed:
         raise SafetyError('命中受保护目录：' + why)
     if any(part.casefold() in protection.extra_names for part in Path(path).parts):

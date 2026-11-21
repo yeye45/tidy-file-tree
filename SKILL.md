@@ -308,6 +308,7 @@ python tidy_file_tree.py setup show /path       # 看当前配置
 
 | 问题 | 为什么问 |
 |---|---|
+| **这次的目标是「整理归类」还是「清理腾空间」（或两步结合）** | **最先问的一题**。整理归类默认不碰 `AppData` 与开发缓存；选「清理腾空间」或「先腾空间再整理」会在 `policy.json` 开启 `allow_cache_cleanup: true`，允许检查 `AppData` 及 `.cache`/`.gradle` 中的**已知安全缓存子目录**（如 `Temp`/`Cache`/`CrashDumps`/`pip`/`npm-cache`），仍永久锁死软件本体、配置、存档和凭据 |
 | 成人内容和普通内容要不要分开 | 影响最大。混着找普通内容会不断撞见 |
 | 视频要不要按用途分 | 影视/学习/娱乐三者都是视频，但找的时候目的不同 |
 | 游戏要不要按类型分 | 按引擎或按题材，两种分法结果完全不同 |
@@ -1061,7 +1062,7 @@ ComfyUI 运行环境          [选择去向 ▾]
 
 同时，**每完成一个阶段（S0 / 初筛 / S1 / S2–S3 / S4 / S5）必须做到三条硬纪律**：
 1. **把选择交给图形化页面 `ui.html`，不要在聊天框里列 1/2/3/4 文字问卷**：除 S0 初始大原则确认、系统盘 `--allow-system-drive` 授权及最后一步 `_待删除` A/B/C 删除确认外，**所有涉及目录/文件去向、保留还是移动、版本归位的拍板选择，都必须先由 AI 自动跑完 S1 → S2 → S3 → S4（含自动下钻 `Downloads`、`Desktop`、`Documents`、`Pictures`、`Videos`、`Music` 等用户目录），再生成并打开 `ui.html` 连线工作台让用户在图形化页面里直接点击连线拍板**；严禁在 S1 中途停下来在聊天框里逐条文字拷问用户。
-2. **主动下钻容器目录，并严守保护边界**：遇到容器目录（特别是系统盘的 `C:\Users` → `C:\Users\<当前用户>` → `Downloads`/`Desktop`/`Documents`/`Pictures`/`Videos`/`Music`），S1 自动写 `action: "enter"` + `enter_children` 并派子代理下钻到真实用户文件层；**严禁向用户建议下钻或清理 `AppData`、`.cache`、`.gradle` 等已锁死的系统/点配置缓存区**，也不对非零信息名的已有项目/工具目录（如 `civtest`、`pdseek`、`图吧工具箱`）提议改名。
+2. **主动下钻容器目录，并按模式严守保护边界**：遇到容器目录（特别是系统盘的 `C:\Users` → `C:\Users\<当前用户>` → `Downloads`/`Desktop`/`Documents`/`Pictures`/`Videos`/`Music`），S1 自动写 `action: "enter"` + `enter_children` 并派子代理下钻到真实用户文件层。若用户在 S0 选择了「清理腾空间」或「先腾空间再整理」（`allow_cache_cleanup: true`），允许进一步检查 `AppData\Local\Temp`、`CrashDumps`、`pip\cache`、`*\Cache`、`.cache`、`.gradle\caches` 等**安全缓存白名单**并汇总交用户最后确认；但 **`AppData\Local\Programs`、`Packages`、`Credentials`、`Protect`、`Crypto`、软件配置/游戏存档、`tidy-file-tree*` 状态目录、`.ssh`/`.gnupg`/`.vscode` 等永远禁止触碰**；也不对非零信息名的已有项目/工具目录（如 `civtest`、`pdseek`、`图吧工具箱`）提议改名。
 3. **每步收尾主动提示下一步**：每次阶段汇报结尾用 1–2 行明确告知当前进展与下一步动作（例如「已自动下钻并打开 `ui.html`，你在页面里只连待确认项、导出 `actions.tsv` 给我即可进入预演」）。
 
 ### 实现要点

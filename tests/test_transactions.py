@@ -644,6 +644,45 @@ class TransactionCase(unittest.TestCase):
             self.assertEqual(prepared, [])
             self.assertEqual(len(blocked), 1)
 
+    def test_appdata_and_dev_cache_cleanup_mode_is_narrowly_scoped(self):
+        from safety import nested_verdict
+        sys_drive = (os.environ.get('SystemDrive', 'C:').rstrip('\\/') + '\\') if os.name == 'nt' else '/tmp/'
+        safe_caches = (
+            sys_drive + 'Users\\alice\\AppData\\Local\\Temp\\installer.tmp',
+            sys_drive + 'Users\\alice\\AppData\\Local\\CrashDumps\\app.dmp',
+            sys_drive + 'Users\\alice\\AppData\\Local\\pip\\cache\\pkg.whl',
+            sys_drive + 'Users\\alice\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache\\f_001',
+            sys_drive + 'Users\\alice\\.cache\\huggingface\\hub\\blob',
+            sys_drive + 'Users\\alice\\.gradle\\caches\\modules-2\\a.jar',
+        )
+        always_blocked = (
+            sys_drive + 'Users\\alice\\AppData',
+            sys_drive + 'Users\\alice\\AppData\\Local',
+            sys_drive + 'Users\\alice\\AppData\\Local\\Programs\\VSCode\\Code.exe',
+            sys_drive + 'Users\\alice\\AppData\\Local\\Packages\\App\\LocalState\\db',
+            sys_drive + 'Users\\alice\\AppData\\Local\\Microsoft\\Credentials\\cred',
+            sys_drive + 'Users\\alice\\AppData\\Roaming\\Microsoft\\Protect\\key',
+            sys_drive + 'Users\\alice\\AppData\\Local\\tidy-file-tree-mirror\\abc\\journal.tsv',
+            sys_drive + 'Users\\alice\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat',
+            sys_drive + 'Users\\alice\\AppData\\Roaming\\MyApp\\settings.json',
+            sys_drive + 'Users\\alice\\.ssh\\id_ed25519',
+            sys_drive + 'Users\\alice\\.vscode\\settings.json',
+            sys_drive + 'Windows\\Temp\\a.tmp',
+        )
+        # Default organize mode: safe caches are still blocked
+        for p in safe_caches:
+            self.assertFalse(nested_verdict(p)[0], f'default mode should block {p}')
+        # Cleanup mode (allow_cache_cleanup=True): safe caches allowed, dangerous areas stay locked
+        for p in safe_caches:
+            self.assertTrue(nested_verdict(p, allow_cache_cleanup=True)[0], f'cleanup mode should allow {p}')
+        for p in always_blocked:
+            self.assertFalse(nested_verdict(p, allow_cache_cleanup=True)[0], f'cleanup mode MUST still block {p}')
+        # Container browsing in cleanup mode allows traversing AppData\Local to reach Temp
+        self.assertTrue(nested_verdict(sys_drive + 'Users\\alice\\AppData\\Local',
+                                       allow_cache_cleanup=True, allow_container=True)[0])
+        self.assertFalse(nested_verdict(sys_drive + 'Users\\alice\\AppData\\Local\\Programs',
+                                        allow_cache_cleanup=True, allow_container=True)[0])
+
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

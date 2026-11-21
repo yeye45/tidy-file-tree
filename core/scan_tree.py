@@ -39,12 +39,13 @@ def scan_protection(root):
                 state / 'marker-update.json', scope.mirror_dir / 'markers.tsv',
                 scope.mirror_dir / 'marker-update.json')):
             scopes.append(scope)
-    markers, names = [], set()
+    markers, names, allow_cache = [], set(), False
     for scope in scopes:
         protection = scope.protection()
         markers.extend(protection.markers)
         names.update(protection.extra_names)
-    protection = Protection(markers, names)
+        allow_cache = allow_cache or bool(getattr(protection, 'allow_cache_cleanup', False))
+    protection = Protection(markers, names, allow_cache_cleanup=allow_cache)
     guard(root, root, protection, allow_root=True)
     return root, protection
 
@@ -83,7 +84,7 @@ def inspect_level(path, root, protection):
             elif (marker or not item.is_file(follow_symlinks=False)
                   or is_system_attr(item.path)
                   or is_system_protected_file(item.path)
-                  or not nested_verdict(item.path)[0]):
+                  or not nested_verdict(item.path, allow_cache_cleanup=bool(getattr(protection, 'allow_cache_cleanup', False)))[0]):
                 hidden += 1
                 continue
             entries.append({'name': item.name, 'dir': is_dir})

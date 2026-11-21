@@ -159,6 +159,17 @@ def build_board(root, probe_dir, snapshot, protection):
                 fingerprint = group_key({'name': name, 'units': [member]})
                 solo_groups.append({'id': 'solo:'+fingerprint, 'fingerprint': fingerprint, 'name': name,
                                     'n': 1, 'units': [member], 'why': 'S3 标为独立单元'})
+        # 节点级待拍板项（rename/ask/keep 且无组）也必须进工作台，
+        # 否则「改名」「多版本并存」「空壳去留」这类决策在工作台里完全不可见。
+        # 合成为单单元组，复用既有连线/导出机制。
+        node_level = node.get('action') in ('rename', 'ask', 'keep', 'unclear')
+        if not node['groups'] and not solo_groups and node_level and os.path.isdir(path):
+            fingerprint = group_key({'name': node['name'], 'units': [path]})
+            solo_groups.append({
+                'id': 'node:' + fingerprint, 'fingerprint': fingerprint,
+                'name': node['name'], 'n': 1, 'units': [path],
+                'why': node.get('unit_why') or ('节点级判定：' + str(node.get('action'))),
+            })
         if not node['groups'] and not solo_groups:
             continue
         known_units = unit_paths(path, inventory.get(path, {}), root, protection)
@@ -208,7 +219,12 @@ def build_board(root, probe_dir, snapshot, protection):
                             'needsCheck': bool(suggestion.get('needsCheck')), 'reason': suggestion.get('reason'),
                             'evidence': evidence}
             })
-        nodes.append({'id': node['id'], 'path': path, 'name': node['name'], 'groups': items})
+        nodes.append({'id': node['id'], 'path': path, 'name': node['name'], 'groups': items,
+                      'action': node.get('action'), 'label': node.get('label') or '',
+                      'renameTo': node.get('rename_to'),
+                      'confidence': node.get('confidence'),
+                      'why': node.get('unit_why') or '',
+                      'units': node.get('total_units')})
 
     proposals = decisions.propose_new_categories(unmatched)
     stored = snapshot.get('proposedCategories', {}) if isinstance(snapshot, dict) else {}

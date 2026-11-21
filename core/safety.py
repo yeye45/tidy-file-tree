@@ -296,7 +296,82 @@ def organize_dir(root):
     return Path(norm) / '_organize'
 
 
-def nested_verdict(path):
+# 清理腾空间模式下，AppData 内绝对禁止触碰的高危子目录（程序本体/UWP/DPAPI凭据/证书/本工具状态）
+APPDATA_NEVER_TOUCH = {
+    'programs', 'packages', 'credentials', 'protect', 'crypto',
+    'systemcertificates', 'windowsapps', 'vault', 'identitycrl',
+    'tidy-file-tree', 'tidy-file-tree-mirror', 'tidy-file-tree-system-state',
+    'packtidy', 'packtidy-mirror',
+}
+
+# 清理腾空间模式下，AppData\Local 或 Roaming 下允许检查/隔离的安全缓存目录名
+APPDATA_SAFE_CACHE_NAMES = {
+    'temp', 'tmp', 'cache', 'caches', 'code cache', 'gpucache',
+    'd3dscache', 'dxcache', 'glcache', 'shadercache', 'shader cache',
+    'crashdumps', 'inetcache', 'npm-cache', 'pnpm-store', 'v3-cache',
+    'cache_data', 'cachestorage',
+}
+
+# 清理腾空间模式下，用户主目录下允许检查的已知开发缓存点目录（不含 .ssh/.gnupg/.vscode 等配置与凭据）
+USER_SAFE_CACHE_SUBPATHS = (
+    ('.cache',),
+    ('.gradle', 'caches'),
+    ('.nuget', 'packages'),
+    ('.npm', '_cacache'),
+    ('.m2', 'repository'),
+)
+
+# 清理腾空间模式下允许"穿过进入"的只读父容器（本身不可移动/删除）
+USER_SAFE_CACHE_CONTAINERS = {'.gradle', '.nuget', '.npm', '.m2'}
+
+
+def _appdata_cleanup_verdict(parts, *, allow_container=False):
+    """Evaluate AppData / user dev-cache paths when allow_cache_cleanup=True.
+
+    Returns (handled, allowed, reason).
+    """
+    if not parts:
+        return (False, False, '')
+
+    # Case 1: Path contains 'appdata'
+    if 'appdata' in parts:
+        idx = parts.index('appdata')
+        tail = parts[idx + 1:]
+        if any(seg in APPDATA_NEVER_TOUCH for seg in tail):
+            bad = next(seg for seg in tail if seg in APPDATA_NEVER_TOUCH)
+            return (True, False, f"AppData 内的 '{bad}' 属于程序本体/凭据/状态保护区，永久禁止触碰")
+        if any(seg in SYSTEM_PROTECTED_FILES or seg.startswith(('ntuser.dat', 'usrclass.dat')) for seg in tail):
+            return (True, False, 'AppData 内系统注册表配置单元永久禁止触碰')
+        # Bare AppData or AppData\Local / Roaming container: browsable only, never movable
+        if len(tail) == 0 or (len(tail) == 1 and tail[0] in ('local', 'roaming')):
+            if allow_container:
+                return (True, True, '清理模式允许浏览 AppData 安全缓存容器')
+            return (True, False, '不能移动或删除 AppData 根容器本身，仅允许处理内部安全缓存子目录')
+        if tail[0] not in ('local', 'roaming'):
+            return (True, False, f"AppData\\{tail[0]} 不在安全缓存清理范围内（保留存档与配置）")
+        sub = tail[1:]
+        # Direct safe cache dir or nested safe cache dir (e.g. Local\Temp, Local\pip\cache, Local\NVIDIA\DXCache)
+        if any(seg in APPDATA_SAFE_CACHE_NAMES for seg in sub):
+            return (True, True, '清理模式放行 AppData 安全缓存子目录')
+        # Allow traversing one app folder under Local/Roaming when browsing containers
+        if allow_container and len(sub) == 1:
+            return (True, True, '清理模式允许查看应用目录下是否存在安全缓存')
+        return (True, False, 'AppData 仅放行已知安全缓存/临时目录，其余应用配置与数据默认保护')
+
+    # Case 2: C:\Users\<user>\.<dev-cache>
+    if len(parts) >= 3 and parts[0] == 'users' and parts[2].startswith('.'):
+        dot_tail = tuple(parts[2:])
+        for allowed_prefix in USER_SAFE_CACHE_SUBPATHS:
+            if dot_tail[:len(allowed_prefix)] == allowed_prefix:
+                return (True, True, f"清理模式放行已知开发缓存 '{'/'.join(allowed_prefix)}'")
+        if allow_container and len(dot_tail) == 1 and dot_tail[0] in USER_SAFE_CACHE_CONTAINERS:
+            return (True, True, f"清理模式允许浏览开发缓存父目录 '{dot_tail[0]}'")
+        return (True, False, f"'{parts[2]}' 属于用户主目录隐藏配置/凭据，禁止整理或清理")
+
+    return (False, False, '')
+
+
+def nested_verdict(path, *, allow_cache_cleanup=False, allow_container=False):
     """判断路径的嵌套保护状态。
 
     返回 (允许整理, 依据)
@@ -320,6 +395,16 @@ def nested_verdict(path):
         return (False, "路径无法解析")
 
     parts.reverse()   # 从根到叶
+
+    # 清理腾空间模式下，对 AppData 及已知开发缓存先走精细白名单判定（其余强制禁区仍优先拦截）
+    if allow_cache_cleanup:
+        hard_deny = NESTED_DENY - {'appdata'}
+        for seg in parts:
+            if seg in hard_deny:
+                return (False, f"'{seg}' 属于强制保护目录，整棵子树禁止整理")
+        handled, ok, why = _appdata_cleanup_verdict(parts, allow_container=allow_container)
+        if handled:
+            return (ok, why)
 
     # 系统盘专属强制保护：根级驱动/引导目录、根级隐藏项、用户主目录 dot 配置、关键系统文件
     sys_drive = _system_drive()

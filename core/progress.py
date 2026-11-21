@@ -130,6 +130,7 @@ def collect_snapshot(root, probe_override=None):
     setup_data = policy.get('setup') if isinstance(policy.get('setup'), dict) else {}
     mapping_data = policy.get('mapping') if isinstance(policy.get('mapping'), dict) else {}
     no_go = policy.get('no_go_zones') if isinstance(policy.get('no_go_zones'), list) else []
+    allow_cache_cleanup = bool(policy.get('allow_cache_cleanup', False))
     s0_done = bool(setup_data) or policy_path.is_file()
     if policy_path.is_file():
         add_event('S0', 'setup', 'policy.json', f'{len(setup_data)} 项确认', _iso_mtime(policy_path))
@@ -147,7 +148,7 @@ def collect_snapshot(root, probe_override=None):
                 return
             if block_kind(dir_path, secret_markers):
                 return
-            if is_sys and (is_system_attr(dir_path) or not nested_verdict(dir_path)[0]):
+            if is_sys and (is_system_attr(dir_path) or not nested_verdict(dir_path, allow_cache_cleanup=allow_cache_cleanup)[0]):
                 protected_skipped += 1
                 return
             if env_dependency_reason(dir_path, root=root_path, allow_ancestor=True) or toolchain_marker_reason(dir_path):
@@ -203,6 +204,16 @@ def collect_snapshot(root, probe_override=None):
                                     if (sub.name.casefold() in USER_SHELL_FOLDERS
                                             and sub.is_dir(follow_symlinks=False)):
                                         _register_dir(sub.path)
+                            if allow_cache_cleanup:
+                                for rel_cache in (
+                                    Path('AppData') / 'Local' / 'Temp',
+                                    Path('AppData') / 'Local' / 'CrashDumps',
+                                    Path('.cache'),
+                                    Path('.gradle') / 'caches',
+                                ):
+                                    cdir = home / rel_cache
+                                    if cdir.is_dir() and not is_reparse(cdir):
+                                        _register_dir(str(cdir))
                         except OSError:
                             pass
                     continue
