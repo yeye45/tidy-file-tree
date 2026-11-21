@@ -90,6 +90,116 @@ USER_SHELL_FOLDERS = {
     'onedrive', '3d objects',
 }
 
+# 不应被当作"专用工具链路径"的通用系统/会话环境变量
+_ENV_IGNORED_VARS = {
+    'PWD', 'OLDPWD', 'INIT_CWD', 'VSCODE_CWD', 'TMP', 'TEMP', 'TMPDIR',
+    'USERPROFILE', 'HOME', 'HOMEPATH', 'HOMEDRIVE', 'LOCALAPPDATA', 'APPDATA',
+    'SYSTEMDRIVE', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PUBLIC', 'ALLUSERSPROFILE',
+    'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMW6432',
+    'COMMONPROGRAMFILES', 'COMMONPROGRAMFILES(X86)', 'COMMONPROGRAMW6432',
+    'DRIVERDATA', 'ONEDRIVE', 'ONEDRIVECOMMERCIAL', 'ONEDRIVECONSUMER',
+    'PSMODULEPATH', 'PATHEXT', 'OS', 'COMPUTERNAME', 'USERNAME',
+}
+
+_ENV_SECRET_TOKENS = ('KEY', 'TOKEN', 'SECRET', 'PASS', 'AUTH', 'COOKIE')
+_ENV_MULTI_PATH_VARS = {
+    'PATH', 'PYTHONPATH', 'NODE_PATH', 'CLASSPATH', 'CMAKE_PREFIX_PATH',
+    'PKG_CONFIG_PATH', 'LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'INCLUDE', 'LIB',
+}
+
+
+_ENV_REFS_CACHE = (None, ())
+
+
+def env_referenced_paths():
+    """Return existing absolute paths referenced by PATH and toolchain env vars (cached per env snapshot)."""
+    global _ENV_REFS_CACHE
+    env_sig = tuple(sorted(os.environ.items()))
+    if _ENV_REFS_CACHE[0] == env_sig:
+        return _ENV_REFS_CACHE[1]
+    refs = []
+    seen = set()
+    for var, raw in env_sig:
+        if not raw or not isinstance(raw, str):
+            continue
+        upper = var.upper()
+        if upper in _ENV_IGNORED_VARS or upper.startswith(('AGY_', 'WT_', 'VSCODE_')):
+            continue
+        if any(tok in upper for tok in _ENV_SECRET_TOKENS):
+            continue
+        items = raw.split(os.pathsep) if upper in _ENV_MULTI_PATH_VARS else [raw]
+        for item in items:
+            candidate = item.strip().strip('"')
+            if not candidate or not os.path.isabs(candidate):
+                continue
+            if os.name == 'nt' and candidate.startswith(('\\\\?\\', '\\\\.\\')):
+                continue
+            try:
+                if not os.path.lexists(candidate):
+                    continue
+                norm = normal(candidate)
+            except (OSError, ValueError):
+                continue
+            p = Path(norm)
+            # Never treat a bare drive root (e.g. C:\) as an env-ref entry
+            if p == Path(p.anchor):
+                continue
+            k = key(norm)
+            if k not in seen:
+                seen.add(k)
+                refs.append((var, norm))
+    result = tuple(refs)
+    _ENV_REFS_CACHE = (env_sig, result)
+    return result
+
+
+def env_dependency_reason(path, *, allow_ancestor=False):
+    """Return a human-readable block reason if path is tied to PATH/env vars, else None.
+
+    When allow_ancestor=False (moving/renaming/deleting path itself):
+      blocks if path is equal to, inside, OR an ancestor of any env-referenced path.
+    When allow_ancestor=True (browsing a container directory):
+      blocks only if path is equal to or inside an env-referenced path.
+    """
+    norm = normal(path)
+    for var, ref in env_referenced_paths():
+        if within(norm, ref):
+            return f'路径位于环境变量 {var} 引用范围内，移动或改名会破坏依赖'
+        if not allow_ancestor and within(ref, norm, inclusive=False):
+            return f'目录包含环境变量 {var} 引用的路径，移动或改名会破坏依赖'
+    return None
+
+
+def toolchain_marker_reason(path):
+    """Detect SDK/runtime/virtualenv root markers directly inside a directory (shallow O(1) check)."""
+    p = Path(normal(path))
+    if not os.path.isdir(p):
+        return None
+    checks = (
+        (p / 'pyvenv.cfg', 'Python 虚拟环境根目录'),
+        (p / 'conda-meta', 'Conda/Miniforge 运行环境根目录'),
+        (p / '.vcpkg-root', 'vcpkg 工具链根目录'),
+        (p / 'msys2.exe', 'MSYS2 环境根目录'),
+        (p / 'Cygwin.bat', 'Cygwin 环境根目录'),
+    )
+    for marker, label in checks:
+        if os.path.lexists(marker):
+            return f'检测到 {label}，移动或改名会破坏环境路径依赖'
+    if os.path.lexists(p / 'MaintenanceTool.exe') and (
+            os.path.isdir(p / 'Tools') or os.path.isdir(p / 'Docs')):
+        return '检测到 Qt SDK 安装根目录，移动或改名会破坏工具链依赖'
+    if os.path.lexists(p / 'bin' / 'flutter') or os.path.lexists(p / 'bin' / 'flutter.bat'):
+        return '检测到 Flutter SDK 根目录，移动或改名会破坏工具链依赖'
+    if (os.path.lexists(p / 'bin' / 'go') or os.path.lexists(p / 'bin' / 'go.exe')) and (
+            os.path.isdir(p / 'src') and os.path.isdir(p / 'pkg')):
+        return '检测到 Go 工具链根目录，移动或改名会破坏工具链依赖'
+    if (os.path.lexists(p / 'bin' / 'javac') or os.path.lexists(p / 'bin' / 'javac.exe')) and os.path.isdir(p / 'lib'):
+        return '检测到 JDK 根目录，移动或改名会破坏工具链依赖'
+    if (os.path.lexists(p / 'bin' / 'gcc.exe') or os.path.lexists(p / 'bin' / 'clang.exe')) and (
+            os.path.isdir(p / 'include') and os.path.isdir(p / 'lib')):
+        return '检测到编译器工具链根目录，移动或改名会破坏工具链依赖'
+    return None
+
 
 def _system_drive():
     if os.name != 'nt':
@@ -155,7 +265,7 @@ def is_system_protected_file(path):
     """Return True if path matches a critical Windows system/registry file name."""
     if os.name != 'nt':
         return False
-    name = Path(normal(path)).name.casefold()
+    name = os.path.basename(os.fspath(path).rstrip('\\/')).casefold()
     return name in SYSTEM_PROTECTED_FILES or name.startswith(('ntuser.dat', 'usrclass.dat'))
 
 

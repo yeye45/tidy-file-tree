@@ -24,10 +24,11 @@ import uuid
 import cross_volume
 import rules
 from safety import (BENIGN_SYSTEM_DESCENDANTS, SafetyError, MARKER_FIELDS, NESTED_DENY,
-                    PROTECTED_NAMES, assert_no_links, block_kind, encode_tsv, is_reparse,
-                    is_skeleton_path, is_system_attr, is_system_protected_file, is_system_root,
-                    key, load_markers, nested_verdict, normal, organize_dir, read_tsv,
-                    replace_path, state_home, within)
+                    PROTECTED_NAMES, assert_no_links, block_kind, encode_tsv,
+                    env_dependency_reason, is_reparse, is_skeleton_path, is_system_attr,
+                    is_system_protected_file, is_system_root, key, load_markers,
+                    nested_verdict, normal, organize_dir, read_tsv, replace_path,
+                    state_home, toolchain_marker_reason, within)
 
 FIELDS = ('seq', 'run_id', 'ts', 'op', 'before', 'after', 'reason', 'status')
 PATH_KEYS = {'path', 'src', 'dst', 'target', 'merge_target', 'before', 'after',
@@ -532,6 +533,12 @@ def guard(path, root, protection, descendants=False, allow_root=False, allow_con
             raise SafetyError('命中 Windows 系统属性文件或目录，禁止操作')
         if is_system_protected_file(path):
             raise SafetyError('命中 Windows 系统关键文件，禁止操作')
+        env_why = env_dependency_reason(path, allow_ancestor=allow_container)
+        if env_why:
+            raise SafetyError(env_why)
+        tc_why = toolchain_marker_reason(path)
+        if tc_why:
+            raise SafetyError(tc_why)
     # 嵌套判定：受保护区内可以有允许点（如 Games\某游戏\Screenshots），系统强制禁区永久锁死
     allowed, why = nested_verdict(path)
     if not allowed:
@@ -563,6 +570,10 @@ def guard(path, root, protection, descendants=False, allow_root=False, allow_con
                 child_is_dir = child.is_dir()
                 if child_is_dir and is_skeleton_path(child):
                     raise SafetyError('目录包含系统盘骨架目录或用户主目录')
+                if child_is_dir and len(Path(child).relative_to(path).parts) <= 2:
+                    tc_child = toolchain_marker_reason(child)
+                    if tc_child:
+                        raise SafetyError('目录包含环境/工具链根目录：' + tc_child)
                 lower_name = name.casefold()
                 if is_system_attr(child) and (child_is_dir or lower_name not in BENIGN_SYSTEM_DESCENDANTS):
                     raise SafetyError('目录包含 Windows 系统属性文件或目录')

@@ -597,6 +597,53 @@ class TransactionCase(unittest.TestCase):
             set_attr(str(sys_file), 0x80)
             set_attr(str(ini_file), 0x80)
 
+    def test_env_dependency_and_toolchain_rename_move_protection(self):
+        from unittest.mock import patch
+        # 1. Directory referenced in PATH / toolchain env var cannot be moved OR renamed
+        sdk_parent = self.root / 'MySDK'
+        sdk_bin = sdk_parent / 'tools' / 'bin'
+        sdk_bin.mkdir(parents=True)
+        normal_file = self.root / 'note.txt'
+        normal_file.write_text('ok', encoding='utf-8')
+        protection = executor.Protection([], set())
+        with patch.dict(os.environ, {'CUSTOM_SDK_BIN': str(sdk_bin)}):
+            # Moving or renaming the referenced dir OR its ancestor is blocked
+            with self.assertRaises(SafetyError):
+                executor.guard(sdk_parent, self.root, protection, descendants=True)
+            with self.assertRaises(SafetyError):
+                executor.guard(sdk_bin, self.root, protection, descendants=True)
+            # Browsing sdk_parent as container is allowed, while sdk_bin itself is blocked
+            executor.guard(sdk_parent, self.root, protection, allow_container=True)
+            with self.assertRaises(SafetyError):
+                executor.guard(sdk_bin, self.root, protection, allow_container=True)
+            # Sibling normal file is completely unaffected
+            executor.guard(normal_file, self.root, protection)
+            # preflight blocks rename on sdk_parent
+            prepared, blocked = executor.preflight(
+                str(self.root),
+                [{'op': 'rename', 'src': str(sdk_parent), 'dst': 'RenamedSDK', 'reason': 'test'}],
+            )
+            self.assertEqual(prepared, [])
+            self.assertEqual(len(blocked), 1)
+            self.assertIn('环境变量', blocked[0])
+
+        # 2. Shallow toolchain markers (pyvenv.cfg, conda-meta, .vcpkg-root, flutter) block move/rename
+        venv_dir = self.root / 'myenv'
+        venv_dir.mkdir()
+        (venv_dir / 'pyvenv.cfg').write_text('home = /usr/bin\n', encoding='utf-8')
+        vcpkg_dir = self.root / 'vcpkg_local'
+        vcpkg_dir.mkdir()
+        (vcpkg_dir / '.vcpkg-root').write_text('', encoding='utf-8')
+        for protected_dir in (venv_dir, vcpkg_dir):
+            with self.assertRaises(SafetyError):
+                executor.guard(protected_dir, self.root, protection, descendants=True)
+            prepared, blocked = executor.preflight(
+                str(self.root),
+                [{'op': 'rename', 'src': str(protected_dir), 'dst': 'OtherName', 'reason': 'test'}],
+            )
+            self.assertEqual(prepared, [])
+            self.assertEqual(len(blocked), 1)
+
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

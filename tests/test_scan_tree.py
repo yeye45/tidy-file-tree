@@ -19,6 +19,9 @@ class ScanTreeTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(prefix='.organizer-test-tree-', dir=PROJECT)
         self.addCleanup(temp.cleanup)
         self.workspace = Path(temp.name)
+        env_patch = patch.dict('os.environ', {'LOCALAPPDATA': str(self.workspace / 'local-state')})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         self.root = self.workspace / 'library'
         self.root.mkdir()
 

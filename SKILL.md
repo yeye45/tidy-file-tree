@@ -881,6 +881,7 @@ probe/*.json 里的 path 字段
 - 命中 `FOREIGN` / `WORKSPACE` / `NO_TOUCH` / `ASK` 标记 → 拦
 - 跨卷移动 → 默认拦；需显式传入 `--allow-cross-drive --destination-root <已存在目标根>` 授权
 - 源、目标或其祖先含链接/重解析点，或源目录内部含此类项 → 拦
+- 源目录被系统环境变量（`PATH`、`JAVA_HOME`、`CONDA_PREFIX`、`VCPKG_ROOT`、`ANDROID_HOME`、`UV_*` 等）引用，或本身/浅层包含工具链与运行环境标志（`pyvenv.cfg`、`conda-meta`、`.vcpkg-root`、Qt/Flutter/Go/JDK/MinGW/MSYS2）→ **移动与改名一律硬拦**
 - 源目录内部含受保护标记或 Windows `System` 属性项 → 拦；NOTE 不能解除任何祖先保护
 - `_organize` 及系统盘外部状态目录内部路径 → 拦
 - `rename` 的 dst 含路径分隔符 → 拦
@@ -891,7 +892,7 @@ probe/*.json 里的 path 字段
 
 当用户要求整理整个系统盘（如「帮我整理一下 C 盘」）时，**按以下顺序执行，禁止跳过**：
 
-1. **先只读观察，不写状态**：先跑 `tidy-file-tree scan C:\ --tree --depth 2`（只读、无需额外开关），向用户汇报自动保护跳过区与可整理用户区。
+1. **先只读观察，不写状态**：先跑 `tidy-file-tree scan C:\ --tree --depth 3`（只读、无需额外开关，depth 3 可直接展开到 `Users/<用户>/Downloads`、`Desktop`、`Documents` 等常用目录），向用户汇报自动保护跳过区与可整理用户区。
 2. **先建议缩小范围，确认后再放开**：优先询问用户是只想整理具体子目录（如 `Downloads`、`Desktop` 或某资料文件夹），还是确实要以 `C:\` 为根整理。**严禁 AI 擅自静默加 `--allow-system-drive`**，必须获得用户明确同意后，才在 `setup` / `decisions` / `plan` / `ui` / `apply` / `history` / `undo` / `recover` 中传入 `--allow-system-drive`。
 3. **五层硬保护始终生效**：系统盘模式下代码仍强制拦截：① `Windows`/`Program Files`/`ProgramData`/`AppData`/`Recovery`/`.ssh` 等强制禁区；② 系统盘根级驱动/引导目录（`Boot`/`EFI`/`Drivers`/`Intel`/`AMD`/`NVIDIA`/`Dell` 等）；③ 用户主目录隐藏配置（`C:\Users\<用户>\.*`）与 `NTUSER.DAT`/`pagefile.sys`/`hiberfil.sys` 等系统关键文件；④ Windows `FILE_ATTRIBUTE_SYSTEM` 系统属性项；⑤ 骨架目录本身（`C:\`、`C:\Users`、`C:\Users\<用户>` 及 `Desktop`/`Documents`/`Downloads`/`Pictures`/`Music`/`Videos` 等 KnownFolder 禁止移动或改名其本身，仅允许扫描进入或把文件移入其内部）。
 4. **外置状态目录**：以 `C:\` 或 `C:\Users` 为根时，状态产物（`journal.tsv`、`markers.tsv`、`policy.json`、`probe/`、`ui.html`、`history.html`、`scope.json`）自动写入 `%LOCALAPPDATA%/tidy-file-tree-system-state/<摘要>/`，绝不创建 `C:\_organize`，也无需管理员权限；不要去 `C:\_organize` 寻找产物。撤销时需传入真实的外部 `journal.tsv` 路径并带 `--allow-system-drive`。

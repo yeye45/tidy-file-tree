@@ -223,16 +223,25 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
             entries = sorted(os.scandir(path), key=lambda e: e.name)
         except OSError:
             return
+        from safety import (env_dependency_reason, is_reparse, is_system_root,
+                            is_user_profile_root, nested_verdict,
+                            toolchain_marker_reason)
         for e in entries:
             if not e.is_dir(follow_symlinks=False):
                 continue
             if permit is not None and not permit(e.path):
+                continue
+            if is_reparse(e.path):
                 continue
             name = e.name
             low = name.casefold()
             if name.startswith(('_', '.', '$')):
                 continue
             if depth == 1 and low in SYSTEM_DIRS:
+                continue
+            if not nested_verdict(e.path)[0]:
+                continue
+            if env_dependency_reason(e.path, allow_ancestor=True) or toolchain_marker_reason(e.path):
                 continue
             try:
                 attrs = getattr(e.stat(follow_symlinks=False),
@@ -243,6 +252,10 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
                 pass
 
             sub_label = f"{label}/{name}" if label else name
+            if is_system_root(e.path) or is_user_profile_root(e.path):
+                if depth < max_depth:
+                    walk(e.path, sub_label, depth + 1)
+                continue
             files = count_files(e.path, limit=count_limit, permit=permit)
             if files >= min_files:
                 zones.append({

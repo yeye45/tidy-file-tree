@@ -120,6 +120,19 @@ class ProgressDashboardTests(unittest.TestCase):
         content = out_html.read_text(encoding='utf-8')
         self.assertIn('"live": false', content)
 
+    def test_empty_decisions_does_not_jump_to_s4(self):
+        (self.root / 'Downloads').mkdir()
+        org = self.root / '_organize'
+        org.mkdir()
+        (org / 'policy.json').write_text(json.dumps({'setup': {'k': 'v'}}), encoding='utf-8')
+        (org / 'decisions.json').write_text(json.dumps({
+            'summary': {'total': 0, 'keep': 0, 'move': 0, 'new': 0, 'needCheck': 0},
+            'aiQuestions': [],
+        }), encoding='utf-8')
+        snap = progress.collect_snapshot(self.root)
+        self.assertEqual(snap['currentStage'], 'S1')
+        self.assertFalse(snap['stages']['s4']['ready'])
+
     def test_system_drive_snapshot_is_read_only(self):
         if os.name != 'nt':
             self.skipTest('Windows-only system drive check')
@@ -128,6 +141,11 @@ class ProgressDashboardTests(unittest.TestCase):
         self.assertTrue(snap['isSystemDrive'])
         self.assertGreater(snap['protectedSkipped'], 0)
         self.assertFalse((Path(sys_drive) / '_organize').exists())
+        names = {n['name'].casefold() for n in snap['nodes']}
+        # Active user's KnownFolders (e.g. Downloads / Desktop / Documents) must be visible on C:\
+        if (Path.home() / 'Downloads').is_dir():
+            expected_dl = f'users/{Path.home().name}/downloads'.casefold()
+            self.assertIn(expected_dl, names)
 
 
 if __name__ == '__main__':

@@ -12,9 +12,10 @@ from coverage import SKIP_NAMES
 from executor import (Journal, active_events, atomic_write, completed, meta,
                       read_journal)
 import rules
-from safety import (SafetyError, assert_no_links, block_kind, is_reparse,
-                    is_system_attr, is_system_root, key, nested_verdict,
-                    normal, organize_dir, within)
+from safety import (SafetyError, USER_SHELL_FOLDERS, assert_no_links, block_kind,
+                    env_dependency_reason, is_reparse, is_system_attr, is_system_root,
+                    is_user_profile_root, key, nested_verdict, normal, organize_dir,
+                    toolchain_marker_reason, within)
 
 TEMPLATE = Path(__file__).with_name('progress_ui.html')
 QUARANTINE_NAMES = {'_待删除', '_pending_delete'}
@@ -133,10 +134,47 @@ def collect_snapshot(root, probe_override=None):
     if policy_path.is_file():
         add_event('S0', 'setup', 'policy.json', f'{len(setup_data)} 项确认', _iso_mtime(policy_path))
 
-    # ── Discover top-level directories ──
+    # ── Discover top-level directories (and expand current user's shell folders on system root) ──
     expected = {}
     protected_skipped = 0
     is_sys = is_system_root(root_path)
+
+    def _register_dir(dir_path):
+        nonlocal protected_skipped
+        try:
+            if is_reparse(dir_path):
+                protected_skipped += 1
+                return
+            if block_kind(dir_path, secret_markers):
+                return
+            if is_sys and (is_system_attr(dir_path) or not nested_verdict(dir_path)[0]):
+                protected_skipped += 1
+                return
+            if env_dependency_reason(dir_path, allow_ancestor=True) or toolchain_marker_reason(dir_path):
+                protected_skipped += 1
+                norm = normal(dir_path)
+                expected[key(norm)] = {
+                    'path': norm, 'name': _rel_label(norm, root_path),
+                    'protected': 'ENV_DEP', 'derived': False, 'enter_child': False,
+                }
+                return
+            norm = normal(dir_path)
+            mk = block_kind(norm, markers)
+        except (OSError, SafetyError):
+            protected_skipped += 1
+            return
+        if mk:
+            protected_skipped += 1
+            expected[key(norm)] = {
+                'path': norm, 'name': _rel_label(norm, root_path),
+                'protected': mk, 'derived': False, 'enter_child': False,
+            }
+            return
+        expected[key(norm)] = {
+            'path': norm, 'name': _rel_label(norm, root_path),
+            'protected': None, 'derived': False, 'enter_child': False,
+        }
+
     try:
         with os.scandir(root_path) as it:
             for idx, entry in enumerate(it):
@@ -150,24 +188,40 @@ def collect_snapshot(root, probe_override=None):
                     continue
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                if block_kind(entry.path, secret_markers, descendants=True):
+                # On system drive root (e.g. C:\), traverse through C:\Users into the active
+                # user's KnownFolders (Desktop/Documents/Downloads/Pictures/Music/Videos)
+                # instead of hiding Users behind a nested SECRET marker or stopping at depth 1.
+                if is_sys and is_system_root(entry.path):
+                    try:
+                        home = Path(normal(Path.home()))
+                    except (OSError, ValueError):
+                        home = None
+                    if home and home.is_dir() and within(home, entry.path, inclusive=False):
+                        try:
+                            with os.scandir(home) as hit:
+                                for sub in hit:
+                                    if (sub.name.casefold() in USER_SHELL_FOLDERS
+                                            and sub.is_dir(follow_symlinks=False)):
+                                        _register_dir(sub.path)
+                        except OSError:
+                            pass
                     continue
-                if is_sys and (is_system_attr(entry.path) or not nested_verdict(entry.path)[0]):
-                    protected_skipped += 1
+                if is_sys and is_user_profile_root(entry.path):
+                    try:
+                        home = Path(normal(Path.home()))
+                    except (OSError, ValueError):
+                        home = None
+                    if home and key(entry.path) == key(home):
+                        try:
+                            with os.scandir(entry.path) as hit:
+                                for sub in hit:
+                                    if (sub.name.casefold() in USER_SHELL_FOLDERS
+                                            and sub.is_dir(follow_symlinks=False)):
+                                        _register_dir(sub.path)
+                        except OSError:
+                            pass
                     continue
-                norm = normal(entry.path)
-                mk = block_kind(norm, markers)
-                if mk:
-                    protected_skipped += 1
-                    expected[key(norm)] = {
-                        'path': norm, 'name': _rel_label(norm, root_path),
-                        'protected': mk, 'derived': False, 'enter_child': False,
-                    }
-                    continue
-                expected[key(norm)] = {
-                    'path': norm, 'name': _rel_label(norm, root_path),
-                    'protected': None, 'derived': False, 'enter_child': False,
-                }
+                _register_dir(entry.path)
     except OSError:
         pass
 
@@ -400,16 +454,21 @@ def collect_snapshot(root, probe_override=None):
     recent.sort(key=lambda item: item['time'] or '', reverse=True)
     recent = recent[:RECENT_LIMIT]
 
-    # Determine current stage
+    # Determine current stage without falsely jumping to S4 on an empty decisions.json
+    s4_has_work = bool(
+        int(dec_summary.get('total', 0)) > 0
+        or plan_count > 0
+        or (ui_ready and s1_done > 0)
+    )
     if done_rows:
         current_stage = 'S6' if (missing_nodes == 0 and unresolved_count == 0) else 'S5'
-    elif decisions_obj or plan_path.is_file() or ui_ready:
+    elif s4_has_work:
         current_stage = 'S4'
     elif s3_done > 0:
         current_stage = 'S3'
     elif s2_done > 0:
         current_stage = 'S2'
-    elif s1_done > 0:
+    elif s1_done > 0 or (s0_done and s1_expected > 0):
         current_stage = 'S1'
     elif s0_done:
         current_stage = 'S0'
@@ -449,7 +508,7 @@ def collect_snapshot(root, probe_override=None):
             's2': {'done': s2_done, 'total': s2_expected, 'units': total_units},
             's3': {'done': s3_done, 'total': s3_expected, 'groups': total_groups},
             's4': {
-                'ready': bool(decisions_obj or plan_path.is_file() or ui_ready),
+                'ready': s4_has_work,
                 'totalGroups': int(dec_summary.get('total', 0)),
                 'needCheck': int(dec_summary.get('needCheck', 0)),
                 'move': int(dec_summary.get('move', 0)),

@@ -59,7 +59,11 @@ def inspect_level(path, root, protection):
                 break
             if item.name.casefold() == '_organize':
                 continue
-            marker = block_kind(item.path, protection.markers) if protection.markers else None
+            try:
+                marker = block_kind(item.path, protection.markers) if protection.markers else None
+            except (OSError, SafetyError):
+                hidden += 1
+                continue
             if marker == 'SECRET':
                 hidden += 1
                 continue
