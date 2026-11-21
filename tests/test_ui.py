@@ -82,3 +82,28 @@ class ReviewPageCase(unittest.TestCase):
             self.assertIn('Verified note', html)
             stored['nodes'][0]['groups'][0]['fingerprint'] = 'stale'
             self.assertEqual(build_board(root, probe, stored, Protection([], set()))['matchedAnswers'], 0)
+
+    def test_container_with_protected_child_still_shows_safe_sibling_units(self):
+        with tempfile.TemporaryDirectory(prefix='.organizer-test-', dir=PROJECT) as tmp:
+            root = Path(tmp)
+            docs = root / 'Documents'
+            docs.mkdir()
+            safe_file = docs / 'report.pdf'
+            safe_file.write_text('ok', encoding='utf-8')
+            locked = docs / 'Tencent Files'
+            locked.mkdir()
+            probe = root / '_organize/probe'
+            probe.mkdir(parents=True)
+            (probe / 'units_docs.json').write_text(json.dumps({
+                'path': str(docs),
+                'loose_files_as_units': [str(safe_file), str(locked)],
+            }), encoding='utf-8')
+            (probe / 'group_docs.json').write_text(json.dumps({
+                'path': str(docs),
+                'groups': [{'name': 'Reports', 'units': ['report.pdf', 'Tencent Files']}],
+            }), encoding='utf-8')
+            protection = Protection([{'path': str(locked), 'kind': 'NO_TOUCH'}], set())
+            board = build_board(root, probe, None, protection)
+            self.assertEqual(len(board['nodes']), 1)
+            units = board['nodes'][0]['groups'][0]['units']
+            self.assertEqual([u['source'] for u in units], [str(safe_file)])

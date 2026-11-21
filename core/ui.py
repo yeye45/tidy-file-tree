@@ -26,9 +26,9 @@ def read_json(path):
     return json.loads(data)
 
 
-def allowed_path(path, root, protection, descendants=False):
+def allowed_path(path, root, protection, descendants=False, allow_container=False):
     try:
-        result = guard(path, root, protection)
+        result = guard(path, root, protection, allow_container=allow_container)
         if descendants and block_kind(result, protection.markers, descendants=True):
             return None
         return result
@@ -48,7 +48,9 @@ def load_probes(probe_dir, root, protection):
             continue
         if not isinstance(data, dict) or not isinstance(data.get('path'), str):
             continue
-        path = allowed_path(data['path'], root, protection, descendants=True)
+        # Container nodes (e.g. C:\Users\<user>\Downloads or Documents with a NO_TOUCH subfolder)
+        # remain browsable in the UI; individual movable units are still checked strictly in unit_paths().
+        path = allowed_path(data['path'], root, protection, descendants=False, allow_container=True)
         if not path:
             continue
         data['path'] = path
@@ -138,7 +140,7 @@ def build_board(root, probe_dir, snapshot, protection):
 
     @lru_cache(maxsize=8192)
     def permitted(path):
-        return bool(allowed_path(path, root, protection))
+        return bool(allowed_path(path, root, protection, allow_container=True))
 
     zones = decisions.collect_zones(root, permit=permitted, count_limit=1)
     destinations = {key(z['path']): z for z in zones}
