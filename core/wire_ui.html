@@ -178,6 +178,7 @@ dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);bo
     <select id="language" aria-label="语言" data-i18n-aria-label="语言"><option value="zh-CN">简体中文</option><option value="en">English</option></select>
     <button id="undoButton" class="ghost-btn" aria-label="撤销连线" data-i18n-aria-label="撤销连线" data-i18n="撤销">撤销</button>
     <button id="redoButton" class="ghost-btn" aria-label="重做连线" data-i18n-aria-label="重做连线" data-i18n="重做">重做</button>
+    <button id="protectedButton" class="ghost-btn" hidden></button>
     <button id="proposalsButton" class="ghost-btn" data-i18n="候选类别">候选类别</button>
     <button id="reviewButton" class="primary" data-i18n="导出计划">导出计划</button>
     <button id="theme" class="ghost-btn" aria-label="切换明暗主题" data-i18n-aria-label="切换明暗主题">◐</button>
@@ -232,6 +233,11 @@ dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);bo
 <dialog id="proposals" aria-labelledby="proposalsTitle">
   <div class="dialog-head"><h2 id="proposalsTitle" data-i18n="候选类别">候选类别</h2></div>
   <div class="dialog-body"><p data-i18n="这些建议来自当前整理分组。选择去向后，实际目录由执行步骤创建。">这些建议来自当前整理分组。选择去向后，实际目录由执行步骤创建。</p><ul id="proposalList"></ul></div>
+  <div class="dialog-actions"><form method="dialog"><button data-i18n="关闭">关闭</button></form></div>
+</dialog>
+<dialog id="protectedDialog" aria-labelledby="protectedTitle">
+  <div class="dialog-head"><h2 id="protectedTitle" data-i18n="已自动保护跳过">已自动保护跳过</h2></div>
+  <div class="dialog-body"><p data-i18n="以下目录因命中系统、工具链或保护标记而被自动排除，不参与移动与改名。">以下目录因命中系统、工具链或保护标记而被自动排除，不参与移动与改名。</p><ul id="protectedList"></ul></div>
   <div class="dialog-actions"><form method="dialog"><button data-i18n="关闭">关闭</button></form></div>
 </dialog>
 <script>
@@ -1163,6 +1169,13 @@ $('downloadCorrections').addEventListener('click',()=>{
     tsv(/^\s*[=+@-]/.test(value) ? "'" + value : value)).join('\t')).join('\n');
   download('tidy-file-tree-classification-corrections.tsv',content+'\n','text/tab-separated-values;charset=utf-8');
 });
+$('protectedButton').addEventListener('click',() => {
+  const list = Array.isArray(DATA.protectedNodes) ? DATA.protectedNodes : [];
+  $('protectedList').innerHTML = list.map(item => `<li><strong>${esc(item.name)}</strong>
+    <div class="meta">${esc(item.path)}</div>
+    <div>${esc(item.reason)}</div></li>`).join('') || `<li>${t('（无）')}</li>`;
+  $('protectedDialog').showModal();
+});
 $('proposalsButton').addEventListener('click',() => {
   const list = Object.entries(DATA.proposedCategories);
   $('proposalList').innerHTML = list.map(([name,p]) => `<li><strong>${esc(name)}</strong>
@@ -1186,6 +1199,9 @@ function applyLanguage(next) {
     }
   }
   targets.get(KEEP).label = t('保持原位');
+  const protList = Array.isArray(DATA.protectedNodes) ? DATA.protectedNodes : [];
+  $('protectedButton').hidden = !protList.length;
+  if (protList.length) $('protectedButton').textContent = t('已保护跳过 {count}', {count: protList.length});
   selectionNotice = '';
   refresh();
 }

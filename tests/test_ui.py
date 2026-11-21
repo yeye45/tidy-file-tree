@@ -107,3 +107,29 @@ class ReviewPageCase(unittest.TestCase):
             self.assertEqual(len(board['nodes']), 1)
             units = board['nodes'][0]['groups'][0]['units']
             self.assertEqual([u['source'] for u in units], [str(safe_file)])
+
+    def test_node_level_decisions_and_protected_nodes_surface_in_board(self):
+        with tempfile.TemporaryDirectory(prefix='.organizer-test-', dir=PROJECT) as tmp:
+            root = Path(tmp)
+            ask_dir = root / 'leidian'
+            ask_dir.mkdir()
+            sdk_dir = root / 'local_vcpkg'
+            sdk_dir.mkdir()
+            (sdk_dir / '.vcpkg-root').write_text('', encoding='utf-8')
+            probe = root / '_organize/probe'
+            probe.mkdir(parents=True)
+            (probe / 'probe_leidian.json').write_text(json.dumps({
+                'path': str(ask_dir), 'action': 'ask', 'unit_why': '空壳去留待确认',
+            }), encoding='utf-8')
+            (probe / 'probe_vcpkg.json').write_text(json.dumps({
+                'path': str(sdk_dir), 'action': 'skip',
+            }), encoding='utf-8')
+            board = build_board(root, probe, None, Protection([], set()))
+            # Node-level S1 ask decision appears even with zero S3 group_*.json files
+            self.assertEqual(len(board['nodes']), 1)
+            self.assertEqual(board['nodes'][0]['groups'][0]['name'], 'leidian')
+            # Protected toolchain node is surfaced transparently instead of silently dropped
+            self.assertEqual(len(board['protectedNodes']), 1)
+            self.assertEqual(board['protectedNodes'][0]['name'], 'local_vcpkg')
+            html = render_html(root, board)
+            self.assertIn('protectedDialog', html)

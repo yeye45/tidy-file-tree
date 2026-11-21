@@ -147,10 +147,17 @@ def env_referenced_paths():
             k = key(norm)
             if k not in seen:
                 seen.add(k)
-                refs.append((var, norm))
+                refs.append((var, norm, k))
     result = tuple(refs)
     _ENV_REFS_CACHE = (env_sig, result)
     return result
+
+
+def _key_within(p_key, root_key, inclusive=True):
+    try:
+        return os.path.commonpath([p_key, root_key]) == root_key and (inclusive or p_key != root_key)
+    except ValueError:
+        return False
 
 
 def env_dependency_reason(path, *, root=None, allow_ancestor=False):
@@ -161,16 +168,16 @@ def env_dependency_reason(path, *, root=None, allow_ancestor=False):
     When allow_ancestor=True (browsing a container directory):
       blocks only if path is equal to or inside an env-referenced path.
     """
-    norm = normal(path)
-    root_norm = normal(root) if root is not None else None
-    for var, ref in env_referenced_paths():
+    p_key = key(path)
+    root_key = key(root) if root is not None else None
+    for var, _ref, ref_key in env_referenced_paths():
         # If the user explicitly scoped root inside an outer PYTHONPATH workspace,
         # don't treat that outer PYTHONPATH entry as blocking subdirectories inside root.
-        if var.upper() == 'PYTHONPATH' and root_norm is not None and within(root_norm, ref, inclusive=False):
+        if var.upper() == 'PYTHONPATH' and root_key is not None and _key_within(root_key, ref_key, inclusive=False):
             continue
-        if within(norm, ref):
+        if _key_within(p_key, ref_key):
             return f'路径位于环境变量 {var} 引用范围内，移动或改名会破坏依赖'
-        if not allow_ancestor and within(ref, norm, inclusive=False):
+        if not allow_ancestor and _key_within(ref_key, p_key, inclusive=False):
             return f'目录包含环境变量 {var} 引用的路径，移动或改名会破坏依赖'
     return None
 
@@ -534,8 +541,18 @@ def load_markers(root):
 
 
 def marker_hits(path, markers, descendants=False):
-    return [m for m in markers if within(path, m['path']) or
-            (descendants and within(m['path'], path))]
+    if not markers:
+        return []
+    p_key = key(path)
+    hits = []
+    for m in markers:
+        m_key = m.get('_key')
+        if m_key is None:
+            m_key = key(m['path'])
+            m['_key'] = m_key
+        if _key_within(p_key, m_key) or (descendants and _key_within(m_key, p_key)):
+            hits.append(m)
+    return hits
 
 
 def block_kind(path, markers, descendants=False):

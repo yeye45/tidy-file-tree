@@ -39,6 +39,11 @@ def allowed_path(path, root, protection, descendants=False, allow_container=Fals
 def load_probes(probe_dir, root, protection):
     assert_no_links(probe_dir)
     probes, inventory, groups = {}, {}, {}
+    protected_nodes = []
+    seen_protected = set()
+    secret_markers = [m for m in protection.markers if m['kind'] == 'SECRET']
+    if not probe_dir.is_dir():
+        return probes, inventory, groups, protected_nodes
     for file in sorted(probe_dir.glob('*.json')):
         if file.name.startswith('dup_'):
             continue
@@ -48,10 +53,24 @@ def load_probes(probe_dir, root, protection):
             continue
         if not isinstance(data, dict) or not isinstance(data.get('path'), str):
             continue
+        raw_path = data['path']
         # Container nodes (e.g. C:\Users\<user>\Downloads or Documents with a NO_TOUCH subfolder)
         # remain browsable in the UI; individual movable units are still checked strictly in unit_paths().
-        path = allowed_path(data['path'], root, protection, descendants=False, allow_container=True)
-        if not path:
+        try:
+            path = guard(raw_path, root, protection, allow_container=True)
+        except (OSError, ValueError) as exc:
+            # Never leak SECRET paths; expose ordinary protected/toolchain skips so UI stays consistent with S6.
+            if not (file.name.startswith(('units_', 'group_')) or
+                    (os.path.isabs(raw_path) and block_kind(raw_path, secret_markers, descendants=True))):
+                norm_key = raw_path.casefold()
+                if norm_key not in seen_protected:
+                    seen_protected.add(norm_key)
+                    protected_nodes.append({
+                        'name': Path(raw_path).name or raw_path,
+                        'path': raw_path,
+                        'action': str(data.get('action') or 'skip'),
+                        'reason': str(exc) if isinstance(exc, ValueError) else '命中保护规则',
+                    })
             continue
         data['path'] = path
         dest = inventory if file.name.startswith('units_') else groups if file.name.startswith('group_') else probes
@@ -61,7 +80,7 @@ def load_probes(probe_dir, root, protection):
                 continue
             data['groups'] = [g for g in items if isinstance(g, dict) and isinstance(g.get('name'), str)]
         dest[path] = data
-    return probes, inventory, groups
+    return probes, inventory, groups, protected_nodes
 
 
 def decision_index(snapshot, root):
@@ -135,7 +154,7 @@ def proposal_targets(name, parent, root, protection):
 
 
 def build_board(root, probe_dir, snapshot, protection):
-    probes, inventory, groups = load_probes(probe_dir, root, protection)
+    probes, inventory, groups, protected_nodes = load_probes(probe_dir, root, protection)
     snapshots = decision_index(snapshot, root)
 
     @lru_cache(maxsize=8192)
@@ -226,6 +245,69 @@ def build_board(root, probe_dir, snapshot, protection):
                       'why': node.get('unit_why') or '',
                       'units': node.get('total_units')})
 
+    # Include node-level S1 decisions (rename / merge / ask / uncertain / unclear) that have no S3 groups,
+    # so the review board is never empty when only top-level/node-level decisions remain.
+    grouped_keys = {key(n['path']) for n in nodes}
+    node_level_items = []
+    for p_path, p_data in sorted(probes.items(), key=lambda pair: pair[0].casefold()):
+        if key(p_path) in grouped_keys:
+            continue
+        act = str(p_data.get('action') or '')
+        if act not in ('rename', 'merge', 'ask', 'uncertain', 'unclear'):
+            continue
+        if not os.path.lexists(p_path):
+            continue
+        leaf = Path(p_path).name or p_path
+        movable = allowed_path(p_path, root, protection, descendants=True)
+        why_parts = []
+        if act == 'rename' and p_data.get('rename_to'):
+            why_parts.append(f"S1 建议改名为：{p_data['rename_to']}")
+        elif act == 'merge' and p_data.get('merge_target'):
+            why_parts.append(f"S1 建议合并到：{p_data['merge_target']}")
+        else:
+            why_parts.append(f"S1 节点级待拍板（action={act}）")
+        if p_data.get('unit_why'):
+            why_parts.append(str(p_data['unit_why']))
+        ev_list = p_data.get('evidence') if isinstance(p_data.get('evidence'), list) else []
+        ev_strs = [str(e) for e in ev_list if e]
+        dest_target = '@keep'
+        dest_label = None
+        if act == 'merge' and isinstance(p_data.get('merge_target'), str):
+            zone = destinations.get(key(p_data['merge_target']))
+            if zone:
+                dest_target = zone['path']
+                dest_label = zone['label']
+        fp = group_key({'name': leaf, 'units': [p_path]})
+        node_level_items.append({
+            'id': 'node:' + fp,
+            'name': leaf,
+            'count': 1,
+            'units': [{'id': [movable or p_path, 1], 'label': leaf, 'source': movable}],
+            'why': ' · '.join(why_parts),
+            'tier': 'verify',
+            'ai': None,
+            'suggest': {
+                'target': dest_target,
+                'label': dest_label,
+                'needsCheck': True,
+                'reason': why_parts[0],
+                'evidence': ev_strs or why_parts[1:],
+            },
+        })
+    if node_level_items:
+        nodes.append({
+            'id': 'node-decisions',
+            'path': str(root),
+            'name': '节点级待拍板（S1）',
+            'groups': node_level_items,
+            'action': 'ask',
+            'label': 'S1 节点级待拍板',
+            'renameTo': None,
+            'confidence': 'medium',
+            'why': '',
+            'units': len(node_level_items),
+        })
+
     proposals = decisions.propose_new_categories(unmatched)
     stored = snapshot.get('proposedCategories', {}) if isinstance(snapshot, dict) else {}
     visible_names = {g['name'] for node in nodes for g in node['groups']}
@@ -240,6 +322,7 @@ def build_board(root, probe_dir, snapshot, protection):
         'root': str(root), 'generated': datetime.now().isoformat(timespec='minutes'),
         'caseInsensitive': os.name == 'nt', 'nodes': nodes, 'zones': list(destinations.values()),
         'proposedCategories': proposals, 'matchedAnswers': matched_answers,
+        'protectedNodes': protected_nodes,
     }
 
 
@@ -268,6 +351,7 @@ def main():
     ap.add_argument('--decisions', help='S4 decisions.json；默认读取根目录的 _organize/decisions.json')
     ap.add_argument('--out')
     ap.add_argument('--open', action='store_true')
+    ap.add_argument('--no-open', action='store_true', help='仅生成 HTML，不自动打开浏览器')
     ap.add_argument('--lang', choices=('zh-CN', 'en'), default='zh-CN')
     ap.add_argument('--allow-system-drive', action='store_true')
     args = ap.parse_args()
@@ -297,7 +381,7 @@ def main():
               f'{len(board["proposedCategories"])} suggested categories)')
     else:
         print(f'已生成: {out}（{count} 组，{board["matchedAnswers"]} 份已回填判断，{len(board["proposedCategories"])} 个候选类别）')
-    if args.open:
+    if args.open and not args.no_open:
         if os.name == 'nt':
             os.startfile(str(out))
         else:

@@ -12,11 +12,13 @@ function Add-Journal {
     param(
         [Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$RunId,
         [Parameter(Mandatory)][string]$Op, [string]$Before='-', [string]$After='-',
-        [string]$Reason='-', [string]$Status='done'
+        [string]$Reason='-', [string]$Status='done', [switch]$AllowSystemDrive
     )
-    $seq = Invoke-Organizer -Arguments @('journal','--path',$Path,'--action','append',
+    $arguments = @('journal','--path',$Path,'--action','append',
         '--run-id',$RunId,'--op',$Op,('--before='+$Before),('--after='+$After),
         ('--reason='+$Reason),('--status='+$Status))
+    if ($AllowSystemDrive) { $arguments += '--allow-system-drive' }
+    $seq = Invoke-Organizer -Arguments $arguments
     if ($script:OrganizerExitCode -ne 0) { throw 'Unable to append journal.' }
     return [int]$seq
 }

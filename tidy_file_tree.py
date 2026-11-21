@@ -187,6 +187,18 @@ def cmd_progress(args):
     )
 
 
+def cmd_markers(args):
+    ex = _load("executor", "executor.py")
+    argv = ["markers", "--root", args.root, "--action", args.action, "--by", args.by, "--note", args.note]
+    if args.path:
+        argv += ["--path", args.path]
+    if args.kind:
+        argv += ["--kind", args.kind]
+    if args.allow_system_drive:
+        argv.append("--allow-system-drive")
+    return ex.main(argv)
+
+
 def cmd_ui(args):
     ui = _load("ui", "ui.py")
     argv = ["--root", args.root, "--lang", args.lang]
@@ -196,8 +208,10 @@ def cmd_ui(args):
         argv += ["--decisions", args.decisions]
     if args.out:
         argv += ["--out", args.out]
-    if args.open:
+    if args.open and not args.no_open:
         argv.append("--open")
+    if args.no_open:
+        argv.append("--no-open")
     if args.allow_system_drive:
         argv.append("--allow-system-drive")
     old = sys.argv
@@ -331,6 +345,7 @@ def main(argv=None):
     s.add_argument("--tree", action="store_true", help=text("在浏览器查看实时目录判断树", "Open a live directory assessment tree"))
     s.add_argument("--depth", type=int, default=3, help=text("目录树最大深度，默认 3", "Maximum tree depth; defaults to 3"))
     s.add_argument("--no-open", action="store_true", help=text("树模式只输出本地地址", "Print the local tree URL without opening a browser"))
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
     s.set_defaults(func=cmd_scan)
 
@@ -401,8 +416,19 @@ def main(argv=None):
     s.add_argument("--out", help=text("另存为离线静态进度快照 (.html)", "Save an offline static progress snapshot (.html)"))
     s.add_argument("--no-open", action="store_true", help=text("只打印本地地址，不自动打开浏览器", "Print local URL without opening browser"))
     s.add_argument("--interval", type=float, default=1.2, help=text("实时轮询间隔（秒），默认 1.2", "Live polling interval in seconds; default 1.2"))
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
     s.set_defaults(func=cmd_progress)
+
+    s = command("markers", "管理保护标记", "Manage path protection markers")
+    s.add_argument("root")
+    s.add_argument("--action", choices=("list", "add", "remove", "check", "pending", "secrets"), default="list")
+    s.add_argument("--path")
+    s.add_argument("--kind", choices=("SECRET", "FOREIGN", "WORKSPACE", "NO_TOUCH", "ASK", "NOTE"))
+    s.add_argument("--by", choices=("user", "inferred"), default="inferred")
+    s.add_argument("--note", default="-")
+    s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
+    s.set_defaults(func=cmd_markers)
 
     s = command("setup", "整理前的一次性确认", "Configure sorting preferences before organizing")
     s.add_argument("action", choices=("ask", "apply", "show"))
@@ -443,6 +469,7 @@ def main(argv=None):
                                             "S4 decisions file; defaults to the root's _organize/decisions.json"))
     s.add_argument("--out")
     s.add_argument("--open", action="store_true")
+    s.add_argument("--no-open", action="store_true", help=text("仅生成 HTML，不自动打开浏览器", "Generate HTML without opening a browser"))
     s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
     s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_ui)

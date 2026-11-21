@@ -46,6 +46,27 @@ class TestEnterCoverage(unittest.TestCase):
             child_row = next(row for row in rows if row.get("node", "").endswith("nested"))
             self.assertEqual(child_row["status"], "ok")
 
+    def test_uncertain_is_valid_action_and_bad_action_lists_valid_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            good_dir = root / "uncertain_dir"
+            bad_dir = root / "bad_dir"
+            probe = Path(tmp) / "probe"
+            for d in (root, good_dir, bad_dir, probe):
+                d.mkdir(parents=True, exist_ok=True)
+            (probe / "probe_good.json").write_text(json.dumps({
+                "path": str(good_dir), "action": "uncertain",
+            }), encoding="utf-8")
+            (probe / "probe_bad.json").write_text(json.dumps({
+                "path": str(bad_dir), "action": "bogus_op",
+            }), encoding="utf-8")
+            rows = coverage_module.check(root, probe)
+            good_row = next(r for r in rows if r.get("node") == "uncertain_dir")
+            self.assertEqual(good_row["status"], "ok")
+            err_row = next(r for r in rows if r.get("status") == "ERROR")
+            self.assertIn("uncertain", err_row["missing"][0])
+            self.assertIn("bogus_op", err_row["missing"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

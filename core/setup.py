@@ -192,6 +192,10 @@ def cmd_apply(args):
                 zones = [zones] if zones.strip() else []
             if not isinstance(zones, list) or any(not isinstance(p, str) or not p.strip() for p in zones):
                 raise SafetyError("禁区必须是路径数组")
+            for raw_p in zones:
+                tail_check = os.path.splitdrive(raw_p.strip())[1] if os.name == 'nt' else raw_p
+                if ':' in tail_check or '：' in raw_p or '\n' in raw_p or '\r' in raw_p:
+                    raise SafetyError(f"no_go_zones 每项必须是纯目录路径，不能夹带冒号或说明文字：{raw_p!r}")
             if any(not within(root/path, root) for path in zones):
                 raise SafetyError("禁区路径必须位于整理根目录内")
             answers["no_go_zones"] = zones

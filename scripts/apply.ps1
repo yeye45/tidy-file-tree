@@ -9,7 +9,7 @@ param(
     [string]$Actions, [string]$Plan, [Parameter(Mandatory)][string]$Root,
     [string]$Reason = '-', [switch]$DryRun,
     [ValidateRange(1,200)][int]$BatchSize = 50,
-    [switch]$AllowCrossDrive, [string[]]$Rename, [string[]]$DestinationRoot, [string]$Receipt
+    [switch]$AllowCrossDrive, [switch]$AllowSystemDrive, [string[]]$Rename, [string[]]$DestinationRoot, [string]$Receipt
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -25,6 +25,7 @@ if ($Rename) {
 if ($DryRun) { $arguments += '--dry-run' }
 if ($Receipt) { $arguments += @('--receipt', $Receipt) }
 if ($AllowCrossDrive) { $arguments += '--allow-cross-drive' }
+if ($AllowSystemDrive) { $arguments += '--allow-system-drive' }
 foreach ($destination in $DestinationRoot) { $arguments += @('--destination-root', $destination) }
 Invoke-Organizer -Arguments $arguments
 exit $script:OrganizerExitCode

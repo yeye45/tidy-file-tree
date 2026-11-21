@@ -1,7 +1,8 @@
 ﻿# Undo a run; an undo run can itself be undone. Repeated undo is idempotent.
 param(
     [Parameter(Mandatory)][string]$Journal, [string]$RunId,
-    [int]$Seq = 0, [switch]$Last, [switch]$List, [switch]$DryRun
+    [int]$Seq = 0, [switch]$Last, [switch]$List, [switch]$DryRun,
+    [switch]$AllowSystemDrive
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -13,5 +14,6 @@ if ($Seq -gt 0) { $arguments += @('--seq',[string]$Seq) }
 if ($Last) { $arguments += '--last' }
 if ($List) { $arguments += '--list' }
 if ($DryRun) { $arguments += '--dry-run' }
+if ($AllowSystemDrive) { $arguments += '--allow-system-drive' }
 Invoke-Organizer -Arguments $arguments
 exit $script:OrganizerExitCode

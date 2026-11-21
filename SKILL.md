@@ -13,6 +13,11 @@ description: >
 
 顺着结构切分，而不是按扩展名硬套。拿不准就报出来，不猜。
 
+> **先分清两件事：整理归类 ≠ 清理腾空间。**
+> - **整理归类** = 按最小单元移动/归组，**不会释放任何磁盘空间**；
+> - **清理腾空间** = 识别可重建缓存（如 `AppData\Local\Temp` / `CrashDumps` / `pip` / `.cache` / `.gradle\caches`）、孤儿版本与重复大文件，隔离到 `_待删除/` 或列成 A/B/C 清单，**最后由用户确认删除才真正释放空间**。
+> 必须在 S0 第一题先问清用户目标，绝不把「只移动不删」当成「帮你腾了空间」。
+
 ## 唯一原则
 
 **整理的目标是以后找得到，不是看起来整齐。** 冲突时一律按前者让步。
@@ -104,6 +109,8 @@ description: >
 **实测踩过**：两个只差大小写的目录，结果文件互相覆盖，其中一个的
 376 个单元清点成果被另一个的 4 个覆盖掉，覆盖检查才发现。
 
+**并发写入规范**：每个子代理只写自己目录的专属文件，写入时先落同目录临时文件再原子改名（避免并发读到半截 JSON）。三类产物完整字段定义与合法枚举见 `references/probe-schema.md`（代码读取字段 vs 审计展示字段均已标明）。
+
 ### S4 的 AI 子代理怎么派
 
 代码先把事实准备好，子代理只做判断：
@@ -156,21 +163,19 @@ python core/decisions.py --root /path --need-ai > questions.json
 不要跳阶段。每个阶段的产物是下一阶段的输入，也是审计依据。
 
 ```
+摸底 / 进度  progress <root>（常驻实时进度页）+ scan <root> --tree（按需逐级浅扫树）
+
+S0  定目标   先问清「整理归类」还是「清理腾空间」及分类体系 → policy.json
 S1  判定     一个目录一个探针：读名字 → 假设 → 验证 → 给动作
-              产出：probe/*.json，每个目录一个 action
-
+              产出：probe/*.json，合法 action 见 references/probe-schema.md
 S2  清点     一个目录一个探针：按形态数内部有几个最小单元
-              产出：probe/units_*.json，每个节点一个 unit_count
-
+              产出：probe/units_*.json，每个节点一个 total_units
 S3  归组     一个目录一个探针：把单元归成"去向相同"的组
               产出：probe/group_*.json，每个节点 groups[]
-
-S4  审批     组 → 目标位置的映射，人工或按 policy 自动
-              产出：placement.tsv
-
-S5  执行     全部经 journal，分批，可回滚
-              产出：journal.tsv + moves.log
-
+S4  审批     组或节点级待拍板项 → 打开 ui.html 图形连线页由人确认，或按 policy 自动生成 plan.tsv
+              产出：decisions.json / ui.html / actions.tsv
+S5  执行     全部经 journal，分批，可回滚；清理目标的删除留在最后一步分 A/B/C 人工确认
+              产出：journal.tsv / history.html
 S6  覆盖检查 每个阶段结束后必跑，确认没有节点被跳过
               产出：coverage 报告
 ```
@@ -894,7 +899,7 @@ probe/*.json 里的 path 字段
 当用户要求整理整个系统盘（如「帮我整理一下 C 盘」）时，**按以下顺序执行，禁止跳过**：
 
 1. **先只读观察，不写状态**：先跑 `tidy-file-tree scan C:\ --tree --depth 3`（只读、无需额外开关，depth 3 可直接展开到 `Users/<用户>/Downloads`、`Desktop`、`Documents` 等常用目录），向用户汇报自动保护跳过区与可整理用户区。
-2. **先建议缩小范围，确认后再放开**：优先询问用户是只想整理具体子目录（如 `Downloads`、`Desktop` 或某资料文件夹），还是确实要以 `C:\` 为根整理。**严禁 AI 擅自静默加 `--allow-system-drive`**，必须获得用户明确同意后，才在 `setup` / `decisions` / `plan` / `ui` / `apply` / `history` / `undo` / `recover` 中传入 `--allow-system-drive`。
+2. **先建议缩小范围，确认后再放开**：优先询问用户是只想整理具体子目录（如 `Downloads`、`Desktop` 或某资料文件夹），还是确实要以 `C:\` 为根整理。**严禁 AI 擅自静默加 `--allow-system-drive`**，必须获得用户明确同意后，才在所有统一入口命令（`setup` / `decisions` / `plan` / `ui` / `apply` / `history` / `undo` / `recover` / `markers`，`scan` 与 `progress` 亦可透传）或对应 PowerShell 桥接脚本（`scripts/markers.ps1` / `apply.ps1` / `plan.ps1` / `undo.ps1` / `recover.ps1` 的 `-AllowSystemDrive`）中显式传入。
 3. **五层硬保护始终生效**：系统盘模式下代码仍强制拦截：① `Windows`/`Program Files`/`ProgramData`/`AppData`/`Recovery`/`.ssh` 等强制禁区；② 系统盘根级驱动/引导目录（`Boot`/`EFI`/`Drivers`/`Intel`/`AMD`/`NVIDIA`/`Dell` 等）；③ 用户主目录隐藏配置（`C:\Users\<用户>\.*`）与 `NTUSER.DAT`/`pagefile.sys`/`hiberfil.sys` 等系统关键文件；④ Windows `FILE_ATTRIBUTE_SYSTEM` 系统属性项；⑤ 骨架目录本身（`C:\`、`C:\Users`、`C:\Users\<用户>` 及 `Desktop`/`Documents`/`Downloads`/`Pictures`/`Music`/`Videos` 等 KnownFolder 禁止移动或改名其本身，仅允许扫描进入或把文件移入其内部）。
 4. **外置状态目录**：以 `C:\` 或 `C:\Users` 为根时，状态产物（`journal.tsv`、`markers.tsv`、`policy.json`、`probe/`、`ui.html`、`history.html`、`scope.json`）自动写入 `%LOCALAPPDATA%/tidy-file-tree-system-state/<摘要>/`，绝不创建 `C:\_organize`，也无需管理员权限；不要去 `C:\_organize` 寻找产物。撤销时需传入真实的外部 `journal.tsv` 路径并带 `--allow-system-drive`。
 
@@ -1151,8 +1156,15 @@ path  kind  by  note  ts
 归档目录深处、微信文件的年月子目录（`.pem` 私钥）、下载工具的输出目录。凭据扫描应该
 是一个独立步骤，不能靠探针顺便发现。
 
-同名同大小的凭据可能有多份。**移动"包含凭据的父目录"同样危险**，即使 SECRET 文件本身
-不被选中——路径会变，标记会失效。
+**`by` 字段的严格权限边界（`user` vs `inferred`）**：
+- `--by user` **仅限用户原话明确点名不碰的路径**（必须能追溯到用户在对话里的原话），禁止 AI 替用户填写 `--by user` 伪造授权（尤其是 `NO_TOUCH` 与 `FOREIGN`）。
+- AI 自行推断需要跳过或隔离的路径（如疑似临时目录、工具链依赖、模型受限项、扫描发现的凭据），**一律传 `--by inferred`**（`tidy-file-tree markers` 默认即 `inferred`）。
+
+**`SECRET` 必须按文件内容头判定，不要仅凭文件名臆断**：
+- **是 `SECRET`**：含真实私钥/密码/令牌的文件（如内容含 `BEGIN PRIVATE KEY` / `BEGIN OPENSSH PRIVATE KEY` / `.pfx` / `.p12` / `.env` 内含真实密钥或密码、凭据备份码）。
+- **不是 `SECRET`（反面清单）**：**公钥、模数、公开证书**（如 `*.pub`、`*_modulus.txt`、内容为 `BEGIN PUBLIC KEY` / `BEGIN CERTIFICATE` / `ca-bundle.crt` / 纯十六进制公开模数）属于公开信息，不要误标为 `SECRET`。
+
+同名同大小的凭据可能有多份。**移动"包含凭据的父目录"同样危险**，即使 SECRET 文件本身不被选中——路径会变，标记会失效。
 
 ---
 

@@ -14,7 +14,7 @@ SKIP_NAMES = {
     '$recycle.bin', 'system volume information', '_organize',
     '_待删除', '_重复待确认', '_未归类',
 }
-ACTIONS = {'keep','enter','split','rename','merge','ask','skip','unclear'}
+ACTIONS = {'keep','enter','split','rename','merge','ask','skip','unclear','uncertain'}
 
 
 def _units_ok(value):
@@ -110,7 +110,8 @@ def check(root, probe):
                 else:
                     destination = probes
                     if obj.get('action') not in ACTIONS:
-                        raise SafetyError('action 无效或缺失')
+                        valid = ', '.join(sorted(ACTIONS))
+                        raise SafetyError(f"action 无效或缺失（当前={obj.get('action')!r}，合法值：{valid}）")
                     children = obj.get('enter_children',[])
                 if node in destination:
                     raise SafetyError('同一节点存在重复阶段产物')

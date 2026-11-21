@@ -1099,7 +1099,7 @@ def plan(args):
         if not isinstance(path, str) or not path:
             continue
         op = data.get('action')
-        if op in ('keep', 'ask'):
+        if op in ('keep', 'ask', 'skip', 'unclear', 'uncertain'):
             continue
         try:
             path = guard(path,root,protection,descendants=True)

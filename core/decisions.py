@@ -165,27 +165,50 @@ def build_nodes(root, probes, units, groups):
     return nodes
 
 
+_FAST_COUNT_SKIP = {
+    'node_modules', '.git', '.venv', 'venv', '__pycache__', 'site-packages',
+    '.hg', '.svn', '$recycle.bin', 'system volume information', '_organize',
+}
+
+
 def count_files(path, limit=20000, permit=None):
-    """粗数文件数，用于判断目录是否有内容。"""
+    """粗数文件数，用于判断目录是否有内容（浅层 BFS 早停，避免大盘卡死）。"""
+    from collections import deque
     n = 0
-    try:
-        for dp, dns, fns in os.walk(path):
-            if permit is not None and not permit(dp):
-                dns[:] = []
-                continue
-            if permit is not None:
-                dns[:] = [d for d in dns if permit(os.path.join(dp, d))]
-            n += len(fns)
-            if n >= limit:
-                return n
-    except OSError:
-        pass
+    visited = 0
+    max_dirs = 24 if limit <= 10 else 400
+    max_depth = 2 if limit <= 10 else 4
+    queue = deque([(path, 0)])
+    while queue and visited < max_dirs:
+        cur, depth = queue.popleft()
+        visited += 1
+        try:
+            subdirs = []
+            with os.scandir(cur) as it:
+                for idx, e in enumerate(it):
+                    if idx >= 400:
+                        break
+                    if e.is_file(follow_symlinks=False):
+                        n += 1
+                        if n >= limit:
+                            return n
+                    elif depth < max_depth and e.is_dir(follow_symlinks=False):
+                        name = e.name
+                        if name.casefold() in _FAST_COUNT_SKIP or name.startswith(('.', '$')):
+                            continue
+                        if len(subdirs) < 24:
+                            subdirs.append(e.path)
+            for sub in subdirs:
+                if permit is None or permit(sub):
+                    queue.append((sub, depth + 1))
+        except OSError:
+            continue
     return n
 
 
 def collect_zones(root, max_depth=3, min_files=1, permit=None,
-                  count_limit=20000):
-    """收集候选去向，最多 3 层。
+                  count_limit=20000, max_zones=300, time_budget=4.0):
+    """收集候选去向，最多 3 层（数量与时间双有界，绝不卡死）。
 
     root 可以是单个路径，也可以是多个根（多盘）：
       collect_zones("G:\\")
@@ -205,7 +228,7 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
                 continue
             seen.add(r)
             for z in collect_zones(r, max_depth, min_files, permit,
-                                   count_limit):
+                                   count_limit, max_zones, time_budget):
                 z["root"] = r
                 # 多盘时 label 加盘符前缀，避免同名混淆
                 drive = os.path.splitdrive(r)[0] or r.rstrip(os.sep)
@@ -213,25 +236,33 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
                 out.append(z)
         return out
 
+    import time as _time
+    deadline = _time.monotonic() + time_budget if time_budget else None
     root = os.path.abspath(str(root))
     zones = []
+    from safety import (env_dependency_reason, is_reparse, is_system_root,
+                        is_user_profile_root, key, nested_verdict,
+                        toolchain_marker_reason)
+    is_sys = is_system_root(root)
+    eff_limit = min(count_limit, 50) if is_sys else count_limit
+    try:
+        active_home_key = key(Path.home()) if is_sys else None
+    except (OSError, ValueError):
+        active_home_key = None
 
     def walk(path, label, depth):
-        if depth > max_depth:
+        if depth > max_depth or len(zones) >= max_zones:
+            return
+        if deadline is not None and _time.monotonic() >= deadline:
             return
         try:
             entries = sorted(os.scandir(path), key=lambda e: e.name)
         except OSError:
             return
-        from safety import (env_dependency_reason, is_reparse, is_system_root,
-                            is_user_profile_root, nested_verdict,
-                            toolchain_marker_reason)
         for e in entries:
+            if len(zones) >= max_zones or (deadline is not None and _time.monotonic() >= deadline):
+                return
             if not e.is_dir(follow_symlinks=False):
-                continue
-            if permit is not None and not permit(e.path):
-                continue
-            if is_reparse(e.path):
                 continue
             name = e.name
             low = name.casefold()
@@ -239,9 +270,7 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
                 continue
             if depth == 1 and low in SYSTEM_DIRS:
                 continue
-            if not nested_verdict(e.path)[0]:
-                continue
-            if env_dependency_reason(e.path, root=root, allow_ancestor=True) or toolchain_marker_reason(e.path):
+            if is_reparse(e.path):
                 continue
             try:
                 attrs = getattr(e.stat(follow_symlinks=False),
@@ -249,14 +278,26 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
                 if attrs & 0x2 or attrs & 0x4:
                     continue
             except OSError:
-                pass
+                continue
+            if not nested_verdict(e.path)[0]:
+                continue
+            if permit is not None and not permit(e.path):
+                continue
+            if env_dependency_reason(e.path, root=root, allow_ancestor=True) or toolchain_marker_reason(e.path):
+                continue
 
             sub_label = f"{label}/{name}" if label else name
-            if is_system_root(e.path) or is_user_profile_root(e.path):
+            if is_system_root(e.path):
                 if depth < max_depth:
                     walk(e.path, sub_label, depth + 1)
                 continue
-            files = count_files(e.path, limit=count_limit, permit=permit)
+            if is_user_profile_root(e.path):
+                # On system drive, only descend into the active user's profile
+                if active_home_key is None or key(e.path) == active_home_key:
+                    if depth < max_depth:
+                        walk(e.path, sub_label, depth + 1)
+                continue
+            files = count_files(e.path, limit=eff_limit, permit=permit)
             if files >= min_files:
                 zones.append({
                     "path": e.path,

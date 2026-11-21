@@ -5,7 +5,7 @@ Read-only unless the policy is missing; writes plan.tsv only when actions exist.
 param(
     [Parameter(Mandatory)][string]$Root,
     [string]$Probe, [string]$Policy, [string]$Out,
-    [switch]$DryRun, [switch]$Quiet
+    [switch]$DryRun, [switch]$Quiet, [switch]$AllowSystemDrive
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -19,5 +19,6 @@ if ($Policy) { $arguments += @('--policy',$Policy) }
 if ($Out) { $arguments += @('--out',$Out) }
 if ($DryRun) { $arguments += '--dry-run' }
 if ($Quiet) { $arguments += '--quiet' }
+if ($AllowSystemDrive) { $arguments += '--allow-system-drive' }
 Invoke-Organizer -Arguments $arguments
 exit $script:OrganizerExitCode
