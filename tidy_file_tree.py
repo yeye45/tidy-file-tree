@@ -175,6 +175,18 @@ def cmd_history(args):
     return history.main(args)
 
 
+def cmd_progress(args):
+    prog = _load("progress", "progress.py")
+    return prog.main(
+        args.root,
+        lang=args.lang,
+        probe=args.probe,
+        out=args.out,
+        open_browser=not args.no_open,
+        interval=args.interval,
+    )
+
+
 def cmd_ui(args):
     ui = _load("ui", "ui.py")
     argv = ["--root", args.root, "--lang", args.lang]
@@ -382,6 +394,15 @@ def main(argv=None):
     s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
     s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_history)
+
+    s = command("progress", "打开只读实时进度页（S0–S6）", "Open a live read-only progress dashboard (S0-S6)")
+    s.add_argument("root")
+    s.add_argument("--probe", help=text("自定义 probe 目录，默认自动读取状态目录", "Custom probe directory"))
+    s.add_argument("--out", help=text("另存为离线静态进度快照 (.html)", "Save an offline static progress snapshot (.html)"))
+    s.add_argument("--no-open", action="store_true", help=text("只打印本地地址，不自动打开浏览器", "Print local URL without opening browser"))
+    s.add_argument("--interval", type=float, default=1.2, help=text("实时轮询间隔（秒），默认 1.2", "Live polling interval in seconds; default 1.2"))
+    s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
+    s.set_defaults(func=cmd_progress)
 
     s = command("setup", "整理前的一次性确认", "Configure sorting preferences before organizing")
     s.add_argument("action", choices=("ask", "apply", "show"))

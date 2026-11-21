@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>整理实时进度</title>
+<style>
+:root{
+  color-scheme:light dark;
+  --bg:#f5f6f8;--surface:#fff;--surface-2:#f0f2f5;--text:#181c22;--muted:#636b78;
+  --border:#dde1e8;--border-strong:#c4cbd6;
+  --accent:#2563eb;--accent-soft:rgba(37,99,235,.10);--accent-mid:rgba(37,99,235,.22);
+  --good:#15803d;--good-soft:rgba(21,128,61,.11);
+  --warn:#b45309;--warn-soft:rgba(180,83,9,.11);
+  --danger:#dc2626;--danger-soft:rgba(220,38,38,.11);
+  --purple:#7c3aed;--purple-soft:rgba(124,58,237,.11);
+  --shadow:0 1px 2px rgba(15,23,42,.05),0 2px 8px rgba(15,23,42,.04);
+  --radius:12px;--radius-sm:8px;
+}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#0f1217;--surface:#171b22;--surface-2:#1f252e;--text:#eef1f6;--muted:#8f99a8;
+  --border:#2a313c;--border-strong:#3c4656;
+  --accent:#60a5fa;--accent-soft:rgba(96,165,250,.14);--accent-mid:rgba(96,165,250,.28);
+  --good:#4ade80;--good-soft:rgba(74,222,128,.14);
+  --warn:#fbbf24;--warn-soft:rgba(251,191,36,.14);
+  --danger:#f87171;--danger-soft:rgba(248,113,113,.15);
+  --purple:#c084fc;--purple-soft:rgba(192,132,252,.15);
+  --shadow:0 1px 3px rgba(0,0,0,.35);
+}}
+:root[data-theme=dark]{
+  --bg:#0f1217;--surface:#171b22;--surface-2:#1f252e;--text:#eef1f6;--muted:#8f99a8;
+  --border:#2a313c;--border-strong:#3c4656;
+  --accent:#60a5fa;--accent-soft:rgba(96,165,250,.14);--accent-mid:rgba(96,165,250,.28);
+  --good:#4ade80;--good-soft:rgba(74,222,128,.14);
+  --warn:#fbbf24;--warn-soft:rgba(251,191,36,.14);
+  --danger:#f87171;--danger-soft:rgba(248,113,113,.15);
+  --purple:#c084fc;--purple-soft:rgba(192,132,252,.15);
+  --shadow:0 1px 3px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 "Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+.wrap{max-width:1360px;margin:0 auto;padding:18px 22px 40px}
+
+header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.head-left{display:flex;flex-direction:column;gap:5px;min-width:0}
+.title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-.01em}
+.live-pill{display:inline-flex;align-items:center;gap:7px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--surface)}
+.live-pill.working{color:var(--accent);background:var(--accent-soft);border-color:var(--accent-mid)}
+.live-pill.watching{color:var(--good);background:var(--good-soft);border-color:transparent}
+.live-pill.paused{color:var(--muted);background:var(--surface-2)}
+.live-pill.error{color:var(--danger);background:var(--danger-soft);border-color:transparent}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:0 0 auto}
+.live-pill.working .dot,.live-pill.watching .dot{animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.35);opacity:.45}}
+.sys-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;color:var(--warn);background:var(--warn-soft)}
+.meta-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.path-chip{font-family:ui-monospace,Consolas,monospace;font-size:12px;padding:2px 8px;border-radius:6px;background:var(--surface);border:1px solid var(--border);color:var(--text);max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+button,select,input{font:inherit;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 11px;cursor:pointer;transition:border-color .15s,background .15s}
+button:hover,select:hover{border-color:var(--border-strong);background:var(--surface-2)}
+button:disabled{opacity:.45;cursor:not-allowed}
+input[type=search]{cursor:text;min-width:200px}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent-mid);outline-offset:1px;border-color:var(--accent)}
+
+.banner{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:11px 14px;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:14px;font-size:13px}
+.banner.warn{background:var(--warn-soft);border-color:rgba(180,83,9,.28);color:var(--warn)}
+.banner.danger{background:var(--danger-soft);border-color:rgba(220,38,38,.3);color:var(--danger)}
+.banner strong{font-weight:700}
+
+.stepper{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}
+@media(max-width:980px){.stepper{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:600px){.stepper{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.step{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 13px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:6px;position:relative;overflow:hidden;transition:border-color .2s}
+.step.active{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft),var(--shadow)}
+.step.done{border-color:rgba(21,128,61,.35)}
+.step.issue{border-color:rgba(220,38,38,.45)}
+.step-top{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.step-code{font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:5px;background:var(--surface-2);color:var(--muted)}
+.step.active .step-code{background:var(--accent-soft);color:var(--accent)}
+.step.done .step-code{background:var(--good-soft);color:var(--good)}
+.step.issue .step-code{background:var(--danger-soft);color:var(--danger)}
+.step-state{font-size:11.5px;font-weight:600;color:var(--muted)}
+.step.done .step-state{color:var(--good)}
+.step.active .step-state{color:var(--accent)}
+.step.issue .step-state{color:var(--danger)}
+.step-name{font-size:13.5px;font-weight:650}
+.step-val{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;margin-top:2px}
+.bar>i{display:block;height:100%;border-radius:999px;background:var(--accent);transition:width .35s ease}
+.step.done .bar>i{background:var(--good)}
+.step.issue .bar>i{background:var(--danger)}
+
+.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:16px}
+@media(max-width:900px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:11px 14px;box-shadow:var(--shadow)}
+.metric-k{font-size:12px;color:var(--muted);margin-bottom:2px}
+.metric-v{font-size:21px;font-weight:700;letter-spacing:-.02em;line-height:1.25}
+.metric-sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+.tone-good{color:var(--good)}.tone-warn{color:var(--warn)}.tone-accent{color:var(--accent)}
+
+.grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr);gap:16px;align-items:start}
+@media(max-width:960px){.grid{grid-template-columns:1fr}}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 15px;border-bottom:1px solid var(--border)}
+.card-title{font-size:14.5px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px}
+.card-sub{font-size:12px;color:var(--muted)}
+
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:10px 15px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-weight:600}
+.chip.active{background:var(--accent);border-color:var(--accent);color:#fff}
+
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11.5px;font-weight:600;color:var(--muted);padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface);white-space:nowrap}
+td{padding:9px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tr:hover td{background:var(--surface-2)}
+.dir-name{font-weight:600;word-break:break-all}
+.num{font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+
+.tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.tag.pending{background:var(--surface-2);color:var(--muted)}
+.tag.s1_done,.tag.s3_done,.tag.good{background:var(--good-soft);color:var(--good)}
+.tag.s1_split,.tag.s2_done,.tag.working{background:var(--accent-soft);color:var(--accent)}
+.tag.protected,.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.stale{background:var(--purple-soft);color:var(--purple)}
+
+.pager{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 15px;border-top:1px solid var(--border);font-size:12.5px;color:var(--muted)}
+.pager-btns{display:flex;align-items:center;gap:6px}
+
+.side{display:flex;flex-direction:column;gap:14px}
+.artifacts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px 15px}
+.art{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface-2);font-size:12.5px}
+.art.ready{background:var(--surface);border-color:rgba(21,128,61,.3)}
+.art-name{font-family:ui-monospace,Consolas,monospace;font-size:12px;font-weight:600}
+
+.feed{list-style:none;margin:0;padding:8px 0;max-height:460px;overflow-y:auto}
+.feed li{display:flex;align-items:flex-start;gap:10px;padding:8px 15px;border-bottom:1px solid var(--border);font-size:12.5px}
+.feed li:last-child{border-bottom:0}
+.feed li.fresh{animation:flash 1.4s ease}
+@keyframes flash{0%{background:var(--accent-soft)}100%{background:transparent}}
+.feed-stage{flex:0 0 auto;font-size:11px;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--accent-soft);color:var(--accent);margin-top:1px}
+.feed-stage.S5{background:var(--good-soft);color:var(--good)}
+.feed-stage.S0{background:var(--purple-soft);color:var(--purple)}
+.feed-body{min-width:0;flex:1}
+.feed-label{font-weight:600;word-break:break-all}
+.feed-meta{font-size:11.5px;color:var(--muted);margin-top:1px}
+.empty{padding:28px 18px;text-align:center;color:var(--muted);font-size:13px}
+
+.footer-note{margin-top:16px;font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="head-left">
+      <div class="title-row">
+        <h1 id="pageTitle">整理实时进度</h1>
+        <span id="livePill" class="live-pill watching"><span class="dot"></span><span id="liveText">实时监听中</span></span>
+        <span id="sysBadge" class="sys-pill" hidden>系统盘模式 · 外置状态</span>
+      </div>
+      <div class="meta-row">
+        <span id="rootPath" class="path-chip"></span>
+        <span id="updatedMeta"></span>
+      </div>
+    </div>
+    <div class="head-actions">
+      <button id="refreshBtn" type="button">立即刷新</button>
+      <button id="pauseBtn" type="button">暂停刷新</button>
+      <select id="langSelect" aria-label="Language">
+        <option value="zh-CN">中文</option>
+        <option value="en">English</option>
+      </select>
+      <button id="themeBtn" type="button">深浅色</button>
+    </div>
+  </header>
+
+  <div id="unresolvedBanner" class="banner danger" hidden></div>
+  <div id="quarantineBanner" class="banner warn" hidden></div>
+
+  <section id="stepper" class="stepper" aria-label="Pipeline stages"></section>
+  <section id="metrics" class="metrics" aria-label="Key metrics"></section>
+
+  <div class="grid">
+    <section class="card">
+      <div class="card-head">
+        <h2 id="nodesTitle" class="card-title">目录阶段进度</h2>
+        <span id="nodesSub" class="card-sub"></span>
+      </div>
+      <div class="toolbar">
+        <div id="filterChips" class="chips"></div>
+        <input id="searchBox" type="search" placeholder="搜索目录名…">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th id="thDir">目录</th>
+              <th id="thStage">当前阶段</th>
+              <th id="thAction">S1 判定</th>
+              <th id="thUnits">S2 单元</th>
+              <th id="thGroups">S3 归组</th>
+              <th id="thTime">更新时间</th>
+            </tr>
+          </thead>
+          <tbody id="nodesBody"></tbody>
+        </table>
+      </div>
+      <div id="pager" class="pager" hidden>
+        <span id="pagerInfo"></span>
+        <div class="pager-btns">
+          <button id="prevBtn" type="button">上一页</button>
+          <button id="nextBtn" type="button">下一页</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="card">
+        <div class="card-head">
+          <h2 id="artTitle" class="card-title">阶段产物就绪状态</h2>
+          <span id="artSub" class="card-sub"></span>
+        </div>
+        <div id="artList" class="artifacts"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 id="feedTitle" class="card-title">实时动态流</h2>
+          <span id="feedSub" class="card-sub"></span>
+        </div>
+        <ul id="feedList" class="feed"></ul>
+      </section>
+    </aside>
+  </div>
+
+  <div class="footer-note">
+    <span id="stateDirNote"></span>
+    <span id="deleteRuleNote"></span>
+  </div>
+</div>
+
+<script id="progress-config" type="application/json">__PROGRESS_CONFIG__</script>
+<script id="progress-snapshot" type="application/json">__PROGRESS_SNAPSHOT__</script>
+<script>
+const $ = id => document.getElementById(id);
+const cfg = JSON.parse($('progress-config').textContent);
+let snap = JSON.parse($('progress-snapshot').textContent);
+let lang = cfg.lang === 'en' ? 'en' : 'zh-CN';
+const themeKey = 'tidy-file-tree-theme';
+try {
+  const saved = localStorage.getItem(themeKey) ?? localStorage.getItem('packtidy-theme');
+  if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
+} catch (_) {}
+
+const dict = {
+  title: ['整理实时进度', 'Live Organization Progress'],
+  sysBadge: ['系统盘模式 · 外置状态', 'System Drive · External State'],
+  working: ['正在推进 · {stage}', 'Working · {stage}'],
+  watching: ['实时监听中 · 等待下一步', 'Watching · waiting for next step'],
+  paused: ['已暂停自动刷新', 'Auto-refresh paused'],
+  offline: ['静态进度快照', 'Offline progress snapshot'],
+  connError: ['实时连接已断开', 'Live connection interrupted'],
+  refresh: ['立即刷新', 'Refresh'],
+  pause: ['暂停刷新', 'Pause'],
+  resume: ['恢复实时监听', 'Resume live'],
+  theme: ['深浅色', 'Theme'],
+  updatedAt: ['最后检测：{time}', 'Last checked: {time}'],
+  unresolvedAlert: ['检测到 {n} 项未完成的中断事务，请先运行 recover 恢复后再继续执行。', '{n} interrupted transaction(s) pending recovery. Run recover before applying more changes.'],
+  quarantineAlert: ['收押区 {dir} 现有 {n} 项待确认 — 仅隔离未删除。删除严格留到全部整理完成后，按 A/B/C 三组由你确认后再处理。', 'Quarantine folder {dir} holds {n} item(s) — isolated, not deleted. Deletion is strictly deferred to the final step after human A/B/C confirmation.'],
+  s0Name: ['分类确认', 'Setup'], s1Name: ['目录探针', 'Probes'], s2Name: ['单元清点', 'Units'],
+  s3Name: ['跨目录归组', 'Grouping'], s4Name: ['审批拍板', 'Review'], s5Name: ['执行与历史', 'Apply'],
+  stDone: ['已完成', 'Done'], stRun: ['进行中', 'In progress'], stWait: ['待开始', 'Waiting'], stReady: ['已就绪', 'Ready'], stIssue: ['待恢复', 'Needs recovery'],
+  s0Val: ['{ans} 项回答 · {map} 条映射', '{ans} answers · {map} mappings'],
+  s0Wait: ['尚未确认分类体系', 'Not configured yet'],
+  s1Val: ['{done} / {total} 个目录', '{done} / {total} folders'],
+  s2Val: ['{done} / {total} · {units} 个单元', '{done} / {total} · {units} units'],
+  s2None: ['当前无需拆分清点', 'No split folders yet'],
+  s3Val: ['{done} / {total} · {groups} 组', '{done} / {total} · {groups} groups'],
+  s3None: ['等待 S2 清点结果', 'Waiting for S2 units'],
+  s4Val: ['共 {total} 组 · {check} 组待拍板', '{total} groups · {check} need review'],
+  s4Wait: ['等待归组完成后生成建议', 'Waiting for grouping'],
+  s5Val: ['已执行 {done} 项（{batches} 批）', '{done} applied ({batches} batches)'],
+  s5Wait: ['尚未执行真实移动', 'No file moves applied yet'],
+  mCov: ['S6 覆盖率', 'S6 Coverage'], mCovSub: ['遗漏 {missing} 个待补节点', '{missing} node(s) missing'],
+  mUnits: ['已清点最小单元', 'Units Counted'], mUnitsSub: ['跨 {n} 个目录归出 {g} 组', '{g} groups across {n} dirs'],
+  mCheck: ['待人工拍板', 'Needs Decision'], mCheckSub: ['AI 问答 {a}/{t} · 计划 {p} 项', 'AI {a}/{t} · Plan {p} actions'],
+  mExec: ['已执行动作', 'Applied Ops'], mExecSub: ['移动 {m} · 改名 {r} · 建目录 {k}', 'Move {m} · Rename {r} · Mkdir {k}'],
+  mProt: ['已自动保护隔离', 'Protected / Isolated'], mProtSub: ['跳过 {p} 处 · SECRET {s} 处（不列路径）', '{p} skipped · {s} SECRET (redacted)'],
+  nodesTitle: ['目录阶段进度', 'Folder Stage Progress'],
+  nodesSub: ['共 {total} 项', '{total} items'],
+  fAll: ['全部 {n}', 'All {n}'], fPending: ['待探针 {n}', 'Pending {n}'], fWorking: ['拆解中 {n}', 'In progress {n}'], fDone: ['已完成 {n}', 'Done {n}'], fProtected: ['受保护 {n}', 'Protected {n}'],
+  searchHint: ['搜索目录名…', 'Search folders…'],
+  thDir: ['目录', 'Folder'], thStage: ['当前阶段', 'Stage'], thAction: ['S1 判定', 'S1 Action'], thUnits: ['S2 单元', 'S2 Units'], thGroups: ['S3 归组', 'S3 Groups'], thTime: ['更新时间', 'Updated'],
+  stg_pending: ['待探针', 'Pending S1'], stg_s1_done: ['S1 已定', 'S1 Done'], stg_s1_split: ['待 S2 清点', 'Needs S2'],
+  stg_s2_done: ['待 S3 归组', 'Needs S3'], stg_s3_done: ['S3 已归组', 'S3 Grouped'], stg_protected: ['受保护跳过', 'Protected'], stg_stale: ['已迁移/空', 'Moved/Gone'],
+  emptyNodes: ['暂无匹配目录，AI 写入探针结果后这里会自动亮起。', 'No matching folders yet. Entries update live as probes land.'],
+  pagerInfo: ['第 {cur} / {tot} 页（共 {n} 项）', 'Page {cur} / {tot} ({n} items)'],
+  prev: ['上一页', 'Prev'], next: ['下一页', 'Next'],
+  artTitle: ['阶段产物就绪状态', 'Stage Artifacts'],
+  artSub: ['{ready} / {total} 已生成', '{ready} / {total} ready'],
+  artReady: ['已就绪', 'Ready'], artWait: ['未生成', 'Pending'],
+  feedTitle: ['实时动态流', 'Live Activity Feed'],
+  feedSub: ['最近 {n} 条', 'Latest {n}'],
+  emptyFeed: ['还没有新动作落盘。开始扫描、探针或执行后，每一步都会实时显示在这里。', 'No activity recorded yet. Probes, inventories, groups, and moves appear here live.'],
+  ev_setup: ['写入分类体系配置（{detail}）', 'Saved setup policy ({detail})'],
+  ev_probe: ['S1 探针完成 → {detail}', 'S1 probe done → {detail}'],
+  ev_units: ['S2 清点完成 · {detail} 个单元', 'S2 inventory done · {detail} units'],
+  ev_group: ['S3 归组完成 · {detail} 组', 'S3 grouping done · {detail} groups'],
+  ev_decisions: ['S4 建议已计算 · {detail} 组', 'S4 decisions ready · {detail} groups'],
+  ev_plan: ['S4 计划表已生成 · {detail} 项', 'S4 plan generated · {detail} actions'],
+  ev_ui: ['连线决策工作台已生成', 'Wiring review board ready'],
+  ev_history: ['执行历史页已更新', 'Execution history updated'],
+  ev_exec: ['S5 执行 {detail}', 'S5 executed {detail}'],
+  stateDirNote: ['状态目录：{dir}', 'State dir: {dir}'],
+  deleteRule: ['安全边界：执行引擎无删除能力；疑似可删文件仅移入 _待删除，留待全部整理完成后分 A/B/C 三组人工确认。', 'Safety boundary: no delete action in executor; candidates stay in quarantine until final human A/B/C confirmation.'],
+};
+
+const t = (k, v = {}) => (dict[k]?.[Number(lang === 'en')] ?? k).replace(/\{(\w+)\}/g, (_, n) => String(v[n] ?? ''));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff >= 0 && diff < 10) return lang === 'en' ? 'just now' : '刚刚';
+  if (diff >= 10 && diff < 60) return lang === 'en' ? `${Math.floor(diff)}s ago` : `${Math.floor(diff)}秒前`;
+  if (diff >= 60 && diff < 3600) return lang === 'en' ? `${Math.floor(diff / 60)}m ago` : `${Math.floor(diff / 60)}分钟前`;
+  return d.toLocaleTimeString(lang === 'en' ? 'en-US' : 'zh-CN', {hour12: false});
+}
+
+let filter = 'all';
+let page = 0;
+const PAGE_SIZE = 40;
+let paused = false;
+let es = null;
+let connBroken = false;
+const seenFeedKeys = new Set();
+
+function render() {
+  if (!snap) return;
+  document.documentElement.lang = lang;
+  $('langSelect').value = lang;
+  document.title = $('pageTitle').textContent = t('title');
+  $('sysBadge').hidden = !snap.isSystemDrive;
+  $('sysBadge').textContent = t('sysBadge');
+  $('rootPath').textContent = snap.root;
+  $('rootPath').title = snap.root;
+  $('updatedMeta').textContent = t('updatedAt', {time: fmtTime(snap.captured)});
+  $('refreshBtn').textContent = t('refresh');
+  $('refreshBtn').hidden = !cfg.live;
+  $('pauseBtn').hidden = !cfg.live;
+  $('pauseBtn').textContent = t(paused ? 'resume' : 'pause');
+  $('themeBtn').textContent = t('theme');
+
+  const pill = $('livePill');
+  pill.className = 'live-pill ' + (!cfg.live ? 'paused' : connBroken ? 'error' : paused ? 'paused' : snap.recentlyActive ? 'working' : 'watching');
+  $('liveText').textContent = !cfg.live ? t('offline') : connBroken ? t('connError') : paused ? t('paused') : snap.recentlyActive ? t('working', {stage: snap.currentStage}) : t('watching');
+
+  const s = snap.stages;
+  if (s.s5.unresolved > 0) {
+    $('unresolvedBanner').hidden = false;
+    $('unresolvedBanner').innerHTML = `<strong>⚠</strong> <span>${esc(t('unresolvedAlert', {n: s.s5.unresolved}))}</span>`;
+  } else {
+    $('unresolvedBanner').hidden = true;
+  }
+
+  if (snap.quarantine && snap.quarantine.count > 0) {
+    $('quarantineBanner').hidden = false;
+    $('quarantineBanner').innerHTML = `<span>🛡 ${esc(t('quarantineAlert', {dir: snap.quarantine.dir || '_待删除', n: snap.quarantine.count}))}</span>`;
+  } else {
+    $('quarantineBanner').hidden = true;
+  }
+
+  const pct = (a, b) => b > 0 ? Math.min(100, Math.round((a / b) * 100)) : 0;
+  const stepDefs = [
+    {
+      code: 'S0', name: t('s0Name'),
+      state: s.s0.done ? 'done' : (snap.currentStage === 'idle' ? 'active' : 'wait'),
+      val: s.s0.done ? t('s0Val', {ans: s.s0.answered, map: s.s0.mappings}) : t('s0Wait'),
+      bar: s.s0.done ? 100 : 0,
+    },
+    {
+      code: 'S1', name: t('s1Name'),
+      state: s.s1.total > 0 && s.s1.done >= s.s1.total ? 'done' : (snap.currentStage === 'S1' || s.s1.done > 0 ? 'active' : 'wait'),
+      val: t('s1Val', {done: s.s1.done, total: s.s1.total}),
+      bar: pct(s.s1.done, s.s1.total),
+    },
+    {
+      code: 'S2', name: t('s2Name'),
+      state: s.s2.total > 0 && s.s2.done >= s.s2.total ? 'done' : (snap.currentStage === 'S2' || s.s2.done > 0 ? 'active' : 'wait'),
+      val: s.s2.total > 0 ? t('s2Val', {done: s.s2.done, total: s.s2.total, units: s.s2.units}) : t('s2None'),
+      bar: s.s2.total > 0 ? pct(s.s2.done, s.s2.total) : (s.s1.total > 0 && s.s1.done >= s.s1.total ? 100 : 0),
+    },
+    {
+      code: 'S3', name: t('s3Name'),
+      state: s.s3.total > 0 && s.s3.done >= s.s3.total ? 'done' : (snap.currentStage === 'S3' || s.s3.done > 0 ? 'active' : 'wait'),
+      val: s.s3.total > 0 ? t('s3Val', {done: s.s3.done, total: s.s3.total, groups: s.s3.groups}) : t('s3None'),
+      bar: s.s3.total > 0 ? pct(s.s3.done, s.s3.total) : (s.s1.total > 0 && s.s1.done >= s.s1.total && s.s2.total === 0 ? 100 : 0),
+    },
+    {
+      code: 'S4', name: t('s4Name'),
+      state: s.s4.ready ? (s.s5.done > 0 ? 'done' : 'active') : 'wait',
+      val: s.s4.ready ? t('s4Val', {total: s.s4.totalGroups, check: s.s4.needCheck}) : t('s4Wait'),
+      bar: s.s4.ready ? (s.s4.totalGroups > 0 ? Math.max(25, pct(s.s4.totalGroups - s.s4.needCheck, s.s4.totalGroups)) : 100) : 0,
+    },
+    {
+      code: 'S5', name: t('s5Name'),
+      state: s.s5.unresolved > 0 ? 'issue' : s.s5.done > 0 ? 'done' : (snap.currentStage === 'S5' ? 'active' : 'wait'),
+      val: s.s5.done > 0 ? t('s5Val', {done: s.s5.done, batches: s.s5.batches}) : t('s5Wait'),
+      bar: s.s5.done > 0 ? 100 : 0,
+    },
+  ];
+  $('stepper').innerHTML = stepDefs.map(st => {
+    const lbl = st.state === 'done' ? t('stDone') : st.state === 'issue' ? t('stIssue') : st.state === 'active' ? t('stRun') : t('stWait');
+    return `<div class="step ${st.state}">
+      <div class="step-top"><span class="step-code">${st.code}</span><span class="step-state">${esc(lbl)}</span></div>
+      <div class="step-name">${esc(st.name)}</div>
+      <div class="step-val" title="${esc(st.val)}">${esc(st.val)}</div>
+      <div class="bar"><i style="width:${st.bar}%"></i></div>
+    </div>`;
+  }).join('');
+
+  const covPct = s.s6.total > 0 ? `${pct(s.s6.covered, s.s6.total)}%` : '—';
+  const metricDefs = [
+    [t('mCov'), covPct, t('mCovSub', {missing: s.s6.missing}), s.s6.ok ? 'tone-good' : ''],
+    [t('mUnits'), s.s2.units, t('mUnitsSub', {n: s.s3.done, g: s.s3.groups}), ''],
+    [t('mCheck'), s.s4.needCheck, t('mCheckSub', {a: s.s4.aiAnswered, t: s.s4.aiTotal, p: s.s4.planCount}), s.s4.needCheck > 0 ? 'tone-warn' : ''],
+    [t('mExec'), s.s5.done, t('mExecSub', {m: s.s5.moves, r: s.s5.renames, k: s.s5.mkdirs}), s.s5.done > 0 ? 'tone-accent' : ''],
+    [t('mProt'), snap.protectedSkipped + snap.secretCount, t('mProtSub', {p: snap.protectedSkipped, s: snap.secretCount}), ''],
+  ];
+  $('metrics').innerHTML = metricDefs.map(([k, v, sub, cls]) =>
+    `<div class="metric"><div class="metric-k">${esc(k)}</div><div class="metric-v ${cls}">${esc(v)}</div><div class="metric-sub">${esc(sub)}</div></div>`
+  ).join('');
+
+  // Nodes table
+  const allNodes = snap.nodes || [];
+  const counts = {
+    all: allNodes.length,
+    pending: allNodes.filter(n => n.stage === 'pending').length,
+    working: allNodes.filter(n => n.stage === 's1_split' || n.stage === 's2_done').length,
+    done: allNodes.filter(n => n.stage === 's1_done' || n.stage === 's3_done' || n.stage === 'stale').length,
+    protected: allNodes.filter(n => n.stage === 'protected').length,
+  };
+  $('nodesTitle').textContent = t('nodesTitle');
+  $('nodesSub').textContent = t('nodesSub', {total: allNodes.length});
+  $('searchBox').placeholder = t('searchHint');
+  for (const id of ['thDir', 'thStage', 'thAction', 'thUnits', 'thGroups', 'thTime']) $(id).textContent = t(id);
+
+  $('filterChips').innerHTML = [
+    ['all', t('fAll', {n: counts.all})],
+    ['pending', t('fPending', {n: counts.pending})],
+    ['working', t('fWorking', {n: counts.working})],
+    ['done', t('fDone', {n: counts.done})],
+    ['protected', t('fProtected', {n: counts.protected})],
+  ].map(([k, lbl]) => `<button type="button" class="chip${filter === k ? ' active' : ''}" data-filter="${k}">${esc(lbl)}</button>`).join('');
+
+  const q = $('searchBox').value.trim().toLowerCase();
+  const filtered = allNodes.filter(n => {
+    if (filter === 'pending' && n.stage !== 'pending') return false;
+    if (filter === 'working' && n.stage !== 's1_split' && n.stage !== 's2_done') return false;
+    if (filter === 'done' && n.stage !== 's1_done' && n.stage !== 's3_done' && n.stage !== 'stale') return false;
+    if (filter === 'protected' && n.stage !== 'protected') return false;
+    if (q && !n.name.toLowerCase().includes(q) && !(n.action || '').toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const numPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  page = Math.max(0, Math.min(page, numPages - 1));
+  const slice = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  if (!slice.length) {
+    $('nodesBody').innerHTML = `<tr><td colspan="6" class="empty">${esc(t('emptyNodes'))}</td></tr>`;
+  } else {
+    $('nodesBody').innerHTML = slice.map(n => `<tr>
+      <td class="dir-name">${esc(n.name)}</td>
+      <td><span class="tag ${esc(n.stage)}">${esc(t('stg_' + n.stage))}</span></td>
+      <td class="num">${esc(n.action || '—')}</td>
+      <td class="num">${n.units ?? '—'}</td>
+      <td class="num">${n.groups ?? '—'}</td>
+      <td class="num">${esc(fmtTime(n.updatedAt))}</td>
+    </tr>`).join('');
+  }
+  $('pager').hidden = numPages <= 1;
+  $('pagerInfo').textContent = t('pagerInfo', {cur: page + 1, tot: numPages, n: filtered.length});
+  $('prevBtn').textContent = t('prev');
+  $('nextBtn').textContent = t('next');
+  $('prevBtn').disabled = page <= 0;
+  $('nextBtn').disabled = page + 1 >= numPages;
+
+  // Artifacts card
+  const artEntries = [
+    ['policy.json', snap.artifacts?.policy],
+    ['decisions.json', snap.artifacts?.decisions],
+    ['ui.html', snap.artifacts?.ui],
+    ['plan.tsv', snap.artifacts?.plan],
+    ['journal.tsv', snap.artifacts?.journal],
+    ['history.html', snap.artifacts?.history],
+  ];
+  const readyArts = artEntries.filter(([, p]) => Boolean(p)).length;
+  $('artTitle').textContent = t('artTitle');
+  $('artSub').textContent = t('artSub', {ready: readyArts, total: artEntries.length});
+  $('artList').innerHTML = artEntries.map(([name, path]) =>
+    `<div class="art${path ? ' ready' : ''}" title="${esc(path || '')}">
+      <span class="art-name">${esc(name)}</span>
+      <span class="tag ${path ? 'good' : 'pending'}">${esc(t(path ? 'artReady' : 'artWait'))}</span>
+    </div>`
+  ).join('');
+
+  // Activity feed
+  const feed = snap.recent || [];
+  $('feedTitle').textContent = t('feedTitle');
+  $('feedSub').textContent = t('feedSub', {n: feed.length});
+  if (!feed.length) {
+    $('feedList').innerHTML = `<li class="empty">${esc(t('emptyFeed'))}</li>`;
+  } else {
+    const firstRender = seenFeedKeys.size === 0;
+    $('feedList').innerHTML = feed.map(ev => {
+      const fkey = `${ev.stage}|${ev.kind}|${ev.label}|${ev.time}`;
+      const isFresh = !firstRender && !seenFeedKeys.has(fkey);
+      seenFeedKeys.add(fkey);
+      const descKey = dict['ev_' + ev.kind] ? 'ev_' + ev.kind : 'ev_exec';
+      return `<li class="${isFresh ? 'fresh' : ''}">
+        <span class="feed-stage ${esc(ev.stage)}">${esc(ev.stage)}</span>
+        <div class="feed-body">
+          <div class="feed-label">${esc(ev.label)}</div>
+          <div class="feed-meta">${esc(t(descKey, {detail: ev.detail}))} · ${esc(fmtTime(ev.time))}</div>
+        </div>
+      </li>`;
+    }).join('');
+  }
+
+  $('stateDirNote').textContent = t('stateDirNote', {dir: snap.stateDir});
+  $('deleteRuleNote').textContent = t('deleteRule');
+}
+
+async function fetchNow() {
+  if (!cfg.live) return;
+  try {
+    const res = await fetch('snapshot', {cache: 'no-store'});
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const next = await res.json();
+    if (!next.error) {
+      snap = next;
+      connBroken = false;
+      render();
+    }
+  } catch (_) {
+    connBroken = true;
+    render();
+  }
+}
+
+function startStream() {
+  if (!cfg.live || paused) return;
+  if (es) es.close();
+  connBroken = false;
+  es = new EventSource('events');
+  es.onmessage = event => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.event === 'stopped') {
+        connBroken = true;
+        es.close();
+      } else {
+        snap = data;
+        connBroken = false;
+      }
+      render();
+    } catch (_) {}
+  };
+  es.onerror = () => {
+    if (!paused) {
+      connBroken = true;
+      render();
+    }
+  };
+}
+
+$('filterChips').addEventListener('click', e => {
+  const btn = e.target.closest('[data-filter]');
+  if (!btn) return;
+  filter = btn.dataset.filter;
+  page = 0;
+  render();
+});
+$('searchBox').addEventListener('input', () => { page = 0; render(); });
+$('prevBtn').addEventListener('click', () => { page--; render(); });
+$('nextBtn').addEventListener('click', () => { page++; render(); });
+$('refreshBtn').addEventListener('click', fetchNow);
+$('pauseBtn').addEventListener('click', () => {
+  paused = !paused;
+  if (paused) { if (es) es.close(); es = null; }
+  else { fetchNow(); startStream(); }
+  render();
+});
+$('langSelect').addEventListener('change', e => { lang = e.target.value; render(); });
+$('themeBtn').addEventListener('click', () => {
+  const cur = document.documentElement.dataset.theme;
+  const dark = cur ? cur === 'dark' : matchMedia('(prefers-color-scheme:dark)').matches;
+  const next = dark ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem(themeKey, next); } catch (_) {}
+});
+
+render();
+if (cfg.live) startStream();
+</script>
+</body>
+</html>
