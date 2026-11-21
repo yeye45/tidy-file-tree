@@ -41,9 +41,11 @@ header.topbar h1{font-size:18px;letter-spacing:-.01em}
 .zoom-label{font-size:12px;color:var(--muted);min-width:38px;text-align:center;font-variant-numeric:tabular-nums}
 .workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,430px);min-height:0;overflow:hidden}
 .canvas-pane{display:grid;grid-template-rows:minmax(0,1fr);min-width:0;min-height:0;border-right:1px solid var(--line);position:relative}
-.viewport{overflow:auto;min-height:0;background:var(--bg);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:16px 16px;cursor:grab}
+.viewport{overflow:hidden;min-height:0;background:var(--bg);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:16px 16px;cursor:grab;touch-action:none;position:relative}
 .viewport.panning{cursor:grabbing;user-select:none}
-.board-stage{transform-origin:0 0;min-width:100%;min-height:100%;display:inline-block}
+.viewport.panning *{cursor:grabbing!important}
+.board-stage{transform-origin:0 0;position:absolute;top:0;left:0;will-change:transform}
+.canvas-hint{position:absolute;left:12px;bottom:10px;padding:3px 9px;border-radius:99px;font-size:11.5px;color:var(--muted);background:color-mix(in srgb,var(--surface) 88%,transparent);border:1px solid var(--line);pointer-events:none;z-index:4;backdrop-filter:blur(4px)}
 .board{--node-width:232px;--gap:36px;position:relative;padding:18px 44px 48px 18px}
 .wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 .wire-path{fill:none;stroke:var(--wire);stroke-width:1.4;opacity:.68}
@@ -121,6 +123,9 @@ header.topbar h1{font-size:18px;letter-spacing:-.01em}
 }
 @media(max-width:620px){
   header.topbar,.subbar{padding:9px 11px}
+  .viewport{overflow:auto;cursor:default;touch-action:auto}
+  .board-stage{position:static;transform:none!important}
+  .canvas-hint{display:none}
   .board{width:auto!important;padding:11px}
   .wires{display:none}
   .tree li{display:block;position:relative}
@@ -161,7 +166,7 @@ header.topbar h1{font-size:18px;letter-spacing:-.01em}
     <button type="button" id="expand-all"></button>
     <div class="zoom-group">
       <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
-      <span class="zoom-label" id="zoom-label">100%</span>
+      <button type="button" id="zoom-label" class="zoom-label" title="Reset 100%">100%</button>
       <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
       <button type="button" id="zoom-fit"></button>
     </div>
@@ -173,6 +178,7 @@ header.topbar h1{font-size:18px;letter-spacing:-.01em}
       <div class="board-stage" id="board-stage">
         <div class="board" id="board"><svg class="wires" id="wires" aria-hidden="true"></svg><ul class="tree" id="tree"></ul></div>
       </div>
+      <div class="canvas-hint" id="canvas-hint"></div>
     </div>
   </section>
   <aside class="inspector">
@@ -208,6 +214,7 @@ const labels = {
   filterAll:['全部 {n}','All {n}'], filterReview:['待复核 {n}','Needs review {n}'], filterJudged:['已判断 {n}','Assessed {n}'],
   filterSkipped:['受保护 {n}','Protected {n}'], filterDrafts:['有草稿 {n}','Drafts {n}'],
   searchHint:['搜索目录名…','Search folders…'], expandAll:['全部展开','Expand all'], collapseDeep:['收起深层','Collapse deep'], zoomFit:['适应','Fit'],
+  canvasHint:['滚轮自由缩放 · 左键拖拽任意平移 · 双击空白居中适应','Scroll to zoom · Drag anywhere to pan · Double-click to fit'],
   showAllRows:['显示全部 {count} 行','Show all {count} rows'],
   moreChildren:['展开其余 {count} 个子目录','Show {count} more subfolders'],
   collapseNode:['收起子目录','Collapse children'], expandNode:['展开子目录','Expand children'],
@@ -286,6 +293,9 @@ let overall = 'scan';
 let draftSelection;
 let statusFilter = 'all';
 let zoom = 1;
+let panX = 12;
+let panY = 12;
+let suppressNextClick = false;
 let matchedIds = [];
 let matchCursor = 0;
 const expandedDraftTables = new Set();
@@ -653,6 +663,7 @@ function applyChrome() {
   $('ai-export').textContent = t('aiExport');
   $('ai-import').textContent = t('aiImport');
   $('zoom-fit').textContent = t('zoomFit');
+  $('canvas-hint').textContent = t('canvasHint');
   for (const node of nodes.values()) refreshNodeCard(node);
   if (drafts.size || inventories.size) {
     const chooser = $('draft-node');
@@ -680,6 +691,8 @@ function start() {
   $('tree').replaceChildren();
   $('root').textContent = '';
   $('ai-message').hidden = true;
+  zoom = 1; panX = 12; panY = 12;
+  applyCanvasTransform();
   overall = 'scan';
   const source = new EventSource('events');
   stream = source;
@@ -709,34 +722,78 @@ function start() {
   };
   render();
 }
-function setZoom(next) {
-  zoom = Math.max(0.5, Math.min(1.4, Math.round(next * 20) / 20));
-  $('board-stage').style.transform = zoom === 1 ? '' : `scale(${zoom})`;
+function applyCanvasTransform() {
+  const stage = $('board-stage');
+  const vp = $('viewport');
+  stage.style.transform = `translate3d(${panX.toFixed(1)}px,${panY.toFixed(1)}px,0) scale(${zoom})`;
+  const grid = Math.max(8, Math.min(48, 16 * zoom));
+  vp.style.backgroundSize = `${grid.toFixed(1)}px ${grid.toFixed(1)}px`;
+  vp.style.backgroundPosition = `${(panX % grid).toFixed(1)}px ${(panY % grid).toFixed(1)}px`;
   $('zoom-label').textContent = Math.round(zoom * 100) + '%';
-  render();
+}
+function setZoom(next, anchorX, anchorY) {
+  const vp = $('viewport');
+  const clamped = Math.max(0.2, Math.min(3.0, Math.round(next * 100) / 100));
+  const mx = anchorX ?? vp.clientWidth / 2;
+  const my = anchorY ?? vp.clientHeight / 2;
+  const wx = (mx - panX) / zoom;
+  const wy = (my - panY) / zoom;
+  zoom = clamped;
+  panX = mx - wx * zoom;
+  panY = my - wy * zoom;
+  applyCanvasTransform();
 }
 function fitZoom() {
   const vp = $('viewport');
   const board = $('board');
-  const bw = board.scrollWidth || 1, bh = board.scrollHeight || 1;
-  const ratio = Math.min((vp.clientWidth - 16) / bw, (vp.clientHeight - 16) / bh, 1);
-  setZoom(ratio);
-  vp.scrollTo({left:0, top:0, behavior:'smooth'});
+  const bw = board.offsetWidth || 1, bh = board.offsetHeight || 1;
+  const ratio = Math.max(0.2, Math.min(1.0, Math.min((vp.clientWidth - 28) / bw, (vp.clientHeight - 28) / bh)));
+  zoom = Math.round(ratio * 100) / 100;
+  panX = Math.max(12, (vp.clientWidth - bw * zoom) / 2);
+  panY = Math.max(12, (vp.clientHeight - bh * zoom) / 2);
+  applyCanvasTransform();
 }
-$('zoom-in').addEventListener('click',() => setZoom(zoom + 0.1));
-$('zoom-out').addEventListener('click',() => setZoom(zoom - 0.1));
+function centerOnNode(id) {
+  const node = nodes.get(id);
+  if (!node) return;
+  if (!matchMedia('(min-width:621px)').matches) {
+    node.button.scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
+    return;
+  }
+  const vpRect = $('viewport').getBoundingClientRect();
+  const rect = node.button.getBoundingClientRect();
+  panX += (vpRect.left + vpRect.width / 2) - (rect.left + rect.width / 2);
+  panY += (vpRect.top + vpRect.height / 2) - (rect.top + rect.height / 2);
+  applyCanvasTransform();
+}
+$('zoom-in').addEventListener('click',() => setZoom(zoom * 1.18));
+$('zoom-out').addEventListener('click',() => setZoom(zoom / 1.18));
+$('zoom-label').addEventListener('click',() => { zoom = 1; panX = 12; panY = 12; applyCanvasTransform(); });
 $('zoom-fit').addEventListener('click',fitZoom);
 $('viewport').addEventListener('wheel', event => {
-  if (!event.ctrlKey && !event.metaKey) return;
+  if (!matchMedia('(min-width:621px)').matches) return;
   event.preventDefault();
-  setZoom(zoom + (event.deltaY < 0 ? 0.1 : -0.1));
+  if (event.shiftKey && !event.ctrlKey && !event.metaKey) {
+    panX -= event.deltaY || event.deltaX;
+    applyCanvasTransform();
+    return;
+  }
+  const rect = $('viewport').getBoundingClientRect();
+  const mx = event.clientX - rect.left;
+  const my = event.clientY - rect.top;
+  const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+  setZoom(zoom * factor, mx, my);
 }, {passive: false});
+$('viewport').addEventListener('dblclick', event => {
+  if (event.target.closest('button')) return;
+  fitZoom();
+});
 function jumpMatch(delta) {
   if (!matchedIds.length) return;
   matchCursor = (matchCursor + delta + matchedIds.length) % matchedIds.length;
   const id = matchedIds[matchCursor];
   selectNode(id);
-  nodes.get(id)?.button.scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
+  requestAnimationFrame(() => centerOnNode(id));
 }
 $('match-prev').addEventListener('click',() => jumpMatch(-1));
 $('match-next').addEventListener('click',() => jumpMatch(1));
@@ -792,30 +849,56 @@ $('theme').addEventListener('click',() => {
   document.documentElement.dataset.theme = next;
   try {localStorage.setItem(themeKey,next);} catch (_) {}
 });
-// Canvas drag-to-pan on empty background
+// Free infinite-canvas drag-to-pan (works anywhere on canvas, including dragging on cards > 5px)
 let pan = null;
 $('viewport').addEventListener('pointerdown',event => {
-  if (event.button !== 0 || event.target.closest('button')) return;
-  pan = {id:event.pointerId,x:event.clientX,y:event.clientY,sl:$('viewport').scrollLeft,st:$('viewport').scrollTop};
-  $('viewport').classList.add('panning');
-  $('viewport').setPointerCapture(event.pointerId);
+  if (!matchMedia('(min-width:621px)').matches) return;
+  if (event.button !== 0 && event.button !== 1) return;
+  if (event.button === 1) event.preventDefault();
+  pan = {
+    id: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    px: panX,
+    py: panY,
+    moved: event.button === 1,
+  };
+  if (pan.moved) {
+    $('viewport').classList.add('panning');
+    $('viewport').setPointerCapture(event.pointerId);
+  }
 });
 $('viewport').addEventListener('pointermove',event => {
   if (!pan || event.pointerId !== pan.id) return;
-  $('viewport').scrollLeft = pan.sl - (event.clientX - pan.x);
-  $('viewport').scrollTop = pan.st - (event.clientY - pan.y);
+  const dx = event.clientX - pan.x;
+  const dy = event.clientY - pan.y;
+  if (!pan.moved && Math.hypot(dx, dy) > 5) {
+    pan.moved = true;
+    $('viewport').classList.add('panning');
+    $('viewport').setPointerCapture(event.pointerId);
+  }
+  if (pan.moved) {
+    panX = pan.px + dx;
+    panY = pan.py + dy;
+    applyCanvasTransform();
+  }
 });
-$('viewport').addEventListener('pointerup',event => {
-  if (!pan || event.pointerId !== pan.id) return;
+function endPan(event) {
+  if (!pan || (event && event.pointerId !== pan.id)) return;
+  if (pan.moved) {
+    suppressNextClick = true;
+    setTimeout(() => { suppressNextClick = false; }, 0);
+  }
   pan = null;
   $('viewport').classList.remove('panning');
-});
-$('viewport').addEventListener('pointercancel',() => {pan = null; $('viewport').classList.remove('panning');});
+}
+$('viewport').addEventListener('pointerup', endPan);
+$('viewport').addEventListener('pointercancel', endPan);
 $('draft-node').addEventListener('change',event => {
   if (event.target.value === '') return;
   const id = Number(event.target.value);
   selectNode(id);
-  nodes.get(id).button.scrollIntoView({block:'nearest',inline:'nearest'});
+  requestAnimationFrame(() => centerOnNode(id));
 });
 function downloadJson(filename, data) {
   const link = document.createElement('a');
@@ -897,6 +980,7 @@ $('draft-download').addEventListener('click',() => {
 });
 $('rescan').addEventListener('click',start);
 $('tree').addEventListener('click',event => {
+  if (suppressNextClick) { event.preventDefault(); event.stopPropagation(); return; }
   const more = event.target.closest('button[data-more-branch]');
   if (more) {
     const id = Number(more.dataset.moreBranch);
@@ -942,6 +1026,7 @@ $('tree').addEventListener('keydown',event => {
   }
 });
 window.addEventListener('resize',render);
+applyCanvasTransform();
 applyChrome();
 start();
 </script>
