@@ -28,7 +28,7 @@ jobs:
       - name: Run generated-board browser regression
         env:
           TIDY_FILE_TREE_BROWSER_USE_INSTALLED: '1'
-        run: python -B -m unittest discover -s tests -p test_browser_regression.py -v
+        run: python -B tests/run_ci.py -p test_browser_regression.py
 
   windows-cross-volume:
     # 这个 job 需要一块真实的第二个 NTFS 卷。
@@ -61,7 +61,7 @@ jobs:
           Write-Host "使用已有的 NTFS 卷 $target；不创建、不格式化任何卷。"
       - name: Run real cross-volume NTFS acceptance tests
         if: steps.pick.outputs.found == '1'
-        run: python -B -m unittest discover -s tests -p test_cross_volume.py -v
+        run: python -B tests/run_ci.py -p test_cross_volume.py
 
   test-and-package:
     strategy:
@@ -76,7 +76,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Run unittest suite
-        run: python -B -m unittest discover -s tests -v
+        run: python -B tests/run_ci.py
       - name: Run decision baseline
         run: python -B tidy_file_tree.py verify run cases/baseline.json
       - name: Build wheel and inspect its layout
@@ -97,7 +97,7 @@ jobs:
           sys.path.insert(0, str(target))
           entries = {e.name: e.value for e in distribution('tidy-file-tree').entry_points if e.group == 'console_scripts'}
           assert entries == {'tidy-file-tree': 'tidy_file_tree:main'}, entries
-          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'tidy-file-tree-smoke'
+          work = pathlib.Path(os.environ.pop('RUNNER_TEMP')) / 'tidy-file-tree-smoke'
           (work / 'input').mkdir(parents=True, exist_ok=True)
           (work / 'input' / 'sample.txt').write_text('smoke\n', encoding='utf-8')
           os.chdir(work)

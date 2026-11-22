@@ -659,9 +659,10 @@ class TransactionCase(unittest.TestCase):
             self.assertEqual(prepared, [])
             self.assertEqual(len(blocked), 1)
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows AppData and user profile paths')
     def test_appdata_and_dev_cache_cleanup_mode_is_narrowly_scoped(self):
         from safety import nested_verdict
-        sys_drive = (os.environ.get('SystemDrive', 'C:').rstrip('\\/') + '\\') if os.name == 'nt' else '/tmp/'
+        sys_drive = os.environ.get('SystemDrive', 'C:').rstrip('\\/') + '\\'
         safe_caches = (
             sys_drive + 'Users\\alice\\AppData\\Local\\Temp\\installer.tmp',
             sys_drive + 'Users\\alice\\AppData\\Local\\CrashDumps\\app.dmp',
