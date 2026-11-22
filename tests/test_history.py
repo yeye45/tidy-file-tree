@@ -13,7 +13,8 @@ from unittest.mock import patch
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / 'core'))
 import executor
-from history import write_preview
+import history as history_mod
+from history import make_server, trace_path, write_preview
 from safety import MARKER_FIELDS, SafetyError, encode_tsv
 
 
@@ -162,3 +163,167 @@ class ExecutionHistoryTest(unittest.TestCase):
         with patch.dict(os.environ, self.env), self.assertRaises(SafetyError):
             write_preview(executor.Journal(self.root), report, [], [], [{'root': str(external)}], False, 'en')
         self.assertFalse(report.exists())
+
+    def test_explorer_present_overlay_excludes_secrets_and_tracks_destinations(self):
+        dl = self.root / 'Downloads'
+        dl.mkdir()
+        keep_file = dl / 'keep-me.txt'
+        keep_file.write_text('stay', encoding='utf-8')
+        moved_dir = dl / 'Toolkit'
+        (moved_dir / 'sub').mkdir(parents=True)
+        (moved_dir / 'sub' / 'tool.exe').write_bytes(b'bin')
+        secret_file = dl / 'secret-token.pem'
+        secret_file.write_text('do-not-leak', encoding='utf-8')
+        dest = self.root / 'Apps'
+        dest.mkdir()
+
+        self.journal_path.parent.mkdir(exist_ok=True)
+        (self.journal_path.parent / 'markers.tsv').write_bytes(encode_tsv([
+            {'path': str(secret_file), 'kind': 'SECRET', 'by': 'user', 'note': '', 'ts': ''},
+        ], MARKER_FIELDS))
+
+        actions = self.root / 'actions.tsv'
+        actions.write_text(f'op\tsrc\tdst\treason\nmove\t{moved_dir}\t{dest}\tfixture\n', encoding='utf-8')
+        self.cli('apply', self.root, '--actions', actions)
+
+        html, payload = self.snapshot()
+        self.assertNotIn('secret-token.pem', html)
+        self.assertIn('Downloads', payload['present'])
+        dl_names = [entry[0] for entry in payload['present']['Downloads']]
+        self.assertIn('keep-me.txt', dl_names)
+        self.assertNotIn('secret-token.pem', dl_names)
+        # Moved folder's destination metadata records it as an existing folder
+        dest_key = str(dest / 'Toolkit')
+        self.assertTrue(payload['destinationMeta'][dest_key]['exists'])
+        self.assertTrue(payload['destinationMeta'][dest_key]['isDir'])
+
+        # Trace a nested child inside the moved folder using its pre-move path
+        traced = trace_path(payload['operations'], self.root, dl / 'Toolkit' / 'sub' / 'tool.exe')
+        self.assertEqual(traced['status'], 'move')
+        self.assertEqual(Path(traced['current']), dest / 'Toolkit' / 'sub' / 'tool.exe')
+        self.assertEqual(len(traced['steps']), 1)
+        self.assertTrue(traced['steps'][0]['inherited'])
+
+    def test_trace_path_handles_multihop_rename_and_undo(self):
+        dl = self.root / 'Downloads'
+        dl.mkdir()
+        target_dir = self.root / 'Archive'
+        target_dir.mkdir()
+        item = dl / 'clip.mp4'
+        item.write_bytes(b'vid')
+
+        actions = self.root / 'actions.tsv'
+        actions.write_text(f'op\tsrc\tdst\treason\nmove\t{item}\t{target_dir}\tstep1\n', encoding='utf-8')
+        self.cli('apply', self.root, '--actions', actions)
+        moved = target_dir / 'clip.mp4'
+        actions.write_text(f'op\tsrc\tdst\treason\nrename\t{moved}\tclip-final.mp4\tstep2\n', encoding='utf-8')
+        self.cli('apply', self.root, '--actions', actions)
+
+        _, payload = self.snapshot()
+        traced = trace_path(payload['operations'], self.root, item)
+        self.assertEqual(traced['status'], 'move')
+        self.assertEqual(Path(traced['current']), target_dir / 'clip-final.mp4')
+        self.assertEqual(len(traced['steps']), 2)
+
+        # Undo both batches in reverse order -> traces back to original location with status 'undone'
+        run1 = payload['operations'][0]['run']
+        run2 = payload['operations'][1]['run']
+        self.cli('undo', '--journal', self.journal_path, '--run-id', run2)
+        self.cli('undo', '--journal', self.journal_path, '--run-id', run1)
+        _, after_undo = self.snapshot()
+        traced_undone = trace_path(after_undo['operations'], self.root, item)
+        self.assertEqual(traced_undone['status'], 'undone')
+        self.assertEqual(Path(traced_undone['current']), item)
+
+    def test_live_history_server_ls_stat_and_reveal_guards(self):
+        import threading
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+
+        dl = self.root / 'Downloads'
+        dl.mkdir()
+        item = dl / 'mod.zip'
+        item.write_bytes(b'zip')
+        secret = dl / 'private.key'
+        secret.write_text('secret', encoding='utf-8')
+        dest = self.root / 'Mods'
+        dest.mkdir()
+
+        self.journal_path.parent.mkdir(exist_ok=True)
+        (self.journal_path.parent / 'markers.tsv').write_bytes(encode_tsv([
+            {'path': str(secret), 'kind': 'SECRET', 'by': 'user', 'note': '', 'ts': ''},
+        ], MARKER_FIELDS))
+
+        actions = self.root / 'actions.tsv'
+        actions.write_text(f'op\tsrc\tdst\treason\nmove\t{item}\t{dest}\tfixture\n', encoding='utf-8')
+        self.cli('apply', self.root, '--actions', actions)
+
+        with patch.dict(os.environ, self.env):
+            journal = executor.Journal(self.root)
+            server, url = make_server(journal, journal.protection(), lang='zh-CN')
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                # 1. Main page loads with live=true and connect-src 'self'
+                with urllib.request.urlopen(url) as resp:
+                    html = resp.read().decode('utf-8')
+                    self.assertIn("connect-src 'self'", resp.headers.get('Content-Security-Policy', ''))
+                self.assertIn('"live": true', html)
+                self.assertNotIn('private.key', html)
+
+                # 2. /ls lists directory and excludes SECRET
+                ls_url = url + 'ls?path=' + urllib.parse.quote(str(dl))
+                with urllib.request.urlopen(ls_url) as resp:
+                    ls_data = json.loads(resp.read().decode('utf-8'))
+                self.assertTrue(ls_data['ok'])
+                self.assertNotIn('private.key', [e[0] for e in ls_data['entries']])
+
+                # 3. /stat reports existing destination and blocks SECRET
+                dest_file = dest / 'mod.zip'
+                stat_url = url + 'stat?path=' + urllib.parse.quote(str(dest_file))
+                with urllib.request.urlopen(stat_url) as resp:
+                    st_data = json.loads(resp.read().decode('utf-8'))
+                self.assertTrue(st_data['ok'] and st_data['exists'] and not st_data['isDir'])
+
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(url + 'stat?path=' + urllib.parse.quote(str(secret)))
+                self.assertEqual(ctx.exception.code, 400)
+
+                # 4. /reveal requires X-Tidy-Action header, blocks out-of-scope/SECRET, allows valid dest
+                req_no_hdr = urllib.request.Request(
+                    url + 'reveal',
+                    data=json.dumps({'path': str(dest_file)}).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'},
+                    method='POST',
+                )
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(req_no_hdr)
+                self.assertEqual(ctx.exception.code, 403)
+
+                revealed = []
+                with patch.object(history_mod, '_reveal_in_file_manager', side_effect=lambda p: revealed.append(str(p))):
+                    req_ok = urllib.request.Request(
+                        url + 'reveal',
+                        data=json.dumps({'path': str(dest_file)}).encode('utf-8'),
+                        headers={'Content-Type': 'application/json', 'X-Tidy-Action': 'reveal'},
+                        method='POST',
+                    )
+                    with urllib.request.urlopen(req_ok) as resp:
+                        rv = json.loads(resp.read().decode('utf-8'))
+                    self.assertTrue(rv['ok'])
+                    self.assertEqual(len(revealed), 1)
+                    self.assertEqual(Path(revealed[0]), dest_file.resolve())
+
+                    req_outside = urllib.request.Request(
+                        url + 'reveal',
+                        data=json.dumps({'path': str(self.root.parent)}).encode('utf-8'),
+                        headers={'Content-Type': 'application/json', 'X-Tidy-Action': 'reveal'},
+                        method='POST',
+                    )
+                    with self.assertRaises(urllib.error.HTTPError) as ctx:
+                        urllib.request.urlopen(req_outside)
+                    self.assertEqual(ctx.exception.code, 400)
+            finally:
+                server.shutdown()
+                server.server_close()

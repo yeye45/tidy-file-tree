@@ -401,11 +401,17 @@ def main(argv=None):
     s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_recover)
 
-    s = command("history", "生成只读执行历史", "Generate read-only execution history")
+    s = command("history", "生成只读执行历史与历史文件管理器", "Generate read-only execution history and historical file explorer")
     s.add_argument("root")
     s.add_argument("--out", help=text("输出 HTML，默认写入 _organize/history.html",
                                       "Output HTML; defaults to _organize/history.html"))
     s.add_argument("--open", action="store_true")
+    s.add_argument("--serve", action="store_true",
+                   help=text("启动本地实时历史文件管理器（支持一键在资源管理器定位现位置）",
+                             "Start a local live historical file explorer (supports native reveal in file manager)"))
+    s.add_argument("--no-open", action="store_true",
+                   help=text("--serve 模式下只输出本地地址，不自动打开浏览器",
+                             "With --serve, print the local URL without opening a browser"))
     s.add_argument("--lang", choices=languages, default=argparse.SUPPRESS, help=language_help)
     s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_history)

@@ -41,9 +41,9 @@ tidy-file-tree ui (Join-Path $demo.FullName "root") --open
 
 ## 整理流程
 
-1. **查看目录。** 运行 `tidy-file-tree scan "D:\ToSort" --tree`，在浏览器查看只读目录树、目录类型和剧集草稿。
-2. **确定范围和清点。** 用 `tidy-file-tree setup ask <目录>` 查看分类偏好及保护路径的问题，再用 `tidy-file-tree setup apply <目录> answers.json` 保存答案。让 AI 代理按 [SKILL.md](SKILL.md) 记录探针、单元清点与归组结果。用 `tidy-file-tree coverage <目录>` 查漏。
-3. **确认去向。** 运行 `tidy-file-tree decisions <目录>` 和 `tidy-file-tree ui <目录> --open`，在工作台连线确认后下载动作表。
+1. **查看目录。** 运行 `tidy-file-tree scan "D:\ToSort" --tree`，在浏览器查看只读交互式目录树（支持自由缩放、拖动、宽分支折叠、按需逐级下钻展开）、目录类型与剧集草稿。
+2. **确定范围、清点与追踪进度。** 用 `tidy-file-tree setup ask <目录>` 查看目标（整理归类 vs 清理腾空间）、分类偏好及保护路径的问题，再用 `tidy-file-tree setup apply <目录> answers.json` 保存答案。让 AI 代理按 [SKILL.md](SKILL.md) 记录探针、单元清点与归组结果；过程中可随时运行 `tidy-file-tree progress <目录>` 查看 S0–S6 实时进度看板与下一步建议，并用 `tidy-file-tree coverage <目录>` 查漏。
+3. **确认去向。** 运行 `tidy-file-tree decisions <目录>` 和 `tidy-file-tree ui <目录> --open`，在工作台连线确认分组及单目录改名/去留决策（被安全护栏保护跳过的目录会透明列出原因），核对后下载动作表。
 4. **预演与执行。** 先用下面的命令生成图形预演和 JSON 清单。
 
 ```powershell
@@ -56,10 +56,16 @@ tidy-file-tree apply "D:\ToSort" --actions tidy-file-tree-actions.tsv --dry-run 
 tidy-file-tree apply "D:\ToSort" --actions tidy-file-tree-actions.tsv --receipt plan.tidy-file-tree-receipt.json
 ```
 
-执行后可以查看历史，或预演撤销最近一批操作。
+执行后可以打开**历史文件管理器**（按整理前的旧目录结构一层层浏览文件现在去哪了）或操作日志，也可以预演撤销最近一批操作：
 
 ```powershell
+# 生成离线 history.html（内置「历史文件管理器」与「操作日志」双视图）
 tidy-file-tree history "D:\ToSort" --open
+
+# 或启动本地实时历史文件管理器（支持一键在系统资源管理器中定位现位置）
+tidy-file-tree history "D:\ToSort" --serve
+
+# 预演撤销最近一批操作
 tidy-file-tree undo --journal "D:\ToSort\_organize\journal.tsv" --last --dry-run
 ```
 
@@ -69,12 +75,13 @@ tidy-file-tree undo --journal "D:\ToSort\_organize\journal.tsv" --last --dry-run
 
 | 功能 | 用途 |
 | --- | --- |
-| 结构扫描与目录树 | 用目录和文件名线索识别候选类型，在只读树视图查看 |
-| AI 协作与连线工作台 | 导出问题、导入回答，由你确认分组与目标 |
-| 预演、执行与记录 | 预览路径变化，使用同一份 JSON 清单核对后执行 |
-| 撤销与恢复 | 基于追加式日志检查、撤销或恢复中断操作 |
-| 保护与审批 | 保护标记、禁区及显式动作表控制文件操作 |
-| 中英文界面 | 工作台可切换语言，也可用 `--lang en` 指定英文 |
+| 交互式目录判断树 | 自由缩放、拖动与逐级下钻展开，用目录和文件名线索识别候选类型与剧集草稿 |
+| 实时分阶段进度看板 | `progress` 实时展示 S0–S6 阶段进度、覆盖率、受保护跳过计数与下一步提示 |
+| AI 协作与连线工作台 | 导出问题、导入回答，可视化拍板分组与单目录决策，透明展示受保护跳过项 |
+| 预演、执行与记录 | 预览路径变化与拦截项，使用同一份 JSON 清单核对后执行 |
+| 历史文件管理器与回滚 | 像资源管理器一样浏览整理前的旧目录，追踪多跳/父目录迁移现位置；`--serve` 支持一键在资源管理器定位，并可随时撤销或中断恢复 |
+| 多层安全护栏 | `NO_TOUCH` / `WORKSPACE` / `FOREIGN` / `SECRET` 标记、系统盘 `--allow-system-drive` 保护、工具链/环境变量防护与显式动作表 |
+| 中英文界面 | 工作台、目录树、进度看板与历史页均支持中英文切换，也可用 `--lang en` 启动 |
 
 ## 深入使用
 
@@ -83,9 +90,9 @@ tidy-file-tree undo --journal "D:\ToSort\_organize\journal.tsv" --last --dry-run
 <details>
 <summary>高级操作与安全边界</summary>
 
-### AI 复核与保护标记
+### AI 复核、保护标记与系统盘模式
 
-`tidy-file-tree decisions <目录> --need-ai` 导出待判断组，使用 `--answers` 回填。浏览器扫描树也可导出带冲突和命名样例的 AI 问题，再把回答导入对应节点。保护标记可通过 `scripts/markers.ps1` 写入 `_organize/markers.tsv`，包括 `NO_TOUCH`、`WORKSPACE`、`FOREIGN` 和 `SECRET`。
+`tidy-file-tree decisions <目录> --need-ai` 导出待判断组，使用 `--answers` 回填。浏览器扫描树也可导出带冲突和命名样例的 AI 问题，再把回答导入对应节点。保护标记可通过 `tidy-file-tree markers <目录> --action add ...` 或 `scripts/markers.ps1` 写入 `_organize/markers.tsv`，包括 `NO_TOUCH`、`WORKSPACE`、`FOREIGN` 和 `SECRET`。整理系统盘根目录（如 `C:\`）时需显式传入 `--allow-system-drive`，运行状态会安全隔离写入 `%LOCALAPPDATA%` 而非污染系统盘根目录。
 
 ### 预演清单与 HTML 预览
 

@@ -148,7 +148,81 @@ button:disabled{opacity:.5;cursor:default}
 .page-jump-wrap{display:inline-flex;align-items:center;gap:5px;color:var(--muted)}
 .page-jump-wrap input{width:58px;text-align:center;padding:4px 6px;font-variant-numeric:tabular-nums}
 footer{margin-top:18px;font-size:12px}
-@media(max-width:740px){.filters,.filters.preview{grid-template-columns:minmax(0,1fr)}}
+/* Top mode switch & Time-Machine Historical File Explorer */
+.header-actions select{width:auto;flex:none}
+.mode-switch{display:inline-flex;flex:none;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--soft)}
+.mode-switch button{border:0;border-radius:0;background:transparent;font-size:12.5px;padding:6px 12px;color:var(--muted);font-weight:600;white-space:nowrap;flex:none}
+.mode-switch button[aria-pressed="true"]{background:var(--accent);color:var(--paper)}
+.live-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:99px;font-size:11.5px;font-weight:650;background:var(--good-bg);color:var(--good);border:1px solid color-mix(in srgb,var(--good) 35%,transparent);white-space:nowrap}
+.live-pill::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--good)}
+.explorer-shell{background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;margin:0 0 16px}
+.exp-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;background:var(--soft);border-bottom:1px solid var(--line)}
+.exp-nav-btns{display:inline-flex;gap:4px;flex:none}
+.exp-nav-btns button{padding:5px 9px;font-size:12.5px;line-height:1.2}
+.exp-time-wrap{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);flex:none}
+.exp-time-wrap select{width:auto;max-width:250px;font-size:12px;padding:5px 8px}
+.exp-breadcrumbs{flex:1 1 260px;min-width:180px;display:flex;align-items:center;gap:3px;flex-wrap:wrap;background:var(--paper);border:1px solid var(--line);border-radius:7px;padding:4px 9px;min-height:32px;font-size:12.5px}
+.exp-crumb{border:0;background:transparent;padding:2px 5px;border-radius:5px;font-size:12.5px;color:var(--ink);font-weight:500}
+.exp-crumb:hover{background:var(--accent-soft);color:var(--accent)}
+.exp-crumb.current{font-weight:700;color:var(--accent)}
+.exp-crumb-sep{color:var(--muted);opacity:.6;font-size:11px;user-select:none}
+.exp-subbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--paper)}
+.exp-search-wrap{flex:1 1 280px;max-width:480px;display:flex;align-items:center;gap:6px}
+.exp-search-wrap input{font-size:12.5px;padding:5px 9px}
+.exp-subbar-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.exp-toggle-label{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;color:var(--ink);font-weight:500}
+.exp-toggle-label input{width:auto;margin:0}
+.exp-banner{padding:8px 12px;background:var(--accent-soft);border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.exp-banner strong{color:var(--accent)}
+.exp-body{display:grid;grid-template-columns:230px minmax(0,1fr) 330px;min-height:540px;max-height:74vh}
+.exp-tree{border-right:1px solid var(--line);overflow:auto;padding:8px 6px;background:color-mix(in srgb,var(--soft) 45%,var(--paper))}
+.exp-tree-node{display:flex;align-items:center;gap:5px;width:100%;text-align:left;border:0;background:transparent;padding:5px 7px;border-radius:6px;font-size:12.5px;color:var(--ink);cursor:pointer}
+.exp-tree-node:hover{background:var(--soft)}
+.exp-tree-node.active{background:var(--accent-soft);color:var(--accent);font-weight:650}
+.exp-tree-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.exp-tree-cnt{flex:none;padding:0 5px;border-radius:99px;font-size:10.5px;font-weight:700;background:var(--accent-soft);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)}
+.exp-list-pane{overflow:auto;background:var(--paper)}
+.exp-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.exp-table th{position:sticky;top:0;z-index:1;background:var(--soft);color:var(--muted);font-size:11.5px;font-weight:650;text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.exp-table td{padding:7px 10px;border-bottom:1px solid color-mix(in srgb,var(--line) 65%,transparent);vertical-align:middle}
+.exp-row{cursor:pointer;transition:background-color .1s}
+.exp-row:hover td{background:color-mix(in srgb,var(--soft) 65%,transparent)}
+.exp-row.selected td{background:var(--accent-soft)}
+.exp-row.is-ghost .exp-item-name{opacity:.82}
+.exp-name-cell{display:flex;align-items:center;gap:7px;min-width:0}
+.exp-ico{flex:none;font-size:14px;line-height:1;user-select:none}
+.exp-item-name{font-weight:550;overflow-wrap:anywhere}
+.exp-item-sub{display:block;font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.exp-dest-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:6px;font-size:11.5px;font-weight:600;max-width:100%;overflow-wrap:anywhere;border:1px solid var(--line);background:var(--soft);color:var(--muted)}
+.exp-dest-pill.st-move{background:var(--accent-soft);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+.exp-dest-pill.st-rename{background:var(--warn-bg);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.exp-dest-pill.st-cross-move{background:var(--purple-bg);color:var(--purple);border-color:color-mix(in srgb,var(--purple) 35%,transparent)}
+.exp-dest-pill.st-undone{background:var(--soft);color:var(--muted)}
+.exp-dest-pill.st-unchanged{background:transparent;border-color:transparent;color:var(--muted);font-weight:500;padding-left:0}
+.exp-size-col{white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px;text-align:right}
+.exp-empty{padding:36px 20px;text-align:center;color:var(--muted);font-size:13px}
+.exp-inspector{border-left:1px solid var(--line);overflow:auto;padding:13px 14px;background:color-mix(in srgb,var(--soft) 30%,var(--paper));display:flex;flex-direction:column;gap:11px}
+.exp-insp-head{display:flex;align-items:flex-start;gap:9px}
+.exp-insp-head h3{margin:0;font-size:14.5px;overflow-wrap:anywhere;line-height:1.35}
+.exp-insp-box{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.exp-insp-box.is-dest{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:color-mix(in srgb,var(--accent-soft) 35%,var(--paper))}
+.exp-insp-label{font-size:11px;color:var(--muted);font-weight:650;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;gap:6px}
+.exp-insp-path{font-family:ui-monospace,SFMono-Regular,Consolas,"Microsoft YaHei",monospace;font-size:12px;overflow-wrap:anywhere;line-height:1.45;color:var(--ink)}
+.exp-insp-actions{display:flex;flex-wrap:wrap;gap:6px}
+.exp-btn-primary{background:var(--accent);color:var(--paper);border-color:var(--accent);font-size:12px;font-weight:600;padding:6px 11px}
+.exp-btn-primary:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 88%,#000);border-color:var(--accent)}
+.exp-btn-sec{font-size:12px;padding:5px 9px}
+.exp-toast{font-size:12px;padding:6px 9px;border-radius:7px;background:var(--good-bg);color:var(--good);border:1px solid color-mix(in srgb,var(--good) 35%,transparent)}
+.exp-toast.err{background:var(--danger-bg);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 35%,transparent)}
+.exp-timeline{list-style:none;margin:4px 0 0;padding:0;display:grid;gap:7px}
+.exp-timeline li{position:relative;padding-left:14px;font-size:12px;line-height:1.4}
+.exp-timeline li::before{content:"";position:absolute;left:0;top:6px;width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.exp-timeline li::after{content:"";position:absolute;left:3px;top:15px;bottom:-9px;width:1px;background:var(--line)}
+.exp-timeline li:last-child::after{display:none}
+.exp-timeline-meta{color:var(--muted);font-size:11px}
+.exp-tip{font-size:11.5px;color:var(--muted);line-height:1.45;background:var(--soft);border-radius:7px;padding:7px 9px}
+@media(max-width:980px){.exp-body{grid-template-columns:190px minmax(0,1fr);max-height:none}.exp-inspector{grid-column:1 / -1;border-left:0;border-top:1px solid var(--line)}}
+@media(max-width:740px){.filters,.filters.preview{grid-template-columns:minmax(0,1fr)}.exp-body{grid-template-columns:minmax(0,1fr)}.exp-tree{border-right:0;border-bottom:1px solid var(--line);max-height:180px}}
 @media(max-width:630px){.summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:480px){.route{grid-template-columns:minmax(0,1fr);gap:3px}.route .arrow{transform:rotate(90deg);width:20px;justify-self:center}}
 </style>
@@ -157,11 +231,48 @@ footer{margin-top:18px;font-size:12px}
 <header>
   <div class="brand-group"><span class="brand-icon" aria-hidden="true"></span><div><h1 id="title"></h1><p id="root"></p></div></div>
   <div class="header-actions">
+    <span class="live-pill" id="livePill" hidden></span>
+    <div class="mode-switch" id="modeSwitch" hidden>
+      <button type="button" id="modeExplorer" data-app-mode="explorer" aria-pressed="true"></button>
+      <button type="button" id="modeJournal" data-app-mode="journal" aria-pressed="false"></button>
+    </div>
     <select id="language" aria-label="Language"><option value="zh-CN">简体中文</option><option value="en">English</option></select>
     <button type="button" id="theme" aria-label="Toggle theme">◐</button>
   </div>
 </header>
 <main>
+  <p class="notice" id="mirror" hidden></p>
+  <p class="notice" id="hidden" hidden></p>
+  <section class="explorer-shell" id="explorerPane" hidden>
+    <div class="exp-toolbar">
+      <div class="exp-nav-btns">
+        <button type="button" id="expBack" disabled></button>
+        <button type="button" id="expUp" disabled></button>
+        <button type="button" id="expHome"></button>
+      </div>
+      <div class="exp-time-wrap">
+        <span id="expTimeLabel"></span>
+        <select id="expTimeSelect" aria-label="Timepoint"></select>
+      </div>
+      <nav class="exp-breadcrumbs" id="expCrumbs" aria-label="Breadcrumb"></nav>
+    </div>
+    <div class="exp-subbar">
+      <div class="exp-search-wrap">
+        <input id="expSearch" type="search">
+      </div>
+      <div class="exp-subbar-right">
+        <label class="exp-toggle-label"><input type="checkbox" id="expOnlyChanged"><span id="expOnlyChangedLabel"></span></label>
+        <span id="expCount"></span>
+      </div>
+    </div>
+    <div class="exp-banner" id="expBanner" hidden></div>
+    <div class="exp-body">
+      <aside class="exp-tree" id="expTree" aria-label="Folder tree"></aside>
+      <div class="exp-list-pane" id="expListPane"></div>
+      <aside class="exp-inspector" id="expInspector"></aside>
+    </div>
+  </section>
+  <div id="journalPane">
   <dl class="summary" id="summary"></dl>
   <section class="batch-panel" id="batchPanel" hidden>
     <div class="batch-panel-head">
@@ -184,8 +295,6 @@ footer{margin-top:18px;font-size:12px}
     <div class="flow-head"><h2 id="flowTitle"></h2><div class="result-controls"><span class="flow-hint" id="flowHint"></span><button type="button" class="mini-ctrl" id="flowToggleBtn"></button></div></div>
     <svg class="flow-svg" id="flowSvg" aria-hidden="true"></svg>
   </section>
-  <p class="notice" id="mirror" hidden></p>
-  <p class="notice" id="hidden" hidden></p>
   <section class="notice danger" id="blockers" hidden></section>
   <section class="filters" id="filters">
     <label><span id="searchLabel"></span><input id="search" type="search"></label>
@@ -215,6 +324,7 @@ footer{margin-top:18px;font-size:12px}
     <button type="button" id="next"></button>
     <button type="button" id="lastPage"></button>
   </nav>
+  </div>
   <footer id="snapshot"></footer>
 </main>
 <script type="application/json" id="historyData">__HISTORY_DATA__</script>
@@ -284,6 +394,48 @@ const labels = {
   noMatch:['没有符合筛选条件的操作。','No operations match the filters.'],
   firstPage:['首页','First'], previous:['上一页','Prev'], next:['下一页','Next'], lastPage:['末页','Last'],
   snapshot:['只读快照，生成于 {time}。「未完成」表示当时尚无结束记录，操作可能仍在执行或已中断。','Read-only snapshot captured {time}. "Open" means no completion was recorded yet — the action may still be running or interrupted.'],
+  liveBadge:['本地实时模式','Live local mode'],
+  modeExplorer:['历史文件管理器','History Explorer'],
+  modeJournal:['操作日志','Action Log'],
+  expBack:['← 返回','← Back'],
+  expUp:['↑ 上一级','↑ Up'],
+  expHome:['根目录','Root'],
+  expTimeLabel:['时间点','Timepoint'],
+  expBeforeAll:['最早整理前（全部历史变动）','Before earliest run (all changes)'],
+  expBeforeBatch:['批次前 · {time}（{count} 项）','Before run · {time} ({count} ops)'],
+  expSearchHint:['搜索文件名，或粘贴移动前旧路径直接定位现位置…','Search name, or paste a pre-move path to trace where it went…'],
+  expOnlyChangedLabel:['仅看变动项','Moved/renamed only'],
+  expCount:['本层 {total} 项（变动 {changed} 项）','{total} items ({changed} changed)'],
+  expSearchCount:['匹配 {count} 项结果','{count} search matches'],
+  expColName:['名称','Name'],
+  expColWhere:['状态 / 移动后现位置','Status / Current location'],
+  expColSize:['大小 / 类型','Size / Type'],
+  expDirLabel:['文件夹','Folder'],
+  expStMove:['已移至 → {dest}','Moved → {dest}'],
+  expStRename:['已改名 → {dest}','Renamed → {dest}'],
+  expStCross:['已跨卷 → {dest}','Cross-drive → {dest}'],
+  expStUndone:['已撤销回原位','Undone (back in place)'],
+  expStUnchanged:['仍在原位','Unchanged'],
+  expInsideMoved:['当前正在浏览已迁移目录的旧位置，内部所有项均已随父目录迁至：','Browsing inside a moved folder’s historical location — contents now live at:'],
+  expTraceHit:['已按历史迁移链路推算出该路径现位置','Traced current location from historical move chain'],
+  expEmptyDir:['当前文件夹在该时间点暂无可显示条目（双击左侧其他目录浏览）。','No visible items in this folder at this timepoint.'],
+  expEmptySearch:['未找到匹配的旧路径或文件名。','No matching historical path or filename found.'],
+  expInspEmpty:['点击左侧列表中的任意文件或文件夹，查看它移动前后的位置与完整搬迁轨迹。双击文件夹可进入下一层。','Select any file or folder to inspect its before/after location and move history. Double-click a folder to open it.'],
+  expInspBefore:['整理前位置','Before (historical location)'],
+  expInspAfter:['现在位置（最终落点）','Current location (final)'],
+  expInspExists:['磁盘上存在','Exists on disk'],
+  expInspMissing:['目标位置未找到（可能已外部移动/删除）','Not found at destination'],
+  expInspChecking:['核验中…','Checking…'],
+  expRevealBtn:['在资源管理器中定位','Reveal in Explorer'],
+  expRevealOk:['已在系统文件管理器中打开并定位。','Revealed in system file manager.'],
+  expCopyPath:['复制现路径','Copy current path'],
+  expCopyRevealCmd:['复制定位命令','Copy reveal cmd'],
+  expViewLog:['查看对应日志','View in Action Log'],
+  expTimelineTitle:['搬迁轨迹（共 {count} 跳）','Move history ({count} hops)'],
+  expInherited:['随父目录 {from} 一起迁移','Moved with parent folder {from}'],
+  expOfflineTip:['当前为离线只读快照。运行 tidy-file-tree history <目录> --serve 可开启一键唤起系统资源管理器定位与深层目录实时浏览。','Offline snapshot. Run tidy-file-tree history <dir> --serve for 1-click Reveal in Explorer and live deep-folder browsing.'],
+  expLoadingDir:['正在读取目录内容…','Loading folder contents…'],
+  expEnterMovedTip:['双击可进入查看内部文件现位置','Double-click to browse contents inside'],
 };
 const t = (key, values={}) => labels[key][Number(lang === 'en')].replace(/\{([a-z]+)\}/g, (_, name) => values[name]);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -793,8 +945,882 @@ function applyLanguage(next) {
     }
   }
   lastFlowKey = '';
+  renderAppMode();
   render();
+  if (!preview && appMode === 'explorer') renderExplorer();
 }
+
+/* ==================== Time-Machine Historical File Explorer ==================== */
+const isLive = Boolean(data.live && data.apiBase);
+const presentMap = data.present || {};
+const destMetaMap = data.destinationMeta || {};
+const liveDirCache = new Map();
+const liveStatCache = new Map();
+const doneMoveOps = data.operations
+  .filter(op => (op.kind === 'move' || op.kind === 'cross-move' || op.kind === 'rename') && op.before && op.after && op._last?.status === 'done')
+  .sort((a, b) => a._last.seq - b._last.seq);
+const doneMkdirOps = data.operations
+  .filter(op => op.kind === 'mkdir' && op.after && op._last?.status === 'done')
+  .sort((a, b) => a._last.seq - b._last.seq);
+
+let appMode = (!preview && doneMoveOps.length > 0) ? 'explorer' : 'journal';
+let expCutoffSeq = 0;
+let expCurDir = '';
+let expNavStack = [];
+let expSelectedKey = '';
+let expSearchQuery = '';
+let expOnlyChanged = false;
+let expSearchTimer = 0;
+let expRevealStatus = null;
+let expState = null;
+
+function normCmp(p) {
+  if (!p) return '';
+  let s = String(p).replace(/\//g, '\\').replace(/\\+$/, '');
+  if (isWinRoot) s = s.toLocaleLowerCase();
+  return s;
+}
+function joinPath(base, leaf) {
+  const sep = isWinRoot ? '\\' : '/';
+  const b = String(base || '').replace(/[\\/]+$/, '');
+  const l = String(leaf || '').replace(/^[\\/]+/, '');
+  return b ? (l ? b + sep + l : b) : l;
+}
+function toAbsPath(raw) {
+  if (!raw) return rootTrim;
+  if (/^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(raw)) return raw;
+  return joinPath(rootTrim, raw);
+}
+function toRelPosix(absPath) {
+  const cmpRoot = normCmp(rootTrim);
+  const cmpVal = normCmp(absPath);
+  if (cmpVal === cmpRoot) return '';
+  if (cmpVal.startsWith(cmpRoot + '\\')) {
+    return absPath.slice(rootTrim.length + 1).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  }
+  return null;
+}
+function parentRelPosix(rel) {
+  if (!rel) return null;
+  const idx = rel.lastIndexOf('/');
+  return idx === -1 ? '' : rel.slice(0, idx);
+}
+function leafName(p) {
+  const segs = splitSegs(p);
+  return segs.length ? segs[segs.length - 1] : p;
+}
+function formatBytes(n) {
+  if (!n || n <= 0) return '—';
+  const units = ['B','KB','MB','GB','TB'];
+  let v = n, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? v : v.toFixed(v >= 100 ? 0 : 1)) + ' ' + units[i];
+}
+function lookupMeta(absPath) {
+  const rel = toRelPosix(absPath);
+  if (destMetaMap[absPath]) return destMetaMap[absPath];
+  if (rel && destMetaMap[rel]) return destMetaMap[rel];
+  if (rel && destMetaMap[rel.replace(/\//g, '\\')]) return destMetaMap[rel.replace(/\//g, '\\')];
+  const cmp = normCmp(absPath);
+  for (const [k, v] of Object.entries(destMetaMap)) {
+    if (normCmp(toAbsPath(k)) === cmp) return v;
+  }
+  return null;
+}
+function presentEntriesFor(absDir) {
+  const k = normCmp(absDir);
+  if (liveDirCache.has(k)) return liveDirCache.get(k);
+  const rel = toRelPosix(absDir);
+  if (rel !== null) {
+    const pKey = rel === '' ? '.' : rel;
+    if (Array.isArray(presentMap[pKey])) return presentMap[pKey];
+  }
+  return null;
+}
+
+function buildTimepointOptions() {
+  const opts = [{seq: 0, label: t('expBeforeAll')}];
+  // Compute each batch's earliest done move/rename seq so the user can view state right before any batch.
+  const batchFirst = new Map();
+  for (const op of doneMoveOps) {
+    const seq = op._last.seq;
+    const prev = batchFirst.get(op.run);
+    if (!prev || seq < prev.seq) batchFirst.set(op.run, {seq, time: op._last.time, count: 0});
+    batchFirst.get(op.run).count++;
+  }
+  const ordered = [...batchFirst.entries()].sort((a, b) => a[1].seq - b[1].seq);
+  for (let i = 1; i < ordered.length; i++) {
+    const [, info] = ordered[i];
+    opts.push({seq: info.seq - 1, label: t('expBeforeBatch', {time: shortTime(info.time), count: info.count})});
+  }
+  return opts;
+}
+
+function classifyChange(pathAtT, currentPath, steps) {
+  if (!steps.length) return 'unchanged';
+  if (normCmp(pathAtT) === normCmp(currentPath)) return 'undone';
+  if (steps.some(s => s.kind === 'cross-move') && toRelPosix(currentPath) === null) return 'cross-move';
+  if (normCmp(parentDir(pathAtT)) === normCmp(parentDir(currentPath))) return 'rename';
+  return 'move';
+}
+
+function buildTimeMachine(cutoffSeq) {
+  const futureOps = doneMoveOps.filter(op => op._last.seq > cutoffSeq);
+  const futureMkdirs = doneMkdirOps.filter(op => op._last.seq > cutoffSeq);
+  const createdAfterT = new Set(futureMkdirs.map(op => normCmp(toAbsPath(op.after))));
+  const tracked = [];
+
+  for (const op of futureOps) {
+    const befAbs = toAbsPath(op.before);
+    const aftAbs = toAbsPath(op.after);
+    const befCmp = normCmp(befAbs);
+    const stepBase = {
+      seq: op._last.seq,
+      time: op._last.time,
+      run: op.run,
+      kind: op.kind,
+      direction: op.direction,
+      opBefore: befAbs,
+      opAfter: aftAbs,
+    };
+
+    let matchedExact = false;
+    let matchedChildOf = null;
+    for (const item of tracked) {
+      const curCmp = normCmp(item.currentPath);
+      if (curCmp === befCmp) {
+        item.steps.push({...stepBase, from: item.currentPath, to: aftAbs, inherited: false});
+        item.currentPath = aftAbs;
+        matchedExact = true;
+      } else if (curCmp.startsWith(befCmp + '\\')) {
+        const suffix = item.currentPath.slice(befAbs.replace(/[\\/]+$/, '').length + 1);
+        const next = joinPath(aftAbs, suffix);
+        item.steps.push({...stepBase, from: item.currentPath, to: next, inherited: true});
+        item.currentPath = next;
+      } else if (befCmp.startsWith(curCmp + '\\') && !matchedChildOf) {
+        matchedChildOf = item;
+      }
+    }
+
+    if (!matchedExact) {
+      if (matchedChildOf) {
+        const suffix = befAbs.slice(matchedChildOf.currentPath.replace(/[\\/]+$/, '').length + 1);
+        const pathAtT = joinPath(matchedChildOf.pathAtT, suffix);
+        const priorSteps = matchedChildOf.steps.map(st => ({
+          ...st,
+          from: joinPath(st.from, suffix),
+          to: joinPath(st.to, suffix),
+          inherited: true,
+        }));
+        priorSteps.push({...stepBase, from: befAbs, to: aftAbs, inherited: false});
+        tracked.push({pathAtT, currentPath: aftAbs, steps: priorSteps});
+      } else {
+        tracked.push({
+          pathAtT: befAbs,
+          currentPath: aftAbs,
+          steps: [{...stepBase, from: befAbs, to: aftAbs, inherited: false}],
+        });
+      }
+    }
+  }
+
+  // Enrich tracked items with relative paths, folder detection, and current disk meta.
+  const byRelAtT = new Map();
+  const arrivedAfterT = new Set();
+  const folderChangeCounts = new Map();
+  const virtualFolders = new Set(['']);
+
+  for (const item of tracked) {
+    item.relAtT = toRelPosix(item.pathAtT);
+    item.currentRel = toRelPosix(item.currentPath);
+    item.status = classifyChange(item.pathAtT, item.currentPath, item.steps);
+    item.lastSeq = item.steps.length ? item.steps[item.steps.length - 1].seq : null;
+    const metaInfo = lookupMeta(item.currentPath) || lookupMeta(item.pathAtT);
+    item.existsNow = metaInfo ? metaInfo.exists : null;
+    item.size = metaInfo ? (metaInfo.size || 0) : 0;
+    item.isDir = Boolean(metaInfo?.isDir) || (item.currentRel !== null && presentMap[item.currentRel || '.'] !== undefined);
+    arrivedAfterT.add(normCmp(item.currentPath));
+    if (item.relAtT !== null) {
+      byRelAtT.set(normCmp(item.relAtT), item);
+      let p = parentRelPosix(item.relAtT);
+      while (p !== null) {
+        virtualFolders.add(p);
+        if (item.status !== 'unchanged') {
+          folderChangeCounts.set(p, (folderChangeCounts.get(p) || 0) + 1);
+        }
+        p = parentRelPosix(p);
+      }
+    }
+  }
+  // If any tracked item is a strict ancestor of another tracked item's pathAtT, it's definitely a folder.
+  for (const item of tracked) {
+    if (!item.isDir && item.relAtT !== null && virtualFolders.has(item.relAtT)) item.isDir = true;
+  }
+
+  return {cutoffSeq, tracked, byRelAtT, arrivedAfterT, createdAfterT, folderChangeCounts, virtualFolders};
+}
+
+function findMovedAncestor(relDir, st) {
+  if (!relDir) return null;
+  let cur = relDir;
+  while (cur) {
+    const hit = st.byRelAtT.get(normCmp(cur));
+    if (hit && hit.status !== 'unchanged') {
+      const suffix = cur === relDir ? '' : relDir.slice(cur.length + 1);
+      return {ancestor: hit, mappedAbs: suffix ? joinPath(hit.currentPath, suffix) : hit.currentPath};
+    }
+    cur = parentRelPosix(cur);
+  }
+  return null;
+}
+
+function traceCustomQuery(rawQuery, st) {
+  const q = rawQuery.trim();
+  if (!q || (!q.includes('\\') && !q.includes('/'))) return null;
+  const origAbs = toAbsPath(q);
+  const futureOps = doneMoveOps.filter(op => op._last.seq > st.cutoffSeq);
+  let cur = origAbs;
+  const steps = [];
+  for (const op of futureOps) {
+    const befAbs = toAbsPath(op.before);
+    const aftAbs = toAbsPath(op.after);
+    const curCmp = normCmp(cur);
+    const befCmp = normCmp(befAbs);
+    if (curCmp === befCmp) {
+      steps.push({seq: op._last.seq, time: op._last.time, run: op.run, kind: op.kind, direction: op.direction, from: cur, to: aftAbs, opBefore: befAbs, opAfter: aftAbs, inherited: false});
+      cur = aftAbs;
+    } else if (curCmp.startsWith(befCmp + '\\')) {
+      const suffix = cur.slice(befAbs.replace(/[\\/]+$/, '').length + 1);
+      const next = joinPath(aftAbs, suffix);
+      steps.push({seq: op._last.seq, time: op._last.time, run: op.run, kind: op.kind, direction: op.direction, from: cur, to: next, opBefore: befAbs, opAfter: aftAbs, inherited: true});
+      cur = next;
+    }
+  }
+  if (!steps.length) return null;
+  const relAtT = toRelPosix(origAbs);
+  const metaInfo = lookupMeta(cur);
+  return {
+    key: 'trace:' + normCmp(origAbs),
+    name: leafName(origAbs),
+    relAtT: relAtT ?? origAbs,
+    pathAtT: origAbs,
+    currentPath: cur,
+    currentRel: toRelPosix(cur),
+    status: classifyChange(origAbs, cur, steps),
+    steps,
+    isDir: Boolean(metaInfo?.isDir),
+    size: metaInfo ? (metaInfo.size || 0) : 0,
+    existsNow: metaInfo ? metaInfo.exists : null,
+    lastSeq: steps[steps.length - 1].seq,
+    isTraceHit: true,
+  };
+}
+
+function getExplorerEntries(dirRel, st) {
+  const entries = [];
+  const seen = new Set();
+  const movedAnc = findMovedAncestor(dirRel, st);
+  const physicalDirAbs = movedAnc ? movedAnc.mappedAbs : (dirRel ? joinPath(rootTrim, dirRel) : rootTrim);
+  const add = item => {
+    const k = normCmp(item.name);
+    if (seen.has(k)) return;
+    seen.add(k);
+    entries.push(item);
+  };
+
+  // 1. Direct tracked items whose historical parent at timepoint T is dirRel.
+  for (const item of st.tracked) {
+    if (item.relAtT === null) continue;
+    if (parentRelPosix(item.relAtT) === dirRel) {
+      add({
+        key: 'rel:' + normCmp(item.relAtT),
+        name: leafName(item.relAtT),
+        relAtT: item.relAtT,
+        pathAtT: item.pathAtT,
+        currentPath: item.currentPath,
+        currentRel: item.currentRel,
+        status: item.status,
+        steps: item.steps,
+        isDir: item.isDir,
+        size: item.size,
+        existsNow: item.existsNow,
+        lastSeq: item.lastSeq,
+      });
+    }
+  }
+
+  // 2. Virtual intermediate folders needed to reach deeper tracked items (in case an emptied folder was deleted).
+  const prefix = dirRel ? dirRel + '/' : '';
+  for (const vf of st.virtualFolders) {
+    if (!vf || vf === dirRel) continue;
+    if (prefix && !vf.startsWith(prefix)) continue;
+    const rest = prefix ? vf.slice(prefix.length) : vf;
+    const childName = rest.split('/')[0];
+    if (!childName || seen.has(normCmp(childName))) continue;
+    const childRel = prefix + childName;
+    const childAbs = joinPath(rootTrim, childRel);
+    const mapped = movedAnc ? joinPath(movedAnc.mappedAbs, childName) : childAbs;
+    add({
+      key: 'rel:' + normCmp(childRel),
+      name: childName,
+      relAtT: childRel,
+      pathAtT: childAbs,
+      currentPath: mapped,
+      currentRel: toRelPosix(mapped),
+      status: movedAnc ? movedAnc.ancestor.status : 'unchanged',
+      steps: movedAnc ? movedAnc.ancestor.steps.map(s => ({...s, inherited: true})) : [],
+      isDir: true,
+      size: 0,
+      existsNow: null,
+      lastSeq: movedAnc ? movedAnc.ancestor.lastSeq : null,
+      changeCount: st.folderChangeCounts.get(childRel) || 0,
+    });
+  }
+
+  // 3. Present-day entries from the mapped physical directory (hybrid ghost + untouched overlay!).
+  const present = presentEntriesFor(physicalDirAbs);
+  if (Array.isArray(present)) {
+    for (const [name, isDirInt, size] of present) {
+      if (seen.has(normCmp(name))) continue;
+      const physChildAbs = joinPath(physicalDirAbs, name);
+      const childRel = prefix + name;
+      const histChildAbs = joinPath(rootTrim, childRel);
+      if (!movedAnc) {
+        // Skip items that were moved INTO this folder AFTER timepoint T, or mkdir'd after T.
+        if (st.arrivedAfterT.has(normCmp(physChildAbs))) continue;
+        if (st.createdAfterT.has(normCmp(physChildAbs))) continue;
+      }
+      add({
+        key: 'rel:' + normCmp(childRel),
+        name,
+        relAtT: childRel,
+        pathAtT: histChildAbs,
+        currentPath: physChildAbs,
+        currentRel: toRelPosix(physChildAbs),
+        status: movedAnc ? movedAnc.ancestor.status : 'unchanged',
+        steps: movedAnc ? movedAnc.ancestor.steps.map(s => ({...s, from: joinPath(s.from, movedAnc.ancestor.relAtT ? childRel.slice(movedAnc.ancestor.relAtT.length + 1) : name), to: joinPath(s.to, movedAnc.ancestor.relAtT ? childRel.slice(movedAnc.ancestor.relAtT.length + 1) : name), inherited: true})) : [],
+        isDir: Boolean(isDirInt),
+        size: size || 0,
+        existsNow: true,
+        lastSeq: movedAnc ? movedAnc.ancestor.lastSeq : null,
+        changeCount: st.folderChangeCounts.get(childRel) || 0,
+      });
+    }
+  }
+
+  // Sort: folders first, then changed items before unchanged, then alphabetical.
+  entries.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    const ac = a.status !== 'unchanged' ? 0 : 1;
+    const bc = b.status !== 'unchanged' ? 0 : 1;
+    if (ac !== bc) return ac - bc;
+    return a.name.localeCompare(b.name, lang);
+  });
+
+  return {entries, movedAnc, physicalDirAbs, needsLiveFetch: isLive && present === null};
+}
+
+function searchExplorerAll(query, st) {
+  const q = query.trim().toLocaleLowerCase().replace(/\//g, '\\');
+  const results = [];
+  const seen = new Set();
+
+  const traced = traceCustomQuery(query, st);
+  if (traced) {
+    results.push(traced);
+    seen.add(normCmp(traced.pathAtT));
+  }
+
+  for (const item of st.tracked) {
+    if (seen.has(normCmp(item.pathAtT))) continue;
+    const hay = [item.pathAtT, item.currentPath, item.relAtT].filter(Boolean).join('\n').toLocaleLowerCase().replace(/\//g, '\\');
+    if (hay.includes(q)) {
+      seen.add(normCmp(item.pathAtT));
+      results.push({
+        key: 'rel:' + normCmp(item.relAtT ?? item.pathAtT),
+        name: leafName(item.pathAtT),
+        relAtT: item.relAtT ?? item.pathAtT,
+        pathAtT: item.pathAtT,
+        currentPath: item.currentPath,
+        currentRel: item.currentRel,
+        status: item.status,
+        steps: item.steps,
+        isDir: item.isDir,
+        size: item.size,
+        existsNow: item.existsNow,
+        lastSeq: item.lastSeq,
+      });
+    }
+  }
+
+  if (!expOnlyChanged && results.length < 120) {
+    for (const [dirKey, list] of Object.entries(presentMap)) {
+      if (!Array.isArray(list)) continue;
+      const dirRel = dirKey === '.' ? '' : dirKey;
+      for (const [name, isDirInt, size] of list) {
+        const rel = dirRel ? dirRel + '/' + name : name;
+        const abs = joinPath(rootTrim, rel);
+        if (seen.has(normCmp(abs)) || st.arrivedAfterT.has(normCmp(abs)) || st.createdAfterT.has(normCmp(abs))) continue;
+        if (rel.toLocaleLowerCase().replace(/\//g, '\\').includes(q)) {
+          seen.add(normCmp(abs));
+          results.push({
+            key: 'rel:' + normCmp(rel),
+            name,
+            relAtT: rel,
+            pathAtT: abs,
+            currentPath: abs,
+            currentRel: rel,
+            status: 'unchanged',
+            steps: [],
+            isDir: Boolean(isDirInt),
+            size: size || 0,
+            existsNow: true,
+            lastSeq: null,
+          });
+          if (results.length >= 150) break;
+        }
+      }
+      if (results.length >= 150) break;
+    }
+  }
+  return results;
+}
+
+function statusPillHtml(item) {
+  if (item.status === 'unchanged') return `<span class="exp-dest-pill st-unchanged">${esc(t('expStUnchanged'))}</span>`;
+  if (item.status === 'undone') return `<span class="exp-dest-pill st-undone">${esc(t('expStUndone'))}</span>`;
+  const destDisp = item.status === 'rename'
+    ? leafName(item.currentPath)
+    : (item.currentRel !== null ? (parentRelPosix(item.currentRel) || '.') : (parentDir(item.currentPath) || item.currentPath));
+  const key = item.status === 'rename' ? 'expStRename' : item.status === 'cross-move' ? 'expStCross' : 'expStMove';
+  return `<span class="exp-dest-pill st-${esc(item.status)}">${esc(t(key, {dest: destDisp}))}</span>`;
+}
+
+function hasArrivedOrCreatedAncestor(rel, st) {
+  let cur = rel;
+  while (cur) {
+    const absCmp = normCmp(joinPath(rootTrim, cur));
+    if (st.arrivedAfterT.has(absCmp) || st.createdAfterT.has(absCmp)) return true;
+    cur = parentRelPosix(cur);
+  }
+  return false;
+}
+
+function renderExplorerTree(st) {
+  const folderSet = new Set(['']);
+  for (const vf of st.virtualFolders) folderSet.add(vf);
+  for (const item of st.tracked) {
+    if (item.isDir && item.relAtT) folderSet.add(item.relAtT);
+  }
+  for (const [dirKey, list] of Object.entries(presentMap)) {
+    const base = dirKey === '.' ? '' : dirKey;
+    if (base && hasArrivedOrCreatedAncestor(base, st)) continue;
+    if (base) folderSet.add(base);
+    if (Array.isArray(list)) {
+      for (const [name, isDirInt] of list) {
+        if (!isDirInt) continue;
+        const childRel = base ? base + '/' + name : name;
+        if (!hasArrivedOrCreatedAncestor(childRel, st)) {
+          folderSet.add(childRel);
+        }
+      }
+    }
+  }
+  // Build parent -> children map
+  const childrenOf = new Map();
+  for (const f of folderSet) {
+    if (!f) continue;
+    const p = parentRelPosix(f);
+    if (!childrenOf.has(p)) childrenOf.set(p, []);
+    childrenOf.get(p).push(f);
+  }
+  for (const arr of childrenOf.values()) {
+    arr.sort((a, b) => {
+      const ac = (st.folderChangeCounts.get(a) || 0) > 0 ? 0 : 1;
+      const bc = (st.folderChangeCounts.get(b) || 0) > 0 ? 0 : 1;
+      if (ac !== bc) return ac - bc;
+      return leafName(a).localeCompare(leafName(b), lang);
+    });
+  }
+  const rows = [];
+  function walk(rel, depth) {
+    if (depth > 5) return;
+    const active = rel === expCurDir;
+    const cnt = st.folderChangeCounts.get(rel) || 0;
+    const name = rel ? leafName(rel) : leafName(rootTrim) || t('expHome');
+    const pad = 7 + depth * 14;
+    rows.push(`<button type="button" class="exp-tree-node${active ? ' active' : ''}" data-exp-dir="${esc(rel)}" style="padding-left:${pad}px" title="${esc(rel || rootTrim)}">
+      <span class="exp-ico" aria-hidden="true">${active ? '📂' : '📁'}</span>
+      <span class="exp-tree-name">${esc(name)}</span>
+      ${cnt ? `<span class="exp-tree-cnt">${cnt}</span>` : ''}
+    </button>`);
+    const kids = childrenOf.get(rel) || [];
+    for (const kid of kids) walk(kid, depth + 1);
+  }
+  walk('', 0);
+  $('expTree').innerHTML = rows.join('');
+}
+
+function renderExplorerCrumbs() {
+  const segs = expCurDir ? expCurDir.split('/').filter(Boolean) : [];
+  const parts = [`<button type="button" class="exp-crumb${segs.length ? '' : ' current'}" data-exp-dir="">${esc(rootTrim)}</button>`];
+  let acc = '';
+  for (let i = 0; i < segs.length; i++) {
+    acc = acc ? acc + '/' + segs[i] : segs[i];
+    const isLast = i === segs.length - 1;
+    parts.push(`<span class="exp-crumb-sep" aria-hidden="true">›</span><button type="button" class="exp-crumb${isLast ? ' current' : ''}" data-exp-dir="${esc(acc)}">${esc(segs[i])}</button>`);
+  }
+  $('expCrumbs').innerHTML = parts.join('');
+  $('expBack').disabled = !expNavStack.length;
+  $('expUp').disabled = !expCurDir;
+}
+
+function renderExplorerInspector(item) {
+  if (!item) {
+    $('expInspector').innerHTML = `<div class="exp-empty">${esc(t('expInspEmpty'))}</div>`;
+    return;
+  }
+  const destAbs = item.currentPath;
+  const cachedStat = liveStatCache.get(normCmp(destAbs));
+  const existsVal = cachedStat !== undefined ? cachedStat.exists : item.existsNow;
+  const existBadge = existsVal === true
+    ? `<span class="tag done">${esc(t('expInspExists'))}</span>`
+    : existsVal === false
+      ? `<span class="tag failed">${esc(t('expInspMissing'))}</span>`
+      : (isLive ? `<span class="tag">${esc(t('expInspChecking'))}</span>` : '');
+
+  const revealBtn = isLive
+    ? `<button type="button" class="exp-btn-primary" id="expRevealBtn" data-reveal-path="${esc(destAbs)}">${esc(t('expRevealBtn'))}</button>`
+    : `<button type="button" class="exp-btn-sec" id="expCopyRevealBtn" data-copy-reveal="${esc(destAbs)}">${esc(t('expCopyRevealCmd'))}</button>`;
+  const logBtn = item.lastSeq ? `<button type="button" class="exp-btn-sec" data-exp-jump-seq="${item.lastSeq}">${esc(t('expViewLog'))}</button>` : '';
+  const undoBtn = (item.lastSeq && item.status !== 'unchanged' && item.status !== 'undone')
+    ? `<button type="button" class="exp-btn-sec" data-exp-undo-seq="${item.lastSeq}">${esc(t('copySingleUndo'))}</button>`
+    : '';
+  const toastHtml = expRevealStatus
+    ? `<div class="exp-toast${expRevealStatus.ok ? '' : ' err'}">${esc(expRevealStatus.msg)}</div>`
+    : '';
+
+  const timelineHtml = item.steps && item.steps.length
+    ? `<div class="exp-insp-box">
+        <div class="exp-insp-label"><span>${esc(t('expTimelineTitle', {count: item.steps.length}))}</span></div>
+        <ol class="exp-timeline">${item.steps.map(st => {
+          const title = st.direction ? `${t(st.direction)} · ${t(st.kind)}` : t(st.kind);
+          const inh = st.inherited ? `<div class="exp-timeline-meta">${esc(t('expInherited', {from: relPath(st.opBefore) || st.opBefore}))}</div>` : '';
+          return `<li>
+            <div><strong>#${st.seq} ${esc(title)}</strong></div>
+            <div class="exp-timeline-meta">${esc(shortTime(st.time))}</div>
+            ${inh}
+            <div class="exp-insp-path">→ ${esc(relPath(st.to) || st.to)}</div>
+          </li>`;
+        }).join('')}</ol>
+      </div>`
+    : '';
+
+  const offlineTip = !isLive
+    ? `<div class="exp-tip">${esc(t('expOfflineTip'))}</div>`
+    : '';
+
+  $('expInspector').innerHTML = `
+    <div class="exp-insp-head">
+      <span class="exp-ico" style="font-size:20px" aria-hidden="true">${item.isDir ? '📁' : '📄'}</span>
+      <div style="min-width:0;flex:1">
+        <h3>${esc(item.name)}</h3>
+        <div style="margin-top:4px">${statusPillHtml(item)}</div>
+      </div>
+    </div>
+    <div class="exp-insp-box">
+      <div class="exp-insp-label"><span>${esc(t('expInspBefore'))}</span></div>
+      <div class="exp-insp-path">${esc(item.pathAtT)}</div>
+    </div>
+    <div class="exp-insp-box is-dest">
+      <div class="exp-insp-label"><span>${esc(t('expInspAfter'))}</span>${existBadge}</div>
+      <div class="exp-insp-path">${esc(destAbs)}</div>
+    </div>
+    <div class="exp-insp-actions">
+      ${revealBtn}
+      <button type="button" class="exp-btn-sec" data-copy-path="${esc(destAbs)}">${esc(t('expCopyPath'))}</button>
+      ${logBtn}
+      ${undoBtn}
+    </div>
+    ${toastHtml}
+    ${timelineHtml}
+    ${offlineTip}`;
+
+  if (isLive && cachedStat === undefined) {
+    fetchLiveStat(destAbs, item.key);
+  }
+}
+
+async function fetchLiveDir(absDir) {
+  const k = normCmp(absDir);
+  if (liveDirCache.has(k)) return;
+  try {
+    const res = await fetch(data.apiBase + 'ls?path=' + encodeURIComponent(absDir));
+    const json = await res.json();
+    liveDirCache.set(k, (json && json.ok && Array.isArray(json.entries)) ? json.entries : []);
+  } catch (_) {
+    liveDirCache.set(k, []);
+  }
+  renderExplorer();
+}
+
+async function fetchLiveStat(absPath, itemKey) {
+  const k = normCmp(absPath);
+  if (liveStatCache.has(k)) return;
+  try {
+    const res = await fetch(data.apiBase + 'stat?path=' + encodeURIComponent(absPath));
+    const json = await res.json();
+    if (json && json.ok) liveStatCache.set(k, {exists: Boolean(json.exists), isDir: Boolean(json.isDir), size: json.size || 0});
+  } catch (_) {}
+  if (expSelectedKey === itemKey && appMode === 'explorer') renderExplorer();
+}
+
+async function revealLivePath(absPath) {
+  expRevealStatus = null;
+  try {
+    const res = await fetch(data.apiBase + 'reveal', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Tidy-Action': 'reveal'},
+      body: JSON.stringify({path: absPath}),
+    });
+    const json = await res.json();
+    if (json && json.ok) {
+      expRevealStatus = {ok: true, msg: t('expRevealOk')};
+    } else {
+      expRevealStatus = {ok: false, msg: (json && json.error) || 'Failed'};
+    }
+  } catch (_) {
+    expRevealStatus = {ok: false, msg: 'Request failed'};
+  }
+  renderExplorer();
+}
+
+let currentVisibleItems = [];
+
+function renderExplorer() {
+  if (preview) return;
+  if (!expState || expState.cutoffSeq !== expCutoffSeq) {
+    expState = buildTimeMachine(expCutoffSeq);
+  }
+  const st = expState;
+  renderExplorerTree(st);
+  renderExplorerCrumbs();
+
+  const searching = Boolean(expSearchQuery.trim());
+  let list = [];
+  let bannerHtml = '';
+
+  if (searching) {
+    list = searchExplorerAll(expSearchQuery, st);
+    if (expOnlyChanged) list = list.filter(it => it.status !== 'unchanged');
+    $('expCount').textContent = t('expSearchCount', {count: list.length});
+    const traceHit = list.find(it => it.isTraceHit);
+    if (traceHit) {
+      bannerHtml = `<span><strong>${esc(t('expTraceHit'))}：</strong>${esc(relPath(traceHit.currentPath) || traceHit.currentPath)}</span>`;
+    }
+  } else {
+    const view = getExplorerEntries(expCurDir, st);
+    if (view.needsLiveFetch) {
+      $('expListPane').innerHTML = `<div class="exp-empty">${esc(t('expLoadingDir'))}</div>`;
+      fetchLiveDir(view.physicalDirAbs);
+      return;
+    }
+    const allCount = view.entries.length;
+    const changedCount = view.entries.filter(it => it.status !== 'unchanged').length;
+    list = expOnlyChanged ? view.entries.filter(it => it.status !== 'unchanged') : view.entries;
+    $('expCount').textContent = t('expCount', {total: allCount, changed: changedCount});
+    if (view.movedAnc) {
+      bannerHtml = `<span><strong>${esc(t('expInsideMoved'))}</strong> ${esc(relPath(view.movedAnc.mappedAbs) || view.movedAnc.mappedAbs)}</span>`;
+    }
+  }
+
+  $('expBanner').hidden = !bannerHtml;
+  $('expBanner').innerHTML = bannerHtml;
+  currentVisibleItems = list;
+
+  if (!list.length) {
+    $('expListPane').innerHTML = `<div class="exp-empty">${esc(t(searching ? 'expEmptySearch' : 'expEmptyDir'))}</div>`;
+    renderExplorerInspector(null);
+    return;
+  }
+
+  let selected = list.find(it => it.key === expSelectedKey);
+  if (!selected) {
+    selected = list.find(it => it.status !== 'unchanged') || list[0];
+    expSelectedKey = selected.key;
+    expRevealStatus = null;
+  }
+
+  $('expListPane').innerHTML = `<table class="exp-table">
+    <thead><tr><th>${esc(t('expColName'))}</th><th>${esc(t('expColWhere'))}</th><th style="text-align:right">${esc(t('expColSize'))}</th></tr></thead>
+    <tbody>${list.map((it, idx) => {
+      const isSel = it.key === selected.key;
+      const isGhost = it.status !== 'unchanged' && it.status !== 'undone';
+      const sub = searching
+        ? `<span class="exp-item-sub">${esc(parentRelPosix(it.relAtT) || '.')}</span>`
+        : (it.isDir && isGhost ? `<span class="exp-item-sub">${esc(t('expEnterMovedTip'))}</span>` : '');
+      const sizeText = it.isDir ? t('expDirLabel') : formatBytes(it.size);
+      return `<tr class="exp-row${isSel ? ' selected' : ''}${isGhost ? ' is-ghost' : ''}" data-exp-idx="${idx}">
+        <td><div class="exp-name-cell"><span class="exp-ico" aria-hidden="true">${it.isDir ? '📁' : '📄'}</span><div><span class="exp-item-name">${esc(it.name)}</span>${sub}</div></div></td>
+        <td>${statusPillHtml(it)}</td>
+        <td class="exp-size-col">${esc(sizeText)}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+  renderExplorerInspector(selected);
+}
+
+function navigateExplorer(nextDir, {pushHistory = true, selectKey = ''} = {}) {
+  const clean = (nextDir || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (pushHistory && clean !== expCurDir) expNavStack.push(expCurDir);
+  expCurDir = clean;
+  expSelectedKey = selectKey;
+  expRevealStatus = null;
+  renderExplorer();
+}
+
+function renderAppMode() {
+  const showSwitch = !preview;
+  $('modeSwitch').hidden = !showSwitch;
+  $('livePill').hidden = !isLive;
+  $('livePill').textContent = t('liveBadge');
+  $('modeExplorer').textContent = t('modeExplorer');
+  $('modeJournal').textContent = t('modeJournal');
+  $('expBack').textContent = t('expBack');
+  $('expUp').textContent = t('expUp');
+  $('expHome').textContent = t('expHome');
+  $('expTimeLabel').textContent = t('expTimeLabel');
+  $('expSearch').placeholder = t('expSearchHint');
+  $('expOnlyChangedLabel').textContent = t('expOnlyChangedLabel');
+  const opts = buildTimepointOptions();
+  $('expTimeSelect').innerHTML = opts.map(o => `<option value="${o.seq}">${esc(o.label)}</option>`).join('');
+  $('expTimeSelect').value = String(expCutoffSeq);
+  if (!showSwitch) {
+    $('explorerPane').hidden = true;
+    $('journalPane').hidden = false;
+    return;
+  }
+  const inExp = appMode === 'explorer';
+  $('modeExplorer').setAttribute('aria-pressed', String(inExp));
+  $('modeJournal').setAttribute('aria-pressed', String(!inExp));
+  $('explorerPane').hidden = !inExp;
+  $('journalPane').hidden = inExp;
+}
+
+$('modeSwitch').addEventListener('click', event => {
+  const btn = event.target.closest('button[data-app-mode]');
+  if (!btn) return;
+  appMode = btn.dataset.appMode;
+  renderAppMode();
+  if (appMode === 'explorer') renderExplorer();
+  else { lastFlowKey = ''; render(); }
+});
+$('expTimeSelect').addEventListener('change', event => {
+  expCutoffSeq = Number(event.target.value) || 0;
+  expState = null;
+  expSelectedKey = '';
+  expRevealStatus = null;
+  renderExplorer();
+});
+$('expBack').addEventListener('click', () => {
+  if (!expNavStack.length) return;
+  navigateExplorer(expNavStack.pop(), {pushHistory: false});
+});
+$('expUp').addEventListener('click', () => {
+  const p = parentRelPosix(expCurDir);
+  if (p !== null) navigateExplorer(p);
+});
+$('expHome').addEventListener('click', () => navigateExplorer(''));
+$('expOnlyChanged').addEventListener('change', event => {
+  expOnlyChanged = event.target.checked;
+  renderExplorer();
+});
+$('expSearch').addEventListener('input', event => {
+  clearTimeout(expSearchTimer);
+  const val = event.target.value;
+  expSearchTimer = setTimeout(() => {
+    expSearchQuery = val;
+    expSelectedKey = '';
+    expRevealStatus = null;
+    renderExplorer();
+  }, 100);
+});
+$('expTree').addEventListener('click', event => {
+  const btn = event.target.closest('button[data-exp-dir]');
+  if (!btn) return;
+  expSearchQuery = '';
+  $('expSearch').value = '';
+  navigateExplorer(btn.dataset.expDir);
+});
+$('expCrumbs').addEventListener('click', event => {
+  const btn = event.target.closest('button[data-exp-dir]');
+  if (!btn) return;
+  expSearchQuery = '';
+  $('expSearch').value = '';
+  navigateExplorer(btn.dataset.expDir);
+});
+$('expListPane').addEventListener('click', event => {
+  const row = event.target.closest('tr[data-exp-idx]');
+  if (!row) return;
+  const item = currentVisibleItems[Number(row.dataset.expIdx)];
+  if (!item) return;
+  expSelectedKey = item.key;
+  expRevealStatus = null;
+  // Update selection highlight in-place so dblclick fires reliably without tearing down the row DOM.
+  for (const r of $('expListPane').querySelectorAll('tr.selected')) r.classList.remove('selected');
+  row.classList.add('selected');
+  renderExplorerInspector(item);
+});
+$('expListPane').addEventListener('dblclick', event => {
+  const row = event.target.closest('tr[data-exp-idx]');
+  if (!row) return;
+  const item = currentVisibleItems[Number(row.dataset.expIdx)];
+  if (!item) return;
+  if (item.isDir && typeof item.relAtT === 'string' && !item.isTraceHit) {
+    expSearchQuery = '';
+    $('expSearch').value = '';
+    navigateExplorer(item.relAtT);
+  } else if (expSearchQuery.trim() && typeof item.relAtT === 'string') {
+    const parent = parentRelPosix(item.relAtT);
+    if (parent !== null) {
+      expSearchQuery = '';
+      $('expSearch').value = '';
+      navigateExplorer(parent, {selectKey: item.key});
+    }
+  }
+});
+$('expInspector').addEventListener('click', event => {
+  const revBtn = event.target.closest('[data-reveal-path]');
+  if (revBtn) { revealLivePath(revBtn.dataset.revealPath); return; }
+  const copyPathBtn = event.target.closest('[data-copy-path]');
+  if (copyPathBtn) { copyCmdText(copyPathBtn.dataset.copyPath, copyPathBtn, 'expCopyPath'); return; }
+  const copyRevBtn = event.target.closest('[data-copy-reveal]');
+  if (copyRevBtn) {
+    const p = copyRevBtn.dataset.copyReveal;
+    const cmd = isWinRoot ? `explorer /select,"${p.replace(/"/g, '\\"')}"` : `open -R "${p.replace(/"/g, '\\"')}"`;
+    copyCmdText(cmd, copyRevBtn, 'expCopyRevealCmd');
+    return;
+  }
+  const undoBtn = event.target.closest('[data-exp-undo-seq]');
+  if (undoBtn) {
+    const seq = undoBtn.dataset.expUndoSeq;
+    const cmd = `tidy-file-tree undo --journal "${journalPath.replace(/"/g,'\\"')}" --seq ${seq}${sysFlag} --dry-run`;
+    copyCmdText(cmd, undoBtn, 'copySingleUndo');
+    return;
+  }
+  const jumpBtn = event.target.closest('[data-exp-jump-seq]');
+  if (jumpBtn) {
+    const op = bySeq.get(Number(jumpBtn.dataset.expJumpSeq));
+    if (!op) return;
+    appMode = 'journal';
+    selectedBatch = ALL_BATCHES;
+    $('search').value = '';
+    $('status').value = 'all';
+    $('kind').value = 'all';
+    renderAppMode();
+    render(op);
+  }
+});
 $('summary').addEventListener('click', event => {
   const card = event.target.closest('[data-stat-filter]');
   if (!card || preview) return;
