@@ -9,7 +9,7 @@ import secrets
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
-from executor import Journal, Protection, guard
+from executor import Journal, guard
 from safety import (SafetyError, assert_no_links, block_kind, is_reparse,
                     is_system_attr, is_system_protected_file, nested_verdict,
                     normal, within)
@@ -27,26 +27,8 @@ def scan_protection(root):
     journal = Journal(root, allow_system_drive=True)
     root = journal.root
     assert_no_links(root)
-    scopes = [journal]
-    for parent in root.parents:
-        try:
-            scope = Journal(parent, allow_system_drive=True)
-        except SafetyError:
-            continue
-        state = scope.state_dir
-        if any(os.path.lexists(path) for path in (
-                state / 'markers.tsv', state / 'policy.json',
-                state / 'marker-update.json', scope.mirror_dir / 'markers.tsv',
-                scope.mirror_dir / 'marker-update.json')):
-            scopes.append(scope)
-    markers, names, allow_cache = [], set(), False
-    for scope in scopes:
-        protection = scope.protection()
-        markers.extend(protection.markers)
-        names.update(protection.extra_names)
-        allow_cache = allow_cache or bool(getattr(protection, 'allow_cache_cleanup', False))
-    protection = Protection(markers, names, allow_cache_cleanup=allow_cache)
-    guard(root, root, protection, allow_root=True)
+    protection = journal.protection(inherit_cache_cleanup=True, include_skips=True)
+    guard(root, root, protection, allow_root=True, allow_container=True)
     return root, protection
 
 
@@ -84,7 +66,8 @@ def inspect_level(path, root, protection):
             elif (marker or not item.is_file(follow_symlinks=False)
                   or is_system_attr(item.path)
                   or is_system_protected_file(item.path)
-                  or not nested_verdict(item.path, allow_cache_cleanup=bool(getattr(protection, 'allow_cache_cleanup', False)))[0]):
+                  or not nested_verdict(item.path, allow_cache_cleanup=protection.allow_cache_cleanup,
+                                        nested_rules=protection.nested_rules)[0]):
                 hidden += 1
                 continue
             entries.append({'name': item.name, 'dir': is_dir})

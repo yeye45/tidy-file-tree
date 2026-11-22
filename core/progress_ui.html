@@ -301,6 +301,9 @@ const dict = {
   s5Val: ['已执行 {done} 项（{batches} 批）', '{done} applied ({batches} batches)'],
   s5Wait: ['尚未执行真实移动', 'No file moves applied yet'],
   mCov: ['S6 覆盖率', 'S6 Coverage'], mCovSub: ['遗漏 {missing} 个待补节点', '{missing} node(s) missing'],
+  mCovTruncated: ['扫描达到目录上限，覆盖率不完整', 'Scan limit reached; coverage is partial'],
+  mCovUnverified: ['遗漏 {missing} 个 · {unverified} 个未能逐项核对', '{missing} missing · {unverified} not verified item by item'],
+  mInvalid: ['有 {n} 个无效统计字段已忽略', '{n} invalid summary field(s) ignored'],
   mUnits: ['已清点最小单元', 'Units Counted'], mUnitsSub: ['跨 {n} 个目录归出 {g} 组', '{g} groups across {n} dirs'],
   mCheck: ['待人工拍板', 'Needs Decision'], mCheckSub: ['AI 问答 {a}/{t} · 计划 {p} 项', 'AI {a}/{t} · Plan {p} actions'],
   mExec: ['已执行动作', 'Applied Ops'], mExecSub: ['移动 {m} · 改名 {r} · 建目录 {k}', 'Move {m} · Rename {r} · Mkdir {k}'],
@@ -465,14 +468,16 @@ function render() {
     </div>`;
   }).join('');
 
-  const covPct = s.s6.total > 0 ? `${pct(s.s6.covered, s.s6.total)}%` : '—';
+  const covPct = !s.s6.truncated && s.s6.total > 0 ? `${pct(s.s6.covered, s.s6.total)}%` : '—';
   const metricDefs = [
-    [t('mCov'), covPct, t('mCovSub', {missing: s.s6.missing}), s.s6.ok ? 'tone-good' : ''],
+    [t('mCov'), covPct, s.s6.truncated ? t('mCovTruncated') : s.s6.unverified
+      ? t('mCovUnverified', s.s6) : t('mCovSub', {missing: s.s6.missing}), s.s6.ok ? 'tone-good' : ''],
     [t('mUnits'), s.s2.units, t('mUnitsSub', {n: s.s3.done, g: s.s3.groups}), ''],
     [t('mCheck'), s.s4.needCheck, t('mCheckSub', {a: s.s4.aiAnswered, t: s.s4.aiTotal, p: s.s4.planCount}), s.s4.needCheck > 0 ? 'tone-warn' : ''],
     [t('mExec'), s.s5.done, t('mExecSub', {m: s.s5.moves, r: s.s5.renames, k: s.s5.mkdirs}), s.s5.done > 0 ? 'tone-accent' : ''],
     [t('mProt'), snap.protectedSkipped + snap.secretCount, t('mProtSub', {p: snap.protectedSkipped, s: snap.secretCount}), ''],
   ];
+  if (s.s4.invalidArtifactCount > 0) metricDefs[2][2] += ' · ' + t('mInvalid', {n: s.s4.invalidArtifactCount});
   $('metrics').innerHTML = metricDefs.map(([k, v, sub, cls]) =>
     `<div class="metric"><div class="metric-k">${esc(k)}</div><div class="metric-v ${cls}">${esc(v)}</div><div class="metric-sub">${esc(sub)}</div></div>`
   ).join('');

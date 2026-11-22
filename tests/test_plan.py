@@ -172,7 +172,7 @@ class TestPlan(unittest.TestCase):
             write_probe(probe, "keep.json", {
                 "path": str(src), "action": "keep", "unit_why": "test"})
             out = root / "_organize" / "plan.tsv"
-            out.write_text("stale contents\nold action\n", encoding="utf-8")
+            out.write_text(f"op\tsrc\tdst\treason\nrename\t{src}\toldname\told action\n", encoding="utf-8")
             args = type("A", (), {
                 "root": str(root), "probe": None, "policy": None,
                 "out": str(out), "dry_run": False, "quiet": True})()
@@ -181,6 +181,10 @@ class TestPlan(unittest.TestCase):
 
             self.assertEqual(out.read_text(encoding="utf-8"),
                              "op\tsrc\tdst\treason\n")
+            out.write_text("user notes\n", encoding="utf-8")
+            with self.assertRaises(executor.SafetyError):
+                executor.plan(args)
+            self.assertEqual(out.read_text(encoding="utf-8"), "user notes\n")
 
     def test_reads_root_policy_with_legacy_top_level_zones(self):
         with project_tempdir() as tmp:

@@ -1,9 +1,11 @@
 """Shared lexical path, marker and reparse rules (Python 3.9+)."""
 import csv
+from dataclasses import dataclass
 import hashlib
 import io
 import os
 from pathlib import Path
+import re
 import stat
 
 FILE_ATTRIBUTE_SYSTEM = 0x4
@@ -64,6 +66,101 @@ NESTED_DENY = {
     ".ssh", ".gnupg", ".aws", ".kube",
     "$recycle.bin", "system volume information",
 }
+
+GAME_AREAS = {'games', 'my games', 'steamlibrary', 'steamapps', 'epic games', 'battle.net'}
+SAVE_AREAS = {'save', 'saves', 'saved games', 'savegames', 'savedgames', 'savedata',
+              'save data', 'save_data', '存档', '游戏存档'}
+
+
+@dataclass(frozen=True)
+class NestedProtection:
+    parent: tuple
+    exceptions: tuple
+
+
+def compile_nested_protection(root, policy):
+    records = policy.get('nested_protection', [])
+    if not isinstance(records, list):
+        raise SafetyError('nested_protection 必须是规则数组')
+    if not records:
+        return []
+    root_parts = Path(key(root)).parts
+
+    def pattern(value, *, allow_wildcard):
+        if not isinstance(value, str) or not value.strip():
+            raise SafetyError('嵌套保护路径必须是非空字符串')
+        raw = Path(value)
+        if raw.anchor and not raw.is_absolute():
+            raise SafetyError('请使用绝对路径或相对整理根的路径')
+        raw_parts = re.split(r'[\\/]' if os.name == 'nt' else '/', value)
+        if os.name == 'nt' and any(':' in part for part in raw_parts[1:]):
+            raise SafetyError('嵌套保护路径含无效的 Windows 路径段')
+        if any(part and (part in ('.', '..') or part.rstrip(' .') != part
+                        or re.search(r'[?\[\]<>|"\x00-\x1f]', part)
+                        or ('*' in part and (part != '*' or not allow_wildcard))) for part in raw_parts):
+            raise SafetyError('嵌套保护只支持普通路径和整段的单层 *')
+        parts = (Path(root) / raw).parts
+        first_wildcard = parts.index('*') if '*' in parts else len(parts)
+        prefix = Path(key(Path(*parts[:first_wildcard]))).parts
+        return prefix + tuple(os.path.normcase(part) for part in parts[first_wildcard:])
+
+    compiled = []
+    for record in records:
+        if not isinstance(record, dict) or not isinstance(record.get('exceptions', []), list):
+            raise SafetyError('嵌套保护规则需要 no_touch 路径和 exceptions 数组')
+        parent = pattern(record.get('no_touch'), allow_wildcard=False)
+        if len(parent) <= len(root_parts) or parent[:len(root_parts)] != root_parts:
+            raise SafetyError('嵌套保护的母目录必须在整理根内')
+        exceptions = []
+        for value in record.get('exceptions', []):
+            allowed = pattern(value, allow_wildcard=True)
+            if len(allowed) <= len(parent) or allowed[:len(parent)] != parent:
+                raise SafetyError('例外必须是母目录内的子路径，母目录本身不可放行')
+            exceptions.append(allowed)
+        compiled.append(NestedProtection(parent, tuple(exceptions)))
+    return compiled
+
+
+def active_game_save(parts):
+    game_context = False
+    for part in parts:
+        name = part.casefold()
+        if name in GAME_AREAS:
+            game_context = True
+        if game_context and name in SAVE_AREAS:
+            return True
+    return False
+
+
+def nested_policy_verdict(path, rules, *, descendants=False, allow_container=False):
+    """Return whether configured scope admits this path and the waived soft prefix length."""
+    if not rules:
+        return True, 0
+    parts = Path(key(path)).parts
+    through = 0
+    for rule in rules:
+        parent = rule.parent
+        if len(parts) < len(parent) and parent[:len(parts)] == parts:
+            if descendants:
+                return False, 0
+            if allow_container and rule.exceptions and os.path.isdir(path):
+                through = max(through, len(parts) - 1)
+            continue
+        if parts[:len(parent)] != parent:
+            continue
+        admitted = 0
+        if not any(part.casefold() in SAVE_AREAS for part in parts[len(parent)-1:]):
+            for exception in rule.exceptions:
+                if not all(expected == '*' or expected == actual for expected, actual in zip(exception, parts)):
+                    continue
+                if len(parts) >= len(exception):
+                    admitted = max(admitted, len(exception) - 1)
+                elif allow_container and os.path.isdir(path):
+                    admitted = max(admitted, len(parts) - 1)
+        if not admitted:
+            return False, 0
+        through = max(through, admitted)
+    return True, through
 
 # 仅在系统盘根第一层拦截的系统/引导/厂商驱动目录（避免误伤 D:\软件\Drivers 等用户目录）
 SYSTEM_DRIVE_TOP_DENY = {
@@ -311,12 +408,19 @@ APPDATA_NEVER_TOUCH = {
     'packtidy', 'packtidy-mirror',
 }
 
-# 清理腾空间模式下，AppData\Local 或 Roaming 下允许检查/隔离的安全缓存目录名
-APPDATA_SAFE_CACHE_NAMES = {
-    'temp', 'tmp', 'cache', 'caches', 'code cache', 'gpucache',
-    'd3dscache', 'dxcache', 'glcache', 'shadercache', 'shader cache',
-    'crashdumps', 'inetcache', 'npm-cache', 'pnpm-store', 'v3-cache',
-    'cache_data', 'cachestorage',
+# 清理腾空间模式下明确允许的 AppData 缓存根。通用 Cache/Caches 名称不构成授权。
+# 路径均相对 Local 或 Roaming；Chrome/Edge 的 Cache 仅允许在明确的浏览器配置目录中。
+APPDATA_SAFE_CACHE_PATHS = {
+    ('temp',), ('tmp',), ('crashdumps',), ('inetcache',),
+    ('pip', 'cache'), ('npm-cache',), ('pnpm-store',),
+    ('nvidia', 'dxcache'), ('nvidia', 'glcache'),
+    ('nvidia', 'nv_cache'), ('d3dscache',),
+    ('google', 'chrome', 'user data', 'default', 'cache'),
+    ('google', 'chrome', 'user data', 'default', 'code cache'),
+    ('google', 'chrome', 'user data', 'default', 'gpucache'),
+    ('microsoft', 'edge', 'user data', 'default', 'cache'),
+    ('microsoft', 'edge', 'user data', 'default', 'code cache'),
+    ('microsoft', 'edge', 'user data', 'default', 'gpucache'),
 }
 
 # 清理腾空间模式下，用户主目录下允许检查的已知开发缓存点目录（不含 .ssh/.gnupg/.vscode 等配置与凭据）
@@ -356,12 +460,20 @@ def _appdata_cleanup_verdict(parts, *, allow_container=False):
             return (True, False, '不能移动或删除 AppData 根容器本身，仅允许处理内部安全缓存子目录')
         if tail[0] not in ('local', 'roaming'):
             return (True, False, f"AppData\\{tail[0]} 不在安全缓存清理范围内（保留存档与配置）")
-        sub = tail[1:]
-        # Direct safe cache dir or nested safe cache dir (e.g. Local\Temp, Local\pip\cache, Local\NVIDIA\DXCache)
-        if any(seg in APPDATA_SAFE_CACHE_NAMES for seg in sub):
-            return (True, True, '清理模式放行 AppData 安全缓存子目录')
-        # Allow traversing one app folder under Local/Roaming when browsing containers
-        if allow_container and len(sub) == 1:
+        sub = tuple(tail[1:])
+        # Exact known roots; unknown paths containing a segment named Cache remain protected.
+        if any(sub[:len(cache_root)] == cache_root for cache_root in APPDATA_SAFE_CACHE_PATHS):
+            return (True, True, '清理模式放行明确列出的 AppData 缓存目录')
+        # Firefox cache is stored per profile under Profiles\<profile>\cache2.
+        firefox_profiles = ('mozilla', 'firefox', 'profiles')
+        firefox_profile = (len(sub) >= 4 and sub[:3] == firefox_profiles
+                           and sub[3].endswith('.default-release'))
+        if firefox_profile and sub[4:5] == ('cache2',):
+            return (True, True, '清理模式放行 Firefox profile cache')
+        # Only browse parents of a known cache path, without moving the application/profile.
+        if allow_container and (any(sub == cache_root[:len(sub)] for cache_root in APPDATA_SAFE_CACHE_PATHS)
+                                or sub == firefox_profiles[:len(sub)]
+                                or (firefox_profile and len(sub) == 4)):
             return (True, True, '清理模式允许查看应用目录下是否存在安全缓存')
         return (True, False, 'AppData 仅放行已知安全缓存/临时目录，其余应用配置与数据默认保护')
 
@@ -378,7 +490,8 @@ def _appdata_cleanup_verdict(parts, *, allow_container=False):
     return (False, False, '')
 
 
-def nested_verdict(path, *, allow_cache_cleanup=False, allow_container=False):
+def nested_verdict(path, *, allow_cache_cleanup=False, allow_container=False,
+                   nested_rules=(), descendants=False):
     """判断路径的嵌套保护状态。
 
     返回 (允许整理, 依据)
@@ -402,6 +515,14 @@ def nested_verdict(path, *, allow_cache_cleanup=False, allow_container=False):
         return (False, "路径无法解析")
 
     parts.reverse()   # 从根到叶
+
+    if active_game_save(parts) or (drive and drive == _system_drive() and len(parts) >= 3
+                                   and parts[0] == 'users' and parts[2] == 'saved games'):
+        return (False, '游戏可能正在使用该存档目录，保留原路径')
+    configured, soft_prefix = nested_policy_verdict(path, nested_rules, descendants=descendants,
+                                                    allow_container=allow_container)
+    if not configured:
+        return (False, '命中嵌套保护，只有明确列出的子目录可整理')
 
     # 清理腾空间模式下，对 AppData 及已知开发缓存先走精细白名单判定（其余强制禁区仍优先拦截）
     if allow_cache_cleanup:
@@ -436,13 +557,15 @@ def nested_verdict(path, *, allow_cache_cleanup=False, allow_container=False):
             return (False, f"'{seg}' 属于强制保护目录，整棵子树禁止整理")
         elif seg in NESTED_ALLOW:
             allow_at, allow_name = i, seg
-        elif seg in PROTECTED_NAMES:
+        elif seg in PROTECTED_NAMES and i >= soft_prefix:
             deny_at, deny_name = i, seg
 
     if deny_at > allow_at:
         return (False, f"'{deny_name}' 在更深处，优先保护")
     if allow_at >= 0:
         return (True, f"'{allow_name}' 是允许整理的区域")
+    if soft_prefix:
+        return (True, '命中嵌套保护的显式例外或只读通道')
     return (True, "无保护标记")
 
 

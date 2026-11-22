@@ -189,6 +189,7 @@ dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);bo
     <span class="metric-pill" id="decideMetric"></span>
     <span class="metric-pill ok" id="moveMetric"></span>
     <span class="metric-note" id="keepMetric" hidden></span>
+    <span class="metric-pill warn" id="staleMetric" role="status" hidden></span>
     <button type="button" class="conflict-pill" id="conflictPill" hidden></button>
     <span class="filter-chip" id="targetFilterChip" hidden><span id="targetFilterText"></span><button type="button" id="clearTargetFilter" aria-label="清除目标筛选" data-i18n-aria-label="清除目标筛选">×</button></span>
     <button type="button" class="wire-mode-btn" id="focusWiresBtn" aria-pressed="false" hidden></button>
@@ -253,7 +254,7 @@ function t(source, values={}) {
 }
 const KEEP = '@keep';
 const tierLabels = {direct:'直接定',verify:'需验证',full:'完整验证'};
-const storageKey = 'tidy-file-tree-wires-v1:' + DATA.root;
+const storageKey = 'tidy-file-tree-wires-v2:' + DATA.root;
 const themeKey = 'tidy-file-tree-theme';
 const rootSep = /^(?:[A-Za-z]:\\|\\\\)/.test(DATA.root) ? '\\' : '/';
 const targets = new Map([[KEEP,{path:KEEP,label:t('保持原位'),depth:0}], ...DATA.zones.map(z => [z.path,z])]);
@@ -265,7 +266,12 @@ const groups = DATA.nodes.flatMap(node => node.groups.map(group => {
 }));
 const byGroup = new Map(groups.map(g => [g.id,g]));
 const unitKeys = new Set(groups.flatMap(g => g.keys));
+const sourceWitnesses = new Map(groups.flatMap(g => g.units.map(u => [u.key,u.sourceWitness ?? null])));
+const renameChoices = new Map(groups.filter(g => g.rename).map(g => [g.keys[0], {
+  ...g.rename, token:g.rename.target ? '@rename:' + g.rename.target : null,
+}]));
 const places = new Map();
+const invalidatedPlaces = new Set();
 const openGroups = new Set();
 const unitLimits = new Map();
 const openZones = new Set();
@@ -279,13 +285,14 @@ let exportRows = [];
 let selectionNotice = '';
 let filterTarget = null;
 let hoverFocus = null;
-let currentConflicts = new Set();
+let currentConflicts = new Map();
 let focusedGroupId = null;
 let leftLimit = 50;
 let focusWiresOnly = false;
 const undoStack = [], redoStack = [];
 
 function needsDecision(g) {
+  if (g.keys.some(key => invalidatedPlaces.has(key) && !places.has(key))) return true;
   if (g.suggest.needsCheck || g.tier === 'full' || !g.suggest.target) return true;
   const c = g.ai?.confirmation;
   return Boolean(c && (c.holds !== true || c.confidence === 'low'));
@@ -293,12 +300,10 @@ function needsDecision(g) {
 function isSuggestedMove(g) {
   return Boolean(g.suggest.target && g.suggest.target !== KEEP);
 }
-let currentTab = groups.some(needsDecision) ? 'decide' : groups.some(isSuggestedMove) ? 'moves' : 'all';
-
 function readSetting(key, legacyKey, parse) {
   try {
     const current = localStorage.getItem(key);
-    const raw = current ?? localStorage.getItem(legacyKey);
+    const raw = current ?? (legacyKey ? localStorage.getItem(legacyKey) : null);
     if (raw === null) return;
     const value = parse(raw);
     if (value !== undefined && current === null) {
@@ -307,15 +312,25 @@ function readSetting(key, legacyKey, parse) {
     return value;
   } catch (_) {}
 }
-const savedPlaces = readSetting(storageKey, 'packtidy-wires-v1:' + DATA.root, raw => {
+function parsePlaces(raw) {
   const saved = JSON.parse(raw);
   if (Array.isArray(saved)) return saved;
-}) ?? [];
-for (const entry of savedPlaces) {
-  if (!Array.isArray(entry) || entry.length !== 2) continue;
-  const [id,target] = entry;
-  if (unitKeys.has(id) && targets.has(target)) places.set(id,target);
 }
+function allowedAssignment(id,target) {
+  const rename = renameChoices.get(id);
+  return rename ? target === KEEP || Boolean(rename.token && target === rename.token) : targets.has(target);
+}
+const currentSavedPlaces = readSetting(storageKey, null, parsePlaces);
+const savedPlaces = currentSavedPlaces ?? readSetting('tidy-file-tree-wires-v1:' + DATA.root,
+  'packtidy-wires-v1:' + DATA.root, parsePlaces) ?? [];
+for (const entry of savedPlaces) {
+  if (!Array.isArray(entry) || entry.length !== (currentSavedPlaces ? 3 : 2)) continue;
+  const [id,target,witness = null] = entry;
+  if (!unitKeys.has(id)) continue;
+  if (!allowedAssignment(id,target) || witness !== (sourceWitnesses.get(id) ?? null)) invalidatedPlaces.add(id);
+  else places.set(id,target);
+}
+let currentTab = groups.some(needsDecision) ? 'decide' : groups.some(isSuggestedMove) ? 'moves' : 'all';
 const savedTheme = readSetting(themeKey, 'packtidy-theme', raw => {
   if (raw === 'light' || raw === 'dark') return raw;
 });
@@ -333,22 +348,53 @@ function state(g) {
 function normalizePath(value) {
   return DATA.caseInsensitive ? value.replace(/\\/g,'/').toLocaleLowerCase() : value;
 }
-function computeConflicts() {
-  const sources = new Set(), conflicts = new Set();
+function plannedActions() {
+  const actions = [];
   for (const g of groups) {
     for (const u of g.units) {
       const target = places.get(u.key);
-      if (!target || target === KEEP || !u.source) continue;
-      const source = normalizePath(u.source);
-      if (sources.has(source)) conflicts.add(source);
-      sources.add(source);
+      if (!target || target === KEEP || !u.source || !u.sourceWitness || !allowedAssignment(u.key,target)) continue;
+      const rename = renameChoices.get(u.key);
+      if (rename) actions.push({row:['rename',u.source,rename.newName,'工作台确认改名'], target:rename.target});
+      else actions.push({row:['move',u.source,target,'工作台手动连线'], target});
     }
   }
-  for (const source of sources) {
+  return actions;
+}
+function computeConflicts(actions = plannedActions()) {
+  const sources = new Map(), conflicts = new Map(), renamed = new Map(), renameTargets = new Map();
+  const conflict = (a,b) => {conflicts.set(normalizePath(a),a); conflicts.set(normalizePath(b),b);};
+  for (const {row,target} of actions) {
+    const [op,source] = row;
+    const key = normalizePath(source);
+    if (sources.has(key)) conflict(source,sources.get(key));
+    sources.set(key,source);
+    if (op === 'rename') {
+      const destination = normalizePath(target);
+      if (renameTargets.has(destination)) conflict(source,renameTargets.get(destination));
+      renameTargets.set(destination,source);
+      renamed.set(key,source);
+    }
+  }
+  for (const [source,raw] of sources) {
     for (let sep = source.lastIndexOf('/'); sep > 0; sep = source.lastIndexOf('/',sep-1)) {
       const ancestor = source.slice(0,sep);
-      if (sources.has(ancestor)) {conflicts.add(source); conflicts.add(ancestor);}
+      if (sources.has(ancestor)) conflict(raw,sources.get(ancestor));
     }
+  }
+  for (const {row,target} of actions) {
+    if (row[0] !== 'move') continue;
+    const source = row[1];
+    const destination = normalizePath(target);
+    // A move cannot use a folder that another action would rename or create by renaming.
+    for (let parent = destination; parent;) {
+      if (renamed.has(parent)) conflict(source,renamed.get(parent));
+      if (renameTargets.has(parent)) conflict(source,renameTargets.get(parent));
+      parent = parent.slice(0,Math.max(0,parent.lastIndexOf('/')));
+    }
+    const leaf = source.split(rootSep).at(-1);
+    const finalPath = normalizePath(target.replace(/[\\/]$/,'') + rootSep + leaf);
+    if (renameTargets.has(finalPath)) conflict(source,renameTargets.get(finalPath));
   }
   return conflicts;
 }
@@ -388,7 +434,15 @@ function getCandidates(g) {
   const alts = scored.slice(0, 2).map(([,p]) => p);
   return {primary, alts};
 }
-function save() {try {localStorage.setItem(storageKey,JSON.stringify([...places]));} catch (_) {} updateHistoryButtons();}
+function unresolvedPlaces() {return [...invalidatedPlaces].filter(key => !places.has(key));}
+function save() {
+  try {
+    const saved = [...places].map(([id,target]) => [id,target,sourceWitnesses.get(id) ?? null]);
+    for (const id of unresolvedPlaces()) saved.push([id,null,null]);
+    localStorage.setItem(storageKey,JSON.stringify(saved));
+  } catch (_) {}
+  updateHistoryButtons();
+}
 function snapshot() {undoStack.push([...places]); if (undoStack.length > 100) undoStack.shift(); redoStack.length=0; updateHistoryButtons();}
 function updateHistoryButtons() {$('undoButton').disabled=!undoStack.length; $('redoButton').disabled=!redoStack.length;}
 function restore(next,stack) {stack.push([...places]); places.clear(); for (const [k,v] of next) places.set(k,v); active=pointer=null; save(); refresh();}
@@ -400,7 +454,7 @@ function reason(g) {
   const rows = [];
   if (g.tier) rows.push([t('直接定') === t(tierLabels[g.tier]) ? t('确认') : t('需验证'), t(tierLabels[g.tier])]);
   if (g.why) rows.push([t('归组依据'),g.why]);
-  if (g.suggest.reason) rows.push([t('规则依据'),g.suggest.reason]);
+  if (g.suggest.reason) rows.push([t('规则依据'),t(g.suggest.reason)]);
   if (Array.isArray(g.suggest.evidence)) for (const e of g.suggest.evidence) rows.push([t('证据'),e]);
   if (a) {
     rows.push([t('猜想'),a.hypothesis],[t('验证'),a.verification?.method],[t('发现'),a.verification?.findings]);
@@ -412,12 +466,17 @@ function reason(g) {
   return rows.filter(([,value]) => value).map(([title,value]) => `<div><strong>${title}</strong>　${esc(value)}</div>`).join('');
 }
 function guidanceLine(g) {
+  if (g.rename) {
+    const suggestion = g.rename.newName
+      ? `<strong>${esc(t('建议改名：{before} → {after}',{before:g.name,after:g.rename.newName}))}</strong>` : '';
+    return [suggestion,g.rename.issue ? `<span>${esc(t(g.rename.issue))}</span>` : ''].filter(Boolean).join(' ');
+  }
   const rec = g.suggest.target ? (g.suggest.target === KEEP ? null : label(g.suggest.target)) : g.suggest.label;
   const parts = [];
   if (rec) parts.push(`<strong>${esc(t('建议 → {target}',{target:rec}))}</strong>`);
   else if (g.suggest.target === KEEP) parts.push(`<span>${esc(t('建议不动'))}</span>`);
   else parts.push(`<strong>${esc(t('去向不确定，请手动指定'))}</strong>`);
-  const note = g.ai?.confirmation?.residualRisk || g.ai?.hypothesis || g.suggest.reason;
+  const note = g.ai?.confirmation?.residualRisk || g.ai?.hypothesis || (g.suggest.reason && t(g.suggest.reason));
   if (note) parts.push(`<span>· ${esc(note)}</span>`);
   return parts.join(' ');
 }
@@ -447,6 +506,7 @@ function advanceFocus(afterId) {
   if (next) focusedGroupId = next.id;
 }
 function renderDetailsBody(g) {
+  if (g.rename) return `<div class="evidence">${reason(g) || t('暂无判断依据。')}</div>`;
   const limit = unitLimits.get(g.id) ?? 30;
   const slice = g.units.slice(0, limit);
   const left = g.units.length - slice.length;
@@ -472,7 +532,9 @@ function renderGroup(g, listLen) {
   const isOpen = openGroups.has(g.id);
   const canAccept = g.suggest.target && g.suggest.target !== KEEP && targets.has(g.suggest.target) && s.count < g.keys.length;
   let statusBadge = '';
-  if (s.target) {
+  if (g.rename && s.target) {
+    statusBadge = `<span class="badge linked">${esc(t(s.target === KEEP ? '保持原位' : '已安排改名'))}</span>`;
+  } else if (s.target) {
     statusBadge = `<button type="button" class="badge linked badge-btn" data-action="jump-target" data-dest="${esc(s.target)}" title="${esc(t('定位到右侧目标'))}">→ ${esc(label(s.target))}</button>`;
   } else if (isFullLinked) {
     statusBadge = `<span class="badge linked">${esc(t('已指定 · 多目标'))}</span>`;
@@ -487,11 +549,14 @@ function renderGroup(g, listLen) {
   if (s.count) cardClasses.push(s.target === KEEP ? 'is-keep' : 'is-linked');
   if (groupHasConflict(g)) cardClasses.push('conflict-card');
   const actionsHtml = [];
-  if (canAccept) actionsHtml.push(`<button type="button" class="card-btn accept-btn" data-action="apply-suggestion" ${sourceAttrs(g.id)}>${esc(t('采用建议'))}</button>`);
+  if (g.rename && !s.count) {
+    if (g.rename.target) actionsHtml.push(`<button type="button" class="card-btn accept-btn" data-action="approve-rename" ${sourceAttrs(g.id)}>${esc(t('确认改名'))}</button>`);
+    actionsHtml.push(`<button type="button" class="card-btn skip-btn" data-action="keep-rename" ${sourceAttrs(g.id)}>${esc(t('保持原位'))}</button>`);
+  } else if (canAccept) actionsHtml.push(`<button type="button" class="card-btn accept-btn" data-action="apply-suggestion" ${sourceAttrs(g.id)}>${esc(t('采用建议'))}</button>`);
   if (!s.count && isFocused && listLen > 1) actionsHtml.push(`<button type="button" class="card-btn skip-btn" data-action="skip-next" ${sourceAttrs(g.id)}>${esc(t('先跳过'))}</button>`);
   if (s.count) {
-    actionsHtml.push(`<button type="button" class="unlink" data-action="unlink" ${sourceAttrs(g.id)}>${esc(t('取消连线'))}</button>`);
-    actionsHtml.push(`<button type="button" class="unlink" data-action="override-group" ${sourceAttrs(g.id)}>${esc(t('改选目标…'))}</button>`);
+    actionsHtml.push(`<button type="button" class="unlink" data-action="unlink" ${sourceAttrs(g.id)}>${esc(t(g.rename ? '取消安排' : '取消连线'))}</button>`);
+    if (!g.rename) actionsHtml.push(`<button type="button" class="unlink" data-action="override-group" ${sourceAttrs(g.id)}>${esc(t('改选目标…'))}</button>`);
   }
   return `<article class="${cardClasses.join(' ')}" data-card="${esc(g.id)}">
     <div class="card-top">
@@ -499,10 +564,10 @@ function renderGroup(g, listLen) {
       ${statusBadge}
     </div>
     <div class="guidance">${guidanceLine(g)}</div>
-    <button type="button" class="port source-port group-port${portClass}" data-source ${sourceAttrs(g.id)} aria-label="${esc(t('从整组 {name} 连线',{name:g.name}))}"></button>
+    ${g.rename ? '' : `<button type="button" class="port source-port group-port${portClass}" data-source ${sourceAttrs(g.id)} aria-label="${esc(t('从整组 {name} 连线',{name:g.name}))}"></button>`}
     ${actionsHtml.length ? `<div class="card-footer">${actionsHtml.join('')}</div>` : ''}
     <details data-details="${esc(g.id)}" ${isOpen ? 'open' : ''}>
-      <summary>${t('查看依据与单项')}${g.ai ? t(' · AI 推理') : ''}</summary>
+      <summary>${t(g.rename ? '查看依据' : '查看依据与单项')}${g.ai ? t(' · AI 推理') : ''}</summary>
       <div class="details-body">${isOpen ? renderDetailsBody(g) : ''}</div>
     </details>
   </article>`;
@@ -618,17 +683,24 @@ function refresh() {
   renderLeft(); renderRight();
   let keepCount = 0;
   for (const target of places.values()) if (target === KEEP) keepCount++;
-  const moveCount = places.size - keepCount;
+  const renameCount = [...renameChoices].filter(([key,choice]) => choice.token && places.get(key) === choice.token).length;
+  const moveCount = places.size - keepCount - renameCount;
   const undecided = groups.filter(g => needsDecision(g) && state(g).count < g.keys.length).length;
   $('decideMetric').className = 'metric-pill ' + (undecided ? 'warn' : 'ok');
   $('decideMetric').textContent = undecided ? t('{count} 组待确认',{count:undecided}) : t('待确认项已处理完');
-  $('moveMetric').textContent = t('已安排移动 {count} 项',{count:moveCount});
+  $('moveMetric').textContent = renameCount
+    ? t('已安排移动 {moves} 项、改名 {renames} 项',{moves:moveCount,renames:renameCount})
+    : t('已安排移动 {count} 项',{count:moveCount});
   $('keepMetric').hidden = !keepCount;
   if (keepCount) $('keepMetric').textContent = t('标记不动 {count} 项',{count:keepCount});
+  const staleCount = unresolvedPlaces().length;
+  $('staleMetric').hidden = !staleCount;
+  if (staleCount) $('staleMetric').textContent = t('有 {count} 条旧连线失效，请重新确认',{count:staleCount});
   const propCount = Object.keys(DATA.proposedCategories).length;
   $('proposalsButton').hidden = !propCount;
   $('proposalsButton').textContent = t('候选类别 {count}',{count:propCount});
-  $('reviewButton').textContent = moveCount ? t('导出计划 ({count})',{count:moveCount}) : t('导出计划');
+  const actionCount = moveCount + renameCount;
+  $('reviewButton').textContent = actionCount ? t('导出计划 ({count})',{count:actionCount}) : t('导出计划');
   $('conflictPill').hidden = !currentConflicts.size;
   if (currentConflicts.size) $('conflictPill').textContent = t('存在 {count} 处路径冲突',{count:currentConflicts.size});
   $('targetFilterChip').hidden = !filterTarget;
@@ -643,7 +715,7 @@ function refresh() {
 function connectSource() {
   if (active) return active;
   const g = byGroup.get(focusedGroupId);
-  if (g && state(g).count < g.keys.length) return {group: g.id, unit: ''};
+  if (g && !g.rename && state(g).count < g.keys.length) return {group: g.id, unit: ''};
   return null;
 }
 function markActive() {
@@ -674,7 +746,7 @@ function cancelHiddenSelection() {
 }
 function assign(source,target) {
   const g = byGroup.get(source.group);
-  if (!g || !targets.has(target)) return;
+  if (!g || g.rename || !targets.has(target)) return;
   const keys = source.unit ? [source.unit] : (source.override ? g.keys : g.keys.filter(k => !places.has(k)));
   if (!keys.length) {
     active = pointer = null;
@@ -966,6 +1038,19 @@ $('left').addEventListener('click',event => {
       return;
     }
     if (button.dataset.action === 'unlink') { unlink(button.dataset.group,button.dataset.unit); return; }
+    if (button.dataset.action === 'approve-rename' || button.dataset.action === 'keep-rename') {
+      const g = byGroup.get(button.dataset.group);
+      if (!g?.rename) return;
+      const key = g.keys[0];
+      const target = button.dataset.action === 'approve-rename' ? renameChoices.get(key)?.token : KEEP;
+      if (!target || !allowedAssignment(key,target) || places.get(key) === target) return;
+      snapshot();
+      places.set(key,target);
+      active = pointer = null;
+      advanceFocus(g.id);
+      save(); refresh();
+      return;
+    }
     if (button.dataset.action === 'override-group') {
       active = {group:button.dataset.group,unit:'',override:true};
       focusedGroupId = active.group;
@@ -1079,7 +1164,7 @@ async function copyText(text, button, labelKey) {
   }
 }
 function collectReview() {
-  const rows = [], pending = [], reviewOnly = [], kept = [];
+  const actions = plannedActions(), pending = [], reviewOnly = [], kept = [];
   for (const g of groups) {
     const entries = g.units.length ? g.units : [{key:g.id,label:g.name,source:null}];
     for (const u of entries) {
@@ -1087,34 +1172,23 @@ function collectReview() {
       const display = `${g.node.name} / ${g.name} / ${u.label}`;
       if (!target) pending.push(display);
       else if (target === KEEP) kept.push(display);
-      else if (!u.source) reviewOnly.push(`${display} → ${label(target)}`);
-      else rows.push(['move',u.source,target,'工作台手动连线']);
+      else if (!u.source || !u.sourceWitness) reviewOnly.push(`${display} → ${label(target)}`);
     }
   }
-  const sources = new Map(), conflicts = new Map();
-  for (const row of rows) {
-    const source = normalizePath(row[1]);
-    if (sources.has(source)) conflicts.set(source, row[1]);
-    else sources.set(source, row[1]);
-  }
-  for (const [source, raw] of sources) {
-    for (let sep = source.lastIndexOf('/'); sep > 0; sep = source.lastIndexOf('/',sep-1)) {
-      const ancestor = source.slice(0,sep);
-      if (sources.has(ancestor)) {conflicts.set(source, raw); conflicts.set(ancestor, sources.get(ancestor));}
-    }
-  }
-  return {rows,pending,reviewOnly,kept,conflicts};
+  return {actions,pending,reviewOnly,kept,conflicts:computeConflicts(actions)};
 }
 function showReview() {
   const r = collectReview();
-  exportRows = r.conflicts.size ? [] : r.rows;
+  exportRows = r.conflicts.size ? [] : r.actions.map(action => action.row);
+  const describe = ({row,target}) => `${row[1]} → ${target}`;
   const sections = [
-    [t('待移动'),r.rows.map(row => `${row[1]} → ${row[2]}`)],
+    [t('待移动'),r.actions.filter(action => action.row[0] === 'move').map(describe)],
+    [t('待改名'),r.actions.filter(action => action.row[0] === 'rename').map(describe)],
     [t('待连'),r.pending],[t('仅复核（缺少已确认来源）'),r.reviewOnly],[t('保持原位'),r.kept],
   ];
   $('reviewStatus').textContent = r.conflicts.size
-    ? t('以下来源路径存在重复或父子重叠，请先取消冲突连线后再导出：')
-    : t('共 {actions} 项待移动，{pending} 项未连线将留在原处。下载动作表后，请先运行预演命令核对路径，再使用同一份 receipt 清单执行。',{actions:r.rows.length,pending:r.pending.length});
+    ? t('以下动作存在来源或落点冲突，请先取消冲突的安排。')
+    : t('共 {actions} 项待执行，{pending} 项未确认将留在原处。下载动作表后，请先预演，再使用同一份预演清单执行。',{actions:r.actions.length,pending:r.pending.length});
   $('reviewConflicts').hidden = !r.conflicts.size;
   if (r.conflicts.size) {
     $('reviewConflicts').innerHTML = `<strong>${esc(t('冲突路径（{count}）',{count:r.conflicts.size}))}</strong><ul>${[...r.conflicts.values()].map(p => `<li>${esc(p)}</li>`).join('')}</ul>`;
@@ -1129,6 +1203,7 @@ function showReview() {
   $('downloadActions').disabled = !exportRows.length;
   const changed = [];
   for (const g of groups) {
+    if (g.rename) continue;
     const proposedKey = g.suggest.target;
     const proposed = proposedKey ? label(proposedKey) : g.suggest.label;
     if (!proposed) continue;

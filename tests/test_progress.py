@@ -7,6 +7,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 from threading import Thread
 from urllib.request import urlopen
+from unittest.mock import patch
 
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / 'core'))
@@ -23,6 +24,9 @@ class ProgressDashboardTests(unittest.TestCase):
         self.root = self.workspace / 'disk'
         self.root.mkdir()
         self.addCleanup(self.temp.cleanup)
+        environment = patch.dict(os.environ, {'LOCALAPPDATA': str(self.workspace / 'local-state')})
+        environment.start()
+        self.addCleanup(environment.stop)
 
     def test_fresh_root_is_read_only_and_idle(self):
         (self.root / 'Downloads').mkdir()
@@ -59,8 +63,14 @@ class ProgressDashboardTests(unittest.TestCase):
         (probe / 'probe_dl.json').write_text(json.dumps({'path': str(dl), 'action': 'split'}), encoding='utf-8')
         (probe / 'probe_media.json').write_text(json.dumps({'path': str(media), 'action': 'keep'}), encoding='utf-8')
         # S2 & S3 for Downloads
-        (probe / 'units_dl.json').write_text(json.dumps({'path': str(dl), 'total_units': 12}), encoding='utf-8')
-        (probe / 'group_dl.json').write_text(json.dumps({'path': str(dl), 'groups': [{'name': 'G1'}, {'name': 'G2'}]}), encoding='utf-8')
+        members = [f'document-{n}.pdf' for n in range(12)]
+        for member in members:
+            (dl / member).touch()
+        (probe / 'units_dl.json').write_text(json.dumps({'path': str(dl), 'total_units': 12,
+                                                        'loose_files_as_units': members}), encoding='utf-8')
+        (probe / 'group_dl.json').write_text(json.dumps({'path': str(dl), 'groups': [
+            {'name': 'G1', 'units': members[:6]}, {'name': 'G2', 'units': members[6:]},
+        ]}), encoding='utf-8')
         # S4 decisions & ui
         (org / 'decisions.json').write_text(json.dumps({
             'summary': {'total': 2, 'keep': 1, 'move': 1, 'new': 0, 'needCheck': 1},
@@ -132,6 +142,35 @@ class ProgressDashboardTests(unittest.TestCase):
         snap = progress.collect_snapshot(self.root)
         self.assertEqual(snap['currentStage'], 'S1')
         self.assertFalse(snap['stages']['s4']['ready'])
+
+    def test_truncated_root_scan_is_reported_and_never_s6_ok(self):
+        for name in ('A', 'B'):
+            (self.root / name).mkdir()
+        old_limit = progress.NODE_SCAN_LIMIT
+        progress.NODE_SCAN_LIMIT = 1
+        self.addCleanup(setattr, progress, 'NODE_SCAN_LIMIT', old_limit)
+        journal = executor.Journal(self.root)
+        with journal.locked():
+            journal.append('run-1', 'move', 'A/a', 'B/a', json.dumps({'tx': 'b' * 32}), 'done')
+        snap = progress.collect_snapshot(self.root)
+        self.assertTrue(snap['scan']['truncated'])
+        self.assertTrue(snap['stages']['s6']['truncated'])
+        self.assertFalse(snap['stages']['s6']['ok'])
+        self.assertEqual(snap['currentStage'], 'S5')
+        self.assertIn('Scan limit reached', progress.render_page({'lang': 'en', 'live': False}, snap).decode())
+
+    def test_invalid_decision_counts_are_ignored_and_reported(self):
+        org = self.root / '_organize'
+        org.mkdir()
+        (org / 'decisions.json').write_text(json.dumps({
+            'summary': {'total': 'bad', 'needCheck': None, 'move': 2, 'keep': 0, 'new': 0},
+            'aiQuestions': [],
+        }), encoding='utf-8')
+        snap = progress.collect_snapshot(self.root)
+        self.assertEqual(snap['stages']['s4']['totalGroups'], 0)
+        self.assertEqual(snap['stages']['s4']['needCheck'], 0)
+        self.assertEqual(snap['stages']['s4']['invalidArtifactCount'], 2)
+        self.assertIn('invalid summary field', progress.render_page({'lang': 'en', 'live': False}, snap).decode())
 
     def test_system_drive_snapshot_is_read_only(self):
         if os.name != 'nt':

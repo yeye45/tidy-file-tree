@@ -2,6 +2,7 @@
 """验证机制与查询能力的测试。不依赖网络。"""
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -87,6 +88,43 @@ class TestVerifyCases(unittest.TestCase):
             (Path(d) / "bad.json").write_text("{bad", encoding="utf-8")
             cases = self.V.load_cases(d)
             self.assertEqual(len(cases), 1)
+
+    def test_record_and_rule_coverage_use_protected_s4_evaluation(self):
+        with tempfile.TemporaryDirectory(prefix='.organizer-test-', dir=HERE.parent) as tmp:
+            base = Path(tmp)
+            root = base / 'root'
+            probe = root / '_organize' / 'probe'
+            probe.mkdir(parents=True)
+            (probe.parent / 'policy.json').write_text('{"no_go_zones":["Excluded"]}', encoding='utf-8')
+            for node, label in (('Incoming', 'x7F3 batch'), ('Excluded', 'Protected group')):
+                source = root / node / 'Package'
+                source.mkdir(parents=True)
+                (source / 'fixture.exe').touch()
+                record = {'path': str(source.parent), 'groups': [{'name': label, 'units': ['Package']}]}
+                (probe / f'group_{node}.json').write_text(json.dumps(record), encoding='utf-8')
+
+            command = [sys.executable, '-B', str(HERE.parent / 'tidy_file_tree.py'), 'verify']
+            env = dict(os.environ, LOCALAPPDATA=str(base / 'local'), PYTHONIOENCODING='utf-8')
+            coverage = subprocess.run([*command, 'coverage', '--root', str(root)],
+                                      env=env, capture_output=True, encoding='utf-8')
+            self.assertEqual(coverage.returncode, 0, coverage.stderr)
+            self.assertRegex(coverage.stdout, r'总组数\s+1\b')
+            self.assertRegex(coverage.stdout, r'未匹配\s+1\b')
+            self.assertRegex(coverage.stdout, r'需人工/AI\s+1\b')
+            self.assertNotIn('Protected group', coverage.stdout)
+
+            cases_path = base / 'recorded.json'
+            record = subprocess.run([*command, 'record', '--root', str(root), '--out', str(cases_path)],
+                                    env=env, capture_output=True, encoding='utf-8')
+            self.assertEqual(record.returncode, 0, record.stderr)
+            text = cases_path.read_text(encoding='utf-8')
+            self.assertNotIn('Excluded', text)
+            cases = self.V.load_cases(cases_path)
+            self.assertEqual(len(cases), 1)
+            self.assertEqual(cases[0]['shape']['kind'], 'installer')
+            replay = subprocess.run([*command, 'run', str(cases_path)],
+                                    env=env, capture_output=True, encoding='utf-8')
+            self.assertEqual(replay.returncode, 0, replay.stdout + replay.stderr)
 
 
 if __name__ == "__main__":

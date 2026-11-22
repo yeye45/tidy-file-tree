@@ -65,7 +65,7 @@ def cmd_scan(args):
                             args.lang, open_browser=not args.no_open)
     sig = _load("signals", "signals.py")
     targets = args.paths or [os.getcwd()]
-    results = [sig.analyze(p) for p in targets if os.path.isdir(p)]
+    results = [sig.analyze(p, totals=args.size) for p in targets if os.path.isdir(p)]
     if args.json:
         import json
         print(json.dumps(results, ensure_ascii=False, indent=2))
@@ -77,23 +77,12 @@ def cmd_scan(args):
 
 def cmd_coverage(args):
     cov = _load("coverage", "coverage.py")
-    from safety import organize_dir
-    probe = Path(args.probe) if args.probe else organize_dir(args.root) / "probe"
-    rows = cov.check(args.root, probe)
-    bad = [r for r in rows if r.get("status") not in ("ok", "stale")]
+    argv = [args.root]
+    if args.probe:
+        argv.extend(['--probe', args.probe])
     if args.json:
-        import json
-        print(json.dumps(rows, ensure_ascii=False, indent=2))
-    else:
-        for r in rows:
-            st = r.get("status", "ok")
-            label = {"ok": "ok", "stale": "过时", "MISSING": "遗漏"}.get(st, st)
-            detail = r.get("missing") or [r.get("reason") or ""]
-            detail = " / ".join(str(x) for x in detail if x)
-            print(f"{r.get('node', '-')}: {label} {detail}".rstrip())
-        print()
-        print(f"共 {len(rows)} 个节点，遗漏 {len(bad)} 个")
-    return 0 if not bad else 1
+        argv.append('--json')
+    return cov.main(argv)
 
 
 def cmd_plan(args):
@@ -342,6 +331,7 @@ def main(argv=None):
     s = command("scan", "观察目录的信号（只读）", "Inspect directory structure (read-only)")
     s.add_argument("paths", nargs="*")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--size", action="store_true", help=text("递归统计文件总大小和数量", "Recursively total file size and count"))
     s.add_argument("--tree", action="store_true", help=text("在浏览器查看实时目录判断树", "Open a live directory assessment tree"))
     s.add_argument("--depth", type=int, default=3, help=text("目录树最大深度，默认 3", "Maximum tree depth; defaults to 3"))
     s.add_argument("--no-open", action="store_true", help=text("树模式只输出本地地址", "Print the local tree URL without opening a browser"))

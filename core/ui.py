@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime
 from functools import lru_cache
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -11,9 +12,9 @@ import sys
 
 import decisions
 from decisions import group_key
-from executor import Journal, atomic_write, guard
+from executor import Journal, artifact_has_signature, guard, rename_target, reviewed_identity, write_artifact
 import rules
-from safety import assert_no_links, block_kind, key, within
+from safety import assert_no_links, block_kind, key, nested_policy_verdict, within
 
 TEMPLATE = Path(__file__).with_name('wire_ui.html')
 ENGLISH_MESSAGES = Path(__file__).with_name('wire_ui.en.json')
@@ -29,7 +30,8 @@ def read_json(path):
 def allowed_path(path, root, protection, descendants=False, allow_container=False):
     try:
         result = guard(path, root, protection, allow_container=allow_container)
-        if descendants and block_kind(result, protection.markers, descendants=True):
+        if descendants and (block_kind(result, protection.markers, descendants=True)
+                            or not nested_policy_verdict(result, protection.nested_rules, descendants=True)[0]):
             return None
         return result
     except (OSError, ValueError):
@@ -117,7 +119,18 @@ def unit_paths(node, inventory, root, protection):
     return checked
 
 
-def view_units(group, node, checked, root, protection):
+def source_witness(path):
+    """Bind a board choice to one shallow filesystem observation."""
+    if not path:
+        return None
+    try:
+        observed = reviewed_identity(path)
+    except (OSError, ValueError):
+        return None
+    return sha256(json.dumps(observed, sort_keys=True).encode('ascii')).hexdigest()
+
+
+def view_units(group, node, checked, root, protection, witness_for):
     units = []
     seen = {}
     for value in group.get('units') or []:
@@ -126,15 +139,20 @@ def view_units(group, node, checked, root, protection):
             continue
         try:
             candidate = str(Path(node)/raw)
-            if within(candidate, root) and block_kind(candidate, protection.markers, descendants=True):
+            if within(candidate, root) and (block_kind(candidate, protection.markers, descendants=True)
+                                            or not nested_policy_verdict(candidate, protection.nested_rules, descendants=True)[0]):
                 continue
             source = checked.get(key(candidate))
         except (OSError, ValueError):
             source = None
+        witness = witness_for(source)
+        if witness is None:
+            source = None
         leaf = Path(raw).name or raw
         unit_id = source or raw
         seen[unit_id] = seen.get(unit_id, 0) + 1
-        units.append({'id': [unit_id, seen[unit_id]], 'label': leaf, 'source': source})
+        units.append({'id': [unit_id, seen[unit_id]], 'label': leaf, 'source': source,
+                      'sourceWitness': witness})
     return units
 
 
@@ -153,7 +171,28 @@ def proposal_targets(name, parent, root, protection):
     return path
 
 
+def rename_proposal(path, name, root, protection, witness_for):
+    try:
+        target = rename_target(path, name, root, protection)
+    except (OSError, ValueError):
+        return {'issue': '新名称无效或目标受保护。'}, None, None
+    proposal = {'newName': name}
+    if key(path) == key(target):
+        return {**proposal, 'issue': '建议名称与当前名称相同。'}, None, None
+    if os.path.lexists(target):
+        return {**proposal, 'issue': '目标名称已存在。'}, None, None
+    try:
+        source = guard(path, root, protection, descendants=True)
+    except (OSError, ValueError):
+        return {**proposal, 'issue': '来源受保护或无法读取。'}, None, None
+    witness = witness_for(source)
+    if witness is None:
+        return {**proposal, 'issue': '无法确认来源身份。'}, None, None
+    return {**proposal, 'target': target}, source, witness
+
+
 def build_board(root, probe_dir, snapshot, protection):
+    witness_for = lru_cache(maxsize=8192)(source_witness)
     probes, inventory, groups, protected_nodes = load_probes(probe_dir, root, protection)
     snapshots = decision_index(snapshot, root)
 
@@ -161,7 +200,7 @@ def build_board(root, probe_dir, snapshot, protection):
     def permitted(path):
         return bool(allowed_path(path, root, protection, allow_container=True))
 
-    zones = decisions.collect_zones(root, permit=permitted, count_limit=1)
+    zones = decisions.collect_zones(root, permit=permitted, count_limit=1, nested_rules=protection.nested_rules)
     destinations = {key(z['path']): z for z in zones}
     nodes = []
     unmatched = []
@@ -178,10 +217,9 @@ def build_board(root, probe_dir, snapshot, protection):
                 fingerprint = group_key({'name': name, 'units': [member]})
                 solo_groups.append({'id': 'solo:'+fingerprint, 'fingerprint': fingerprint, 'name': name,
                                     'n': 1, 'units': [member], 'why': 'S3 标为独立单元'})
-        # 节点级待拍板项（rename/ask/keep 且无组）也必须进工作台，
-        # 否则「改名」「多版本并存」「空壳去留」这类决策在工作台里完全不可见。
-        # 合成为单单元组，复用既有连线/导出机制。
-        node_level = node.get('action') in ('rename', 'ask', 'keep', 'unclear')
+        # Keep node-level choices visible even without a grouping record.
+        # Rename proposals always get their own card below.
+        node_level = node.get('action') in ('ask', 'keep', 'unclear')
         if not node['groups'] and not solo_groups and node_level and os.path.isdir(path):
             fingerprint = group_key({'name': node['name'], 'units': [path]})
             solo_groups.append({
@@ -195,12 +233,26 @@ def build_board(root, probe_dir, snapshot, protection):
         items = []
         for group in node['groups'] + solo_groups:
             record = snapshots.get((key(path), group['id'])) or {}
-            units = view_units(group, path, known_units, root, protection)
-            if record.get('fingerprint') == group['fingerprint'] and isinstance(record.get('suggest'), dict):
-                suggestion = dict(record['suggest'])
+            units = view_units(group, path, known_units, root, protection, witness_for)
+            stored = record.get('suggest') if record.get('fingerprint') == group['fingerprint'] else None
+            stored = stored if isinstance(stored, dict) else None
+            old_answer = stored.get('aiJudgement') if stored else None
+            has_answer = isinstance(old_answer, dict)
+            if stored is not None and (not has_answer or decisions.observation_is_current(record, root, permitted)):
+                suggestion = dict(stored)
             else:
                 sample = next((u['source'] for u in units if u['source'] and os.path.isdir(u['source'])), None)
                 suggestion = decisions.suggest_group(group['name'], node['name'], zones, path, group_path=sample)
+                if has_answer:
+                    suggestion['needsCheck'] = True
+                    if old_answer.get('observationId'):
+                        suggestion['reason'] = '先前 AI 判断的样本已变化，请重新复核。'
+                    else:
+                        suggestion['reason'] = '旧版 AI 判断仅供参考，请重新复核。'
+                        suggestion['tier'] = stored.get('tier')
+                        confirmation = old_answer.get('confirmation')
+                        confirmation = dict(confirmation) if isinstance(confirmation, dict) else {}
+                        suggestion['aiJudgement'] = {**old_answer, 'confirmation': {**confirmation, 'holds': None}}
             ai = suggestion.get('aiJudgement')
             evidence = suggestion.get('evidence')
             if not isinstance(evidence, list):
@@ -245,32 +297,38 @@ def build_board(root, probe_dir, snapshot, protection):
                       'why': node.get('unit_why') or '',
                       'units': node.get('total_units')})
 
-    # Include node-level S1 decisions (rename / merge / ask / uncertain / unclear) that have no S3 groups,
-    # so the review board is never empty when only top-level/node-level decisions remain.
+    # Rename approval is independent of any S3 moves within the same node.
+    # Other node-level choices only need a fallback card when there are no groups.
     grouped_keys = {key(n['path']) for n in nodes}
     node_level_items = []
     for p_path, p_data in sorted(probes.items(), key=lambda pair: pair[0].casefold()):
-        if key(p_path) in grouped_keys:
-            continue
         act = str(p_data.get('action') or '')
         if act not in ('rename', 'merge', 'ask', 'uncertain', 'unclear'):
+            continue
+        if act != 'rename' and key(p_path) in grouped_keys:
             continue
         if not os.path.lexists(p_path):
             continue
         leaf = Path(p_path).name or p_path
-        movable = allowed_path(p_path, root, protection, descendants=True)
-        why_parts = []
-        if act == 'rename' and p_data.get('rename_to'):
-            why_parts.append(f"S1 建议改名为：{p_data['rename_to']}")
-        elif act == 'merge' and p_data.get('merge_target'):
-            why_parts.append(f"S1 建议合并到：{p_data['merge_target']}")
+        rename = None
+        if act == 'rename':
+            rename, movable, witness = rename_proposal(p_path, p_data.get('rename_to'), root, protection, witness_for)
         else:
-            why_parts.append(f"S1 节点级待拍板（action={act}）")
+            movable = allowed_path(p_path, root, protection, descendants=True)
+            witness = witness_for(movable)
+            if witness is None:
+                movable = None
+        if rename is not None:
+            why_parts = ['S1 改名建议']
+        elif act == 'merge' and p_data.get('merge_target'):
+            why_parts = [f"S1 建议合并到：{p_data['merge_target']}"]
+        else:
+            why_parts = [f"S1 节点级待拍板（action={act}）"]
         if p_data.get('unit_why'):
             why_parts.append(str(p_data['unit_why']))
         ev_list = p_data.get('evidence') if isinstance(p_data.get('evidence'), list) else []
         ev_strs = [str(e) for e in ev_list if e]
-        dest_target = '@keep'
+        dest_target = None if rename is not None else '@keep'
         dest_label = None
         if act == 'merge' and isinstance(p_data.get('merge_target'), str):
             zone = destinations.get(key(p_data['merge_target']))
@@ -278,11 +336,12 @@ def build_board(root, probe_dir, snapshot, protection):
                 dest_target = zone['path']
                 dest_label = zone['label']
         fp = group_key({'name': leaf, 'units': [p_path]})
-        node_level_items.append({
-            'id': 'node:' + fp,
+        item = {
+            'id': ('rename:' if rename is not None else 'node:') + fp,
             'name': leaf,
             'count': 1,
-            'units': [{'id': [movable or p_path, 1], 'label': leaf, 'source': movable}],
+            'units': [{'id': [movable or p_path, 1], 'label': leaf, 'source': movable,
+                       'sourceWitness': witness}],
             'why': ' · '.join(why_parts),
             'tier': 'verify',
             'ai': None,
@@ -293,7 +352,10 @@ def build_board(root, probe_dir, snapshot, protection):
                 'reason': why_parts[0],
                 'evidence': ev_strs or why_parts[1:],
             },
-        })
+        }
+        if rename is not None:
+            item['rename'] = rename
+        node_level_items.append(item)
     if node_level_items:
         nodes.append({
             'id': 'node-decisions',
@@ -361,16 +423,20 @@ def main():
         root = journal.root
         assert_no_links(root)
         policy = rules.load_root_policy(root)
-        protection = journal.protection(policy)
+        probe_dir = Path(args.probe) if args.probe else journal.state_dir/'probe'
+        protection = journal.protection(policy, include_skips=True, probe=probe_dir)
+        guard(root, root, protection, allow_root=True)
         rules.apply_to(rules.load_for_root(root, policy=policy), decisions_mod=decisions)
         mapping, _ = decisions.load_policy_mapping(root)
         if mapping:
             decisions.apply_policy_mapping(mapping)
         snapshot_path = Path(args.decisions) if args.decisions else journal.state_dir/'decisions.json'
         snapshot = read_json(snapshot_path) if args.decisions or os.path.lexists(snapshot_path) else None
-        board = build_board(root, Path(args.probe) if args.probe else journal.state_dir/'probe', snapshot, protection)
+        board = build_board(root, probe_dir, snapshot, protection)
         out = Path(args.out) if args.out else journal.state_dir/'ui.html'
-        atomic_write(out, render_html(root, board, lang=args.lang).encode('utf-8'))
+        signature = '<title data-i18n="TidyFileTree · 连线工作台">'.encode('utf-8')
+        write_artifact(out, render_html(root, board, lang=args.lang).encode('utf-8'),
+                       owns_existing=lambda path: artifact_has_signature(path, signature))
     except (OSError, ValueError) as exc:
         prefix = 'Could not generate the review board' if args.lang == 'en' else '无法生成连线工作台'
         ap.error(f'{prefix}: {exc}')

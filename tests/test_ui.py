@@ -10,6 +10,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / 'core'))
 from executor import Protection
 from ui import build_board, group_key, render_html
+from decisions import observe_path
 
 
 class ScriptCounter(HTMLParser):
@@ -75,13 +76,26 @@ class ReviewPageCase(unittest.TestCase):
             first, count_only = board['nodes'][0]['groups']
             self.assertEqual(board['matchedAnswers'], 1)
             self.assertEqual(first['tier'], 'full')
+            self.assertTrue(first['suggest']['needsCheck'])
             self.assertEqual([u['source'] for u in first['units']], [str(actual), None])
             self.assertEqual(count_only['units'], [])
             html = render_html(root, board)
             self.assertIn('id="wires"', html)
             self.assertIn('Verified note', html)
-            stored['nodes'][0]['groups'][0]['fingerprint'] = 'stale'
+
+            group_record = stored['nodes'][0]['groups'][0]
+            group_record['fingerprint'] = 'stale'
             self.assertEqual(build_board(root, probe, stored, Protection([], set()))['matchedAnswers'], 0)
+            group_record['fingerprint'] = fp
+            group_record['observationId'] = 'current-observation'
+            group_record['observationWitnesses'] = [observe_path(actual, root)]
+            group_record['suggest']['aiJudgement']['observationId'] = group_record['observationId']
+            self.assertEqual(build_board(root, probe, stored, Protection([], set()))['matchedAnswers'], 1)
+            actual.write_text('different sample contents', encoding='utf-8')
+            refreshed = build_board(root, probe, stored, Protection([], set()))
+            self.assertEqual(refreshed['matchedAnswers'], 0)
+            self.assertTrue(refreshed['nodes'][0]['groups'][0]['suggest']['needsCheck'])
+            self.assertNotIn('Verified note', render_html(root, refreshed))
 
     def test_container_with_protected_child_still_shows_safe_sibling_units(self):
         with tempfile.TemporaryDirectory(prefix='.organizer-test-', dir=PROJECT) as tmp:

@@ -34,7 +34,7 @@
 python scripts/export-feedback.py --root /mnt/disk
 ```
 
-它会在 `<root>/_organize/feedback-summary.md` 生成一份摘要：
+脚本会在当前整理根的状态目录生成 `feedback-summary.md`。普通目录使用 `<root>/_organize`，Windows 系统盘根和 `Users` 根使用本机的外置状态目录。用 `--out` 指定其他位置时，输出仍须避开保护路径及已有的无关文件。
 
 - 汇总产物类型和数量、解析结果、行数及预先定义的状态。原始路径、文件名、标记说明和任意文本不进入摘要。
 - `ui.html`、`policy.json` 不收集。

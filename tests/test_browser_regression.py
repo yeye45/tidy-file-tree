@@ -24,6 +24,65 @@ from ui import group_key
 
 @unittest.skipIf(sync_playwright is None, "install the browser extra: pip install playwright")
 class BrowserRegression(unittest.TestCase):
+    def test_explicit_rename_exports_previews_executes_and_undoes(self):
+        with tempfile.TemporaryDirectory(prefix='.tidy-file-tree-browser-rename-', dir=PROJECT) as tmp:
+            base = Path(tmp)
+            root = base / 'root'
+            source = root / 'New folder'
+            source.mkdir(parents=True)
+            (source / 'sample.txt').touch()
+            state = root / '_organize'
+            probe = state / 'probe'
+            probe.mkdir(parents=True)
+            (probe / 'probe_rename.json').write_text(json.dumps({
+                'path': str(source), 'action': 'rename', 'rename_to': 'Meeting Notes',
+            }), encoding='utf-8')
+            env = dict(os.environ, LOCALAPPDATA=str(base / 'local'), PYTHONIOENCODING='utf-8')
+            if not os.environ.get('TIDY_FILE_TREE_BROWSER_USE_INSTALLED'):
+                env['PYTHONPATH'] = str(PROJECT) + os.pathsep + env.get('PYTHONPATH', '')
+
+            def run(*args):
+                result = subprocess.run([sys.executable, '-m', 'tidy_file_tree', *map(str, args)],
+                                        cwd=base, env=env, capture_output=True, encoding='utf-8')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            board = base / 'board.html'
+            run('ui', root, '--out', board, '--lang', 'en')
+            actions = base / 'actions.tsv'
+            with sync_playwright() as p:
+                chrome = Path(r'C:\Program Files\Google\Chrome\Application\chrome.exe')
+                edge = Path(r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe')
+                executable = chrome if chrome.is_file() else edge if edge.is_file() else None
+                browser = p.chromium.launch(executable_path=str(executable) if executable else None)
+                page = browser.new_page(accept_downloads=True)
+                page.set_default_timeout(5000)
+                page.goto(board.as_uri())
+                self.assertTrue(page.get_by_text('Suggested rename: New folder → Meeting Notes').is_visible())
+                self.assertEqual(page.evaluate('window.foState().linked'), 0)
+                page.get_by_role('button', name='Confirm rename').click()
+                page.locator('#undoButton').click()
+                self.assertEqual(page.evaluate('window.foState().linked'), 0)
+                page.locator('#redoButton').click()
+                page.reload()
+                self.assertEqual(page.evaluate('window.foState().linked'), 1)
+                page.locator('#reviewButton').click()
+                self.assertIn('Scheduled to rename (1)', page.locator('#reviewText').inner_text())
+                with page.expect_download() as download:
+                    page.locator('#downloadActions').click()
+                download.value.save_as(actions)
+                browser.close()
+
+            [header, action] = actions.read_text(encoding='utf-8').splitlines()
+            self.assertEqual(header, 'op\tsrc\tdst\treason')
+            self.assertEqual(action.split('\t')[:3], ['rename', str(source), 'Meeting Notes'])
+            receipt = base / 'receipt.json'
+            run('apply', root, '--actions', actions, '--receipt', receipt, '--dry-run')
+            self.assertTrue(source.is_dir())
+            run('apply', root, '--actions', actions, '--receipt', receipt)
+            self.assertTrue((root / 'Meeting Notes' / 'sample.txt').is_file())
+            run('undo', '--journal', state / 'journal.tsv', '--last')
+            self.assertTrue((source / 'sample.txt').is_file())
+
     def test_scan_drafts_export_ai_questions_and_import_only_current_answers(self):
         with tempfile.TemporaryDirectory(prefix=".tidy-file-tree-browser-ai-", dir=PROJECT) as temp:
             root = Path(temp) / "library"
@@ -148,18 +207,17 @@ class BrowserRegression(unittest.TestCase):
                 card = page.locator("article.card").filter(has=page.get_by_role("heading", name="Sample Set"))
                 card.locator("summary").click()
                 first_key = card.locator("button.port[data-source][data-unit]").first.get_attribute("data-unit")
-                page.evaluate("""([path,key]) => {
-                    localStorage.setItem('packtidy-wires-v1:' + path,JSON.stringify([[key,'@keep']]));
+                page.evaluate("""([path,key,destination]) => {
+                    localStorage.setItem('packtidy-wires-v1:' + path,JSON.stringify([[key,destination]]));
                     localStorage.setItem('packtidy-theme','dark');
-                }""", [str(root), first_key])
+                }""", [str(root), first_key, str(root / "archive")])
                 page.reload()
-                self.assertEqual(page.evaluate("window.foState().placements"), {first_key: "@keep"})
+                self.assertEqual(page.evaluate("window.foState().linked"), 0)
+                self.assertIn("1 invalidated saved assignment", page.locator("#staleMetric").inner_text())
                 self.assertEqual(page.locator("html").get_attribute("data-theme"), "dark")
-                self.assertEqual(page.evaluate("path => JSON.parse(localStorage.getItem('tidy-file-tree-wires-v1:' + path))", str(root)),
-                                 [[first_key, "@keep"]])
                 self.assertEqual(page.evaluate("localStorage.getItem('tidy-file-tree-theme')"), "dark")
                 page.evaluate("""path => {
-                    localStorage.setItem('tidy-file-tree-wires-v1:' + path,'[]');
+                    localStorage.setItem('tidy-file-tree-wires-v2:' + path,'[]');
                     localStorage.setItem('tidy-file-tree-theme','light');
                 }""", str(root))
                 page.reload()
@@ -253,6 +311,79 @@ class BrowserRegression(unittest.TestCase):
                 cli("undo", "--journal", root / "_organize" / "journal.tsv", "--last")
                 self.assertEqual(hashlib.sha256(a.read_bytes()).hexdigest(), originals[a])
                 self.assertEqual(hashlib.sha256(b.read_bytes()).hexdigest(), originals[b])
+                browser.close()
+
+    def test_saved_wires_expire_when_a_source_is_replaced(self):
+        with tempfile.TemporaryDirectory(prefix=".tidy-file-tree-wire-", dir=PROJECT) as temp:
+            workspace = Path(temp)
+            root = workspace / "library"
+            source = root / "incoming"
+            archive = root / "archive"
+            probe = root / "_organize" / "probe"
+            for folder in (probe, source, archive):
+                folder.mkdir(parents=True)
+            (archive / "existing.txt").touch()
+            replaced = source / "replace.bin"
+            stable = source / "stable.bin"
+            for item in (replaced, stable):
+                item.write_bytes(b"reviewed")
+            (probe / "units_wire.json").write_text(json.dumps({
+                "path": str(source), "total_units": 2,
+                "loose_files_as_units": [replaced.name, stable.name],
+            }), encoding="utf-8")
+            (probe / "group_wire.json").write_text(json.dumps({
+                "path": str(source), "groups": [{"name": "Wire Set", "units": [replaced.name, stable.name]}],
+            }), encoding="utf-8")
+            board = workspace / "review.html"
+            env = os.environ.copy()
+            if env.get("TIDY_FILE_TREE_BROWSER_USE_INSTALLED") != "1":
+                env["PYTHONPATH"] = str(PROJECT) + os.pathsep + env.get("PYTHONPATH", "")
+            env["LOCALAPPDATA"] = str(workspace / "appdata")
+            env["XDG_STATE_HOME"] = str(workspace / "state")
+
+            def regenerate():
+                command = [sys.executable, "-m", "tidy_file_tree", "ui", str(root),
+                           "--out", str(board), "--lang", "en"]
+                result = subprocess.run(command, cwd=temp, env=env, capture_output=True, text=True, encoding="utf-8")
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+            regenerate()
+            with sync_playwright() as playwright:
+                chrome = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+                edge = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+                executable = chrome if chrome.is_file() else edge if edge.is_file() else None
+                browser = playwright.chromium.launch(executable_path=str(executable) if executable else None)
+                page = browser.new_page(accept_downloads=True)
+                page.set_default_timeout(5000)
+                page.goto(board.as_uri())
+                page.locator("article.card button.group-port[data-source]").click()
+                archive_target = page.locator("[data-target]").filter(has=page.locator(".target-label", has_text="archive"))
+                archive_target.first.locator(".target-port").click()
+                self.assertEqual(page.evaluate("window.foState().linked"), 2)
+                regenerate()
+                page.reload()
+                self.assertEqual(page.evaluate("window.foState().linked"), 2)
+
+                replacement = workspace / "new.bin"
+                replacement.write_bytes(b"a different file at the same path")
+                replacement.replace(replaced)
+                regenerate()
+                page.reload()
+                self.assertEqual(page.evaluate("window.foState().linked"), 1)
+                self.assertIn("1 invalidated saved assignment", page.locator("#staleMetric").inner_text())
+                page.locator("#reviewButton").click()
+                with page.expect_download() as download_info:
+                    page.locator("#downloadActions").click()
+                actions = download_info.value.path().read_text(encoding="utf-8")
+                self.assertIn(str(stable), actions)
+                self.assertNotIn(str(replaced), actions)
+                page.locator("#review form button").click()
+                page.locator("article.card button.group-port[data-source]").click()
+                archive_target.first.locator(".target-port").click()
+                self.assertEqual(page.evaluate("window.foState().linked"), 2)
+                self.assertTrue(page.locator("#staleMetric").is_hidden())
+                page.reload()
+                self.assertEqual(page.evaluate("window.foState().linked"), 2)
                 browser.close()
 
 

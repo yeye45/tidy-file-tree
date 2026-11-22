@@ -12,9 +12,16 @@ import argparse
 import json
 import hashlib
 import os
+import stat
 import sys
 from datetime import datetime
+from functools import lru_cache
+from heapq import nsmallest
+from itertools import islice
 from pathlib import Path
+from types import SimpleNamespace
+
+from safety import SafetyError, assert_no_links, block_kind, is_reparse, nested_policy_verdict
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -53,7 +60,7 @@ CATEGORY_NODE_NAMES = set()
 # 新建分类白名单：只有这些才值得新建，而且指定归属父级
 # key = 目录名，value = 父级分类（None 表示放根目录）
 # ═══════════════════════════════════════════════════════════
-NEW_CATEGORIES = {
+DEFAULT_NEW_CATEGORIES = {
     # 文档类
     '电子书':   {'parent': '文档', 'keys': ['电子书', '小说', 'epub', 'txt全集']},
     '课程':     {'parent': '文档', 'keys': ['课程', '网课', '培训']},
@@ -73,9 +80,10 @@ NEW_CATEGORIES = {
     '壁纸':     {'parent': None, 'keys': ['壁纸', 'wallpaper']},
     '音效':     {'parent': None, 'keys': ['音效', 'sound']},
 }
+NEW_CATEGORIES = DEFAULT_NEW_CATEGORIES
 
 
-def load_probes(probe_dir):
+def load_probes(probe_dir, permit=None):
     probes, units, groups = {}, {}, {}
     if not probe_dir.is_dir():
         return probes, units, groups
@@ -83,12 +91,17 @@ def load_probes(probe_dir):
         if not name.endswith(".json"):
             continue
         try:
-            data = json.loads((probe_dir / name).read_text(encoding="utf-8-sig"))
+            path = probe_dir / name
+            if is_reparse(path):
+                continue
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             continue
-        if not isinstance(data, dict) or not data.get("path"):
+        if not isinstance(data, dict) or not isinstance(data.get("path"), str):
             continue
         path = data["path"]
+        if not path or (permit is not None and not permit(path)):
+            continue
         if name.startswith("units_"):
             units[path] = data
         elif name.startswith("group_"):
@@ -121,6 +134,15 @@ def group_key(raw_group):
     canonical = json.dumps([name, sorted(str(x) for x in units)],
                            ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def group_paths(group):
+    members = group.get("units")
+    if isinstance(members, list):
+        for member in members:
+            path = member.get("path") if isinstance(member, dict) else member
+            if isinstance(path, str) and path:
+                yield path
 
 
 def build_nodes(root, probes, units, groups):
@@ -189,12 +211,15 @@ def count_files(path, limit=20000, permit=None):
                     if idx >= 400:
                         break
                     if e.is_file(follow_symlinks=False):
+                        if permit is not None and not permit(e.path):
+                            continue
                         n += 1
                         if n >= limit:
                             return n
                     elif depth < max_depth and e.is_dir(follow_symlinks=False):
                         name = e.name
-                        if name.casefold() in _FAST_COUNT_SKIP or name.startswith(('.', '$')):
+                        if (name.casefold() in _FAST_COUNT_SKIP or name.startswith(('.', '$'))
+                                or is_reparse(e.path)):
                             continue
                         if len(subdirs) < 24:
                             subdirs.append(e.path)
@@ -207,7 +232,7 @@ def count_files(path, limit=20000, permit=None):
 
 
 def collect_zones(root, max_depth=3, min_files=1, permit=None,
-                  count_limit=20000, max_zones=300, time_budget=4.0):
+                  count_limit=20000, max_zones=300, time_budget=4.0, *, nested_rules=()):
     """收集候选去向，最多 3 层（数量与时间双有界，绝不卡死）。
 
     root 可以是单个路径，也可以是多个根（多盘）：
@@ -228,7 +253,7 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
                 continue
             seen.add(r)
             for z in collect_zones(r, max_depth, min_files, permit,
-                                   count_limit, max_zones, time_budget):
+                                   count_limit, max_zones, time_budget, nested_rules=nested_rules):
                 z["root"] = r
                 # 多盘时 label 加盘符前缀，避免同名混淆
                 drive = os.path.splitdrive(r)[0] or r.rstrip(os.sep)
@@ -279,7 +304,7 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
                     continue
             except OSError:
                 continue
-            if not nested_verdict(e.path)[0]:
+            if not nested_verdict(e.path, allow_container=bool(nested_rules), nested_rules=nested_rules)[0]:
                 continue
             if permit is not None and not permit(e.path):
                 continue
@@ -298,7 +323,7 @@ def collect_zones(root, max_depth=3, min_files=1, permit=None,
                         walk(e.path, sub_label, depth + 1)
                 continue
             files = count_files(e.path, limit=eff_limit, permit=permit)
-            if files >= min_files:
+            if files >= min_files and (not nested_rules or nested_verdict(e.path, nested_rules=nested_rules)[0]):
                 zones.append({
                     "path": e.path,
                     "label": sub_label,
@@ -351,7 +376,18 @@ DOC_EXT = {".doc", ".docx", ".pdf", ".txt", ".md", ".xls", ".xlsx",
            ".ppt", ".pptx", ".odt", ".csv", ".epub", ".mobi"}
 
 
-def content_shape(path, max_files=2000):
+def sample_walk(path, permit=None):
+    """Yield directories and file names, pruning protected branches before descent."""
+    for folder, dirs, files in os.walk(path):
+        if permit is not None:
+            dirs[:] = [d for d in dirs if permit(os.path.join(folder, d))
+                       and not is_reparse(os.path.join(folder, d))]
+            files = [f for f in files if permit(os.path.join(folder, f))]
+        dirs.sort()
+        yield folder, files
+
+
+def content_shape(path, max_files=2000, *, permit=None):
     """看一个目录里装的是什么形态的文件。
 
     只统计扩展名分布，不读内容。成本低，但足以区分
@@ -363,8 +399,8 @@ def content_shape(path, max_files=2000):
     ext_count = Counter()
     total = 0
     try:
-        for dp, dn, fn in _os.walk(path):
-            for f in fn:
+        for _, names in sample_walk(path, permit):
+            for f in nsmallest(max_files - total, names):
                 e = _os.path.splitext(f)[1].lower()
                 ext_count[e] += 1
                 total += 1
@@ -593,6 +629,7 @@ AI_TRIGGERS = {
     "need_naming":     "候选类别需要命名",
     "cross_bucket":    "同系列跨桶",
 }
+AI_SAMPLE_LIMIT = 8
 
 
 def needs_ai(suggest, shape=None):
@@ -627,7 +664,7 @@ def build_ai_question(group_name, node_name, node_path, suggest,
         "parent": node_name,
         "path": node_path,
         "shape": shape or {},
-        "sampleFiles": (sample_files or [])[:8],
+        "sampleFiles": (sample_files or [])[:AI_SAMPLE_LIMIT],
         "suggestion": {
             "mode": suggest.get("mode"),
             "target": suggest.get("targetLabel") or suggest.get("newName"),
@@ -683,19 +720,55 @@ def _ai_question_text(suggest, shape=None, trigger=None):
     return "这个归类对吗？不确定的话该归到哪？"
 
 
-def sample_file_names(path, limit=8):
-    """取几个文件名作为样例——只要名字，不读内容。"""
-    import os as _os
-    out = []
+def observe_path(path, root):
+    """Capture lightweight identity for a path already cleared by protection."""
     try:
-        for dp, dn, fn in _os.walk(path):
-            for f in sorted(fn):
-                out.append(f)
-                if len(out) >= limit:
-                    return out
-    except OSError:
-        pass
-    return out
+        info = os.stat(path, follow_symlinks=False)
+    except (OSError, ValueError):
+        return None
+    if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+        return None
+    return (os.path.relpath(path, root), info.st_mode, info.st_dev, info.st_ino,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def observe_sample_files(directory, root, *, permit=None, limit=AI_SAMPLE_LIMIT):
+    """Read bounded file metadata from the same visible sample sent with the question."""
+    samples = []
+    if directory:
+        try:
+            for folder, names in islice(sample_walk(directory, permit), 128):
+                for name in nsmallest(limit - len(samples), names):
+                    evidence = observe_path(os.path.join(folder, name), root)
+                    if evidence and stat.S_ISREG(evidence[1]):
+                        samples.append(evidence)
+                if len(samples) >= limit:
+                    break
+        except OSError:
+            pass
+    return samples
+
+
+def observation_is_current(record, root, permit):
+    """Check the bounded filesystem witnesses of an already applied AI answer."""
+    observation_id = record.get("observationId")
+    suggestion = record.get("suggest")
+    answer = suggestion.get("aiJudgement") if isinstance(suggestion, dict) else None
+    witnesses = record.get("observationWitnesses")
+    if (not isinstance(observation_id, str) or not observation_id or not isinstance(answer, dict)
+            or answer.get("observationId") != observation_id
+            or not isinstance(witnesses, list) or not 1 <= len(witnesses) <= 2 * AI_SAMPLE_LIMIT + 1):
+        return False
+    for item in witnesses:
+        if not isinstance(item, (list, tuple)) or len(item) != 7 or not isinstance(item[0], str):
+            return False
+        relative = Path(item[0])
+        if relative.anchor or not relative.parts or ".." in relative.parts:
+            return False
+        path = str(Path(root) / relative)
+        if not permit(path) or observe_path(path, root) != tuple(item):
+            return False
+    return True
 
 
 # 内容形态 → 该去哪个语义类别（优先级高于名字匹配）
@@ -712,7 +785,7 @@ SHAPE_TO_CATEGORY = {
 
 
 def suggest_group(group_name, node_name, zones, node_path=None,
-                  group_path=None):
+                  group_path=None, *, permit=None, shape=None, decision_rules=None):
     """给一组算出去向建议。
 
     判断顺序（重要）：
@@ -725,22 +798,22 @@ def suggest_group(group_name, node_name, zones, node_path=None,
 
     返回 {mode, target, newName, newParent, reason, needsCheck, evidence}
     """
+    decision_rules = decision_rules if decision_rules is not None else sys.modules[__name__]
     evidence = []
 
     # ① 内容形态：这是最硬的证据
-    shape = None
-    if group_path and os.path.isdir(group_path):
-        shape = content_shape(group_path)
-        if shape and shape["kind"] not in (None, "mixed", "empty"):
-            evidence.append(f"内容以 {shape['kind']} 为主"
-                            f"（{shape['dominant']} 占 {shape.get('ratio', 0):.0%}）")
+    if shape is None and group_path and os.path.isdir(group_path):
+        shape = content_shape(group_path, permit=permit)
+    if shape and shape.get("kind") not in (None, "mixed", "empty"):
+        evidence.append(f"内容以 {shape['kind']} 为主"
+                        f"（{shape.get('dominant')} 占 {shape.get('ratio', 0):.0%}）")
 
     # ② 归属：组名含目录名，或所在目录本身是分类容器 → 原地
     if node_name and node_name in group_name:
         return {"mode": "keep", "reason": "组名含目录名，属本目录内部",
                 "needsCheck": False, "evidence": evidence}
 
-    if node_path and is_category_node(node_name or ""):
+    if node_path and is_category_node(node_name or "", decision_rules.CATEGORY_NODE_NAMES):
         return {"mode": "keep",
                 "reason": "所在目录已是分类目录，组在内部无需移动",
                 "needsCheck": False, "evidence": evidence}
@@ -792,7 +865,7 @@ def suggest_group(group_name, node_name, zones, node_path=None,
                     "未发现名称精确匹配的语音/AI工具目标区，需 full 复核"]}
 
     # ③ 名字匹配
-    for rule in CROSS_RULES:
+    for rule in decision_rules.CROSS_RULES:
         if not any(k in group_name for k in rule["keys"]):
             continue
 
@@ -842,7 +915,7 @@ def suggest_group(group_name, node_name, zones, node_path=None,
                         "needsCheck": conflict,
                         "evidence": evidence}
 
-        for cat, info in NEW_CATEGORIES.items():
+        for cat, info in decision_rules.NEW_CATEGORIES.items():
             if any(k in group_name for k in info["keys"]):
                 return {"mode": "new", "newName": cat,
                         "newParent": info["parent"],
@@ -853,8 +926,8 @@ def suggest_group(group_name, node_name, zones, node_path=None,
     # ④ 没有名字线索，但内容形态明确 → 按形态给建议
     if shape and shape["kind"] not in (None, "mixed", "empty"):
         hint = SHAPE_TO_CATEGORY.get(shape["kind"])
-        if hint and hint in NEW_CATEGORIES:
-            info = NEW_CATEGORIES[hint]
+        if hint and hint in decision_rules.NEW_CATEGORIES:
+            info = decision_rules.NEW_CATEGORIES[hint]
             return {"mode": "new", "newName": hint,
                     "newParent": info["parent"],
                     "reason": f"内容形态是 {shape['kind']}，但名字无线索",
@@ -863,24 +936,24 @@ def suggest_group(group_name, node_name, zones, node_path=None,
 
     return {"mode": "keep",
             "reason": "无明显跨类特征" + ("（内容混杂）" if shape else ""),
-            "needsCheck": False, "evidence": evidence}
+            "needsCheck": False, "evidence": evidence, "unmatched": True}
 
 
 
-def _boot_rules(root):
+def _boot_rules(root, *, decision_rules=None, quiet=False):
     """按当前整理根目录加载规则，只应用 decisions 的规则常量。"""
     import rules as rules_mod
 
     data = rules_mod.load_for_root(root)
-    changed = rules_mod.apply_to(
-        data, decisions_mod=sys.modules[__name__])
-    if changed:
+    decision_rules = decision_rules if decision_rules is not None else sys.modules[__name__]
+    changed = rules_mod.apply_to(data, decisions_mod=decision_rules)
+    if changed and not quiet:
         print(f"规则包 v{data.get('version')} 已生效: "
               f"{len(changed)} 组常量", file=sys.stderr)
     return data
 
 
-def is_category_node(name):
+def is_category_node(name, category_nodes=None):
     """这个顶层区本身就是一个分类容器吗？
 
     容器内部的组不需要再移动——它们已经在正确的位置了。
@@ -890,7 +963,8 @@ def is_category_node(name):
     if not name:
         return False
     low = name.casefold()
-    return any(low == c.casefold() for c in CATEGORY_NODE_NAMES)
+    nodes = CATEGORY_NODE_NAMES if category_nodes is None else category_nodes
+    return any(low == c.casefold() for c in nodes)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -998,7 +1072,7 @@ CATEGORY_KEYS = {
 }
 
 
-def apply_policy_mapping(mapping):
+def apply_policy_mapping(mapping, *, decision_rules=None):
     """把 policy 的 mapping 应用到模块状态。
 
     mapping 的键是语义类别 id（video_movie / voice_synth 等），
@@ -1010,13 +1084,14 @@ def apply_policy_mapping(mapping):
     if not mapping:
         return 0
 
+    decision_rules = decision_rules if decision_rules is not None else sys.modules[__name__]
     changed = 0
     for cat, name in mapping.items():
         keys = CATEGORY_KEYS.get(cat)
         if not keys:
             continue
         # 找命中这些关键词的规则，改它的 to
-        for rule in CROSS_RULES:
+        for rule in decision_rules.CROSS_RULES:
             rk = rule.get("keys") or []
             if any(k in keys for k in rk):
                 # 覆盖，不是追加——mapping 是权威
@@ -1025,13 +1100,13 @@ def apply_policy_mapping(mapping):
                 break
         else:
             # 规则里没有这个类别 → 新建一条
-            CROSS_RULES.append({"keys": list(keys), "to": [name]})
+            decision_rules.CROSS_RULES.append({"keys": list(keys), "to": [name]})
             changed += 1
 
     # 有具体名字的都是分类容器
     nodes = {v for v in mapping.values() if v}
     if nodes:
-        CATEGORY_NODE_NAMES.update(nodes)
+        decision_rules.CATEGORY_NODE_NAMES.update(nodes)
 
     return changed
 
@@ -1040,81 +1115,66 @@ def _question_tier(suggest):
     return verification_tier(None, suggest)
 
 
-def apply_answers(nodes, answers_path, zones=None):
-    """把 AI 的判断回填。代码只记录，不做确认。
+ANSWER_ID_FIELDS = ("nodeId", "groupId", "observationId")
 
-    AI 自己走完三步，代码如实记下：
-      猜想 hypothesis    最初认为这是什么
-      验证 verification  怎么查的、查到什么、推翻过什么
-      确认 confirmation  是否站得住、置信度、残余风险
 
-    答案格式：
-      {"answers": [{
-          "group": "...", "parent": "...",
-          "category": "...", "label": "...",
-          "hypothesis": "最初猜它是什么",
-          "verification": {
-            "method": "查了 DLsite 作品页 / 看了 exe 签名",
-            "findings": "确认为编辑器 + 声库",
-            "disproved": ["最初按名字以为是成品音乐"]
-          },
-          "confirmation": {
-            "holds": true,
-            "confidence": "high|medium|low",
-            "why": "为什么确认站得住",
-            "residualRisk": "还剩什么不确定"
-          }
-        }]}
-
-    **代码不判断验证够不够。** 那是 AI 的活——
-    它会写下理由和残余风险，人看到整条推理链自己决定。
-
-    代码只做一件事实性的事：
-      记录 confirmation 是否给出、holds 是否为真。
-      没给出的，在报告里列出，不替它降级。
-    """
-    import json as _json
-    from pathlib import Path as _P
+def apply_answers(nodes, answers_path, zones=None, *, legacy_review=False):
+    """Match current observed questions or unique legacy names, then record judgments."""
 
     try:
-        raw = _P(answers_path).read_text(encoding="utf-8-sig")
-        payload = _json.loads(raw)
+        raw = Path(answers_path).read_text(encoding="utf-8-sig")
+        payload = json.loads(raw)
     except (OSError, ValueError) as exc:
-        print(f"答案文件无法读取: {type(exc).__name__}", file=sys.stderr)
-        return 0, 0
+        raise SafetyError(f"答案文件无法读取: {type(exc).__name__}") from exc
 
     items = payload.get("answers") if isinstance(payload, dict) else payload
     if not isinstance(items, list):
-        print("答案格式错误：需要 answers 数组", file=sys.stderr)
-        return 0, 0
+        raise SafetyError("答案格式错误：需要 answers 数组")
 
-    index = {}
+    by_id, by_name = {}, {}
     for n in nodes:
         for g in n["groups"]:
-            suggestion = g.get("suggest") or {}
-            index[(n["name"], g["name"])] = (g, verification_tier(g["name"], suggestion))
-            index[(n.get("id"), g.get("id"))] = (g, verification_tier(g["name"], suggestion))
+            by_name.setdefault((n["name"], g["name"]), []).append(g)
+            by_id.setdefault((n.get("id"), g.get("id")), []).append(g)
 
-    applied = missed = 0
+    applied = 0
+    rejected = {}
     incomplete = []
     tier_rank = {"direct": 0, "verify": 1, "full": 2}
 
     for a in items:
         if not isinstance(a, dict):
-            continue
-        key = (a.get("nodeId"), a.get("groupId"))
-        match = index.get(key) if all(isinstance(value, str) for value in key) else None
-        if not match and not (a.get("nodeId") or a.get("groupId")):
-            key = (a.get("parent"), a.get("group"))
-            match = index.get(key) if all(isinstance(value, str) for value in key) else None
-        if not match:
-            missed += 1
+            rejected["答案项必须是对象"] = rejected.get("答案项必须是对象", 0) + 1
             continue
 
-        g, required_tier = match
+        bound = any(field in a for field in ANSWER_ID_FIELDS)
+        fields = ANSWER_ID_FIELDS if bound else ("parent", "group")
+        values = tuple(a.get(field) for field in fields)
+        index = by_id if bound else by_name
+        has_fields = all(isinstance(v, str) and v for v in values)
+        candidates = index.get(values[:2], []) if has_fields else []
+        if not has_fields:
+            reason = "缺少完整的回答标识" if bound else "缺少 parent 或 group"
+        elif not candidates:
+            reason = "没有对应的组"
+        elif len(candidates) != 1:
+            reason = "有多个同名或同标识的组，请重新生成问题"
+        elif bound and a["observationId"] != candidates[0].get("observationId"):
+            reason = "观察依据已变化，请重新生成问题"
+        else:
+            reason = None
+        if reason:
+            rejected[reason] = rejected.get(reason, 0) + 1
+            continue
+
+        g = candidates[0]
+        review_only = not bound and legacy_review
         sg = g.setdefault("suggest", {})
-        cat = a.get("category")
-        label = a.get("label") or cat
+        required_tier = verification_tier(g["name"], sg)
+        cat = a.get("category") if isinstance(a.get("category"), str) else None
+        label = a.get("label")
+        if not isinstance(label, str) or not label:
+            label = cat
         target_value = a.get("target")
         matched_zone = None
         invalid_target = False
@@ -1135,13 +1195,13 @@ def apply_answers(nodes, answers_path, zones=None):
             by_label = [z for z in (zones or []) if z.get("label") == label]
             if len(by_label) == 1:
                 matched_zone = by_label[0]
-        if matched_zone:
+        if matched_zone and not review_only:
             sg["mode"] = "move"
             sg["target"] = matched_zone["path"]
             sg["targetLabel"] = matched_zone.get("label")
             sg.pop("newName", None)
             sg.pop("newParent", None)
-        elif cat and not invalid_target:
+        elif cat and not invalid_target and not review_only:
             sg["mode"] = "new"
             sg["newName"] = label
             sg["newParent"] = None
@@ -1167,6 +1227,8 @@ def apply_answers(nodes, answers_path, zones=None):
                 "residualRisk": conf.get("residualRisk") or "",
             },
         }
+        if bound:
+            sg["aiJudgement"]["observationId"] = a["observationId"]
 
         # 分级：这一组需要什么强度的验证
         requested_tier = a.get("tier")
@@ -1226,6 +1288,10 @@ def apply_answers(nodes, answers_path, zones=None):
             sg.setdefault("evidence", []).append(
                 "回填目标未与 zones 中唯一的路径或标签精确匹配，未采用")
 
+        if review_only:
+            sg["needsCheck"] = True
+            sg.setdefault("evidence", []).append("旧版回答未绑定当前观察，仅供人工复核")
+
         applied += 1
 
     if incomplete:
@@ -1238,141 +1304,131 @@ def apply_answers(nodes, answers_path, zones=None):
                 bits.append("无确认")
             print(f"    {parent} / {group}　{'、'.join(bits)}", file=sys.stderr)
 
-    return applied, missed
+    for reason, count in rejected.items():
+        print(f"  已跳过 {count} 条回答：{reason}", file=sys.stderr)
+    return applied, sum(rejected.values())
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--root', required=True)
-    ap.add_argument('--probe')
-    ap.add_argument('--out')
-    ap.add_argument('--need-ai', action='store_true',
-                    help='只输出需要 AI 判断的，附完整事实')
-    ap.add_argument('--answers', help='AI 判断结果 JSON，回填到建议里')
-    ap.add_argument('--allow-system-drive', action='store_true')
-    args = ap.parse_args()
+def evaluate_root(root, probe=None, *, allow_system_drive=False, quiet=False):
+    """Build fresh, protected group decisions for both S4 and rule verification."""
+    from executor import Journal, guard
 
-    from safety import is_system_root, organize_dir
-    root = os.path.abspath(args.root)
-    if is_system_root(root) and not args.allow_system_drive:
-        ap.error('整理系统盘根目录或 Users 根目录需显式加 --allow-system-drive')
-    try:
-        _boot_rules(root)
-    except Exception as exc:
-        ap.error(f"规则包加载失败: {exc}")
+    journal = Journal(root, allow_system_drive=allow_system_drive)
+    root = str(journal.root)
+    probe_dir = Path(probe) if probe else journal.state_dir / 'probe'
+    protection = journal.protection(include_skips=True, probe=probe_dir)
+    guard(root, root, protection, allow_root=True)
+    if block_kind(probe_dir, protection.markers):
+        raise SafetyError('阶段产物目录受保护')
+    assert_no_links(probe_dir)
 
-    # 读 policy.json 的本地 mapping，覆盖共享规则的默认目标名。
-    _mapping, _setup = load_policy_mapping(root)
-    if _mapping:
-        n = apply_policy_mapping(_mapping)
-        print(f"policy.json 映射已生效: {n} 条规则, "
-              f"{len(_mapping)} 个类别", file=sys.stderr)
+    decision_rules = SimpleNamespace(CROSS_RULES=[], CATEGORY_NODE_NAMES=set(),
+                                     NEW_CATEGORIES=DEFAULT_NEW_CATEGORIES)
+    _boot_rules(root, decision_rules=decision_rules, quiet=quiet)
+    mapping, _ = load_policy_mapping(root)
+    if mapping:
+        updated = apply_policy_mapping(mapping, decision_rules=decision_rules)
+        if not quiet:
+            print(f"policy.json 映射已生效: {updated} 条规则, {len(mapping)} 个类别", file=sys.stderr)
 
-    state_dir = organize_dir(root)
-    probe_dir = Path(args.probe) if args.probe else state_dir / 'probe'
+    @lru_cache(maxsize=8192)
+    def permitted(path):
+        try:
+            guard(path, root, protection, allow_container=True)
+        except (OSError, ValueError):
+            return False
+        return True
 
-    probes, units, groups = load_probes(probe_dir)
+    def unmarked(path, *, descendants=False):
+        try:
+            return not block_kind(path, protection.markers, descendants=descendants)
+        except (OSError, ValueError):
+            return False
+
+    @lru_cache(maxsize=8192)
+    def folder_has_marks(path):
+        return not unmarked(path, descendants=True)
+
+    def sample_permitted(path):
+        # Avoid canonicalizing each file path in folders unrelated to any mark.
+        return ((not folder_has_marks(os.path.dirname(path)) or unmarked(path))
+                and nested_policy_verdict(path, protection.nested_rules, allow_container=True)[0])
+
+    def group_permitted(path, group):
+        if not isinstance(group, dict) or not isinstance(group.get("name"), str):
+            return False
+        try:
+            if block_kind(Path(path) / group["name"], protection.markers):
+                return False
+        except (OSError, ValueError):
+            # Group titles are free text and may not parse as paths.
+            pass
+        return all(unmarked(Path(path) / member, descendants=True)
+                   and nested_policy_verdict(Path(path) / member, protection.nested_rules, descendants=True)[0]
+                   for member in group_paths(group))
+
+    probes, units, groups = load_probes(probe_dir, permit=permitted)
+    for path, record in groups.items():
+        # A group title or notes can also describe its protected members.
+        record["groups"] = [
+            group for group in (record.get("groups") or [])
+            if group_permitted(path, group)
+        ]
     nodes = build_nodes(root, probes, units, groups)
-    zones = collect_zones(root)
+    zones = collect_zones(root, permit=sample_permitted, nested_rules=protection.nested_rules)
 
-    # 为每组加建议
-    total = keep = move = new = 0
-    need_check = 0
-    new_dirs = {}
-
-    # ── 第一遍：逐组算建议，同时收集"匹配不上"的 ──
-    unmatched = []       # [(组名, 内容形态)]
-
-    for n in nodes:
-        for g in n["groups"]:
-            group_path = None
-            for unit in g.get("units", []):
-                if isinstance(unit, str):
-                    candidate = unit if os.path.isabs(unit) else os.path.join(n["path"], unit)
-                    if os.path.isdir(candidate):
-                        group_path = candidate
-                        break
-            s = suggest_group(g["name"], n["name"], zones, n["path"], group_path)
-            g["suggest"] = s
-            s["tier"] = verification_tier(g["name"], s)
-            s.setdefault("aiJudgement", None)
-            total += 1
-
-            # 记下既没移动也没新建、且内容形态明确的组
-            if s["mode"] == "keep" and s.get("evidence"):
-                shape = None
-                if s.get("evidence"):
-                    ev = s["evidence"][0]
-                    for k in ("installer", "media", "image", "code",
-                              "document", "archive"):
-                        if k in ev:
-                            shape = k
-                            break
-                if shape:
-                    unmatched.append((g["name"], shape))
-
-            if s["mode"] == "keep":
-                keep += 1
-            elif s["mode"] == "move":
-                move += 1
-            else:
-                new += 1
-                cat = s["newName"]
-                if cat not in new_dirs:
-                    new_dirs[cat] = {"name": cat, "parent": s["newParent"],
-                                     "count": 0}
-                new_dirs[cat]["count"] += 1
-            if s["needsCheck"]:
-                need_check += 1
-
-    # ── AI 判断环节：挑出代码定不了的 ──
+    unmatched = []
     ai_questions = []
+
     for n in nodes:
         for g in n["groups"]:
-            sg = g["suggest"]
-            # 重新算一次形态（suggest 里已经算过，这里从 evidence 反推）
-            kind = None
-            for ev in (sg.get("evidence") or []):
-                for k in ("installer", "media", "image", "code",
-                          "document", "archive"):
-                    if k in ev:
-                        kind = k
-                        break
-                if kind:
-                    break
-            shape = {"kind": kind} if kind else None
+            members = [os.path.join(n["path"], member) for member in group_paths(g)]
+            group_path = next((path for path in members if permitted(path) and os.path.isdir(path)), None)
+            shape = content_shape(group_path, permit=sample_permitted) if group_path else None
+            g["shape"] = shape
+            suggestion = suggest_group(g["name"], n["name"], zones, n["path"], shape=shape,
+                                       decision_rules=decision_rules)
+            g["suggest"] = suggestion
+            suggestion["tier"] = verification_tier(g["name"], suggestion, shape)
+            suggestion["aiJudgement"] = None
 
-            why = needs_ai(sg, shape)
-            if not why:
+            trigger = needs_ai(suggestion, shape)
+            if trigger == "no_rule_match":
+                unmatched.append((g["name"], shape["kind"]))
+            if not trigger:
                 continue
-            # 组路径：组名不一定是目录名，按单元列表逐个试
-            import os as _os
-            gp = None
-            cands = []
-            if n.get("path"):
-                cands.append(_os.path.join(n["path"], g["name"]))
-            # 组的 units 字段里可能是真实路径
-            for u in (g.get("units") or [])[:5]:
-                if isinstance(u, str):
-                    cands.append(u if _os.path.isabs(u)
-                                 else _os.path.join(n.get("path") or "", u))
-            for c in cands:
-                if c and _os.path.isdir(c):
-                    gp = c
-                    break
-            q = build_ai_question(g["name"], n["name"], n.get("path"),
-                                  sg, shape,
-                                  sample_file_names(gp) if gp else [],
-                                  trigger=why)
-            q["trigger"] = why
+
+            observed_members = []
+            for path in islice(members, AI_SAMPLE_LIMIT):
+                if permitted(path):
+                    evidence = observe_path(path, root)
+                    if evidence:
+                        observed_members.append(evidence)
+            named_path = os.path.join(n["path"], g["name"])
+            sample_dir = group_path
+            if not sample_dir and not observed_members and permitted(named_path) and os.path.isdir(named_path):
+                sample_dir = named_path
+            samples = observe_sample_files(sample_dir, root, permit=sample_permitted)
+            files = samples + [item for item in observed_members if stat.S_ISREG(item[1])]
+            samples = list(dict.fromkeys(files))[:AI_SAMPLE_LIMIT]
+            q = build_ai_question(g["name"], n["name"], n["path"], suggestion, shape,
+                                  [os.path.basename(item[0]) for item in samples], trigger=trigger)
+            q["trigger"] = trigger
             q["nodeId"] = n.get("id")
             q["groupId"] = g.get("id")
             q["status"] = "pending"
-            q["triggerText"] = AI_TRIGGERS.get(why, why)
+            q["triggerText"] = AI_TRIGGERS.get(trigger, trigger)
+            sample_folder = observe_path(sample_dir, root) if sample_dir else None
+            witnesses = list(dict.fromkeys(observed_members + samples + ([sample_folder] if sample_folder else [])))
+            evidence = [q, suggestion.get("target"), suggestion.get("newParent"), g["relation"],
+                        g["why"], witnesses]
+            observation_id = hashlib.sha256(json.dumps(evidence, sort_keys=True).encode("utf-8")).hexdigest()
+            q["observationId"] = g["observationId"] = observation_id
+            g["observationWitnesses"] = witnesses
             ai_questions.append(q)
 
     # ── 第二遍：从未匹配上的组里发现新类别候选 ──
     proposals = propose_new_categories(unmatched)
-    if proposals:
+    if proposals and not quiet:
         print("\n发现的候选类别（≥2 组共享同一词根）:", file=sys.stderr)
         for stem, info in sorted(proposals.items(),
                                  key=lambda x: -x[1]["count"]):
@@ -1390,77 +1446,108 @@ def main():
         for stem, info in proposals.items()
     }
 
-    data = {
+    summary, new_dirs = summarize_decisions(nodes)
+    return {
         "root": root,
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "nodes": nodes,
         "zones": zones,
-        "summary": {
-            "total": total, "keep": keep, "move": move, "new": new,
-            "needCheck": need_check,
-        },
-        "newDirs": sorted(new_dirs.values(), key=lambda x: -x["count"]),
+        "summary": summary,
+        "newDirs": new_dirs,
         "proposedCategories": proposal_out,
         "aiQuestions": ai_questions,
     }
 
+
+def summarize_decisions(nodes):
+    summary = dict.fromkeys(("total", "keep", "move", "new", "needCheck"), 0)
+    new_dirs = {}
+    for node in nodes:
+        for group in node["groups"]:
+            suggestion = group["suggest"]
+            mode = suggestion["mode"]
+            summary["total"] += 1
+            summary[mode] += 1
+            if suggestion.get("needsCheck") or (group.get("observationId") and not suggestion.get("aiJudgement")):
+                summary["needCheck"] += 1
+            if mode == "new" and suggestion.get("newName"):
+                name = suggestion["newName"]
+                entry = new_dirs.setdefault(name, {"name": name, "parent": suggestion.get("newParent"), "count": 0})
+                entry["count"] += 1
+    return summary, sorted(new_dirs.values(), key=lambda item: -item["count"])
+
+
+def main():
+    from executor import write_artifact
+    from safety import organize_dir
+
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--root', required=True)
+    ap.add_argument('--probe')
+    ap.add_argument('--out')
+    ap.add_argument('--need-ai', action='store_true',
+                    help='只输出需要 AI 判断的，附完整事实')
+    ap.add_argument('--answers', help='AI 判断结果 JSON，回填到建议里')
+    ap.add_argument('--allow-system-drive', action='store_true')
+    args = ap.parse_args()
+    try:
+        data = evaluate_root(args.root, args.probe, allow_system_drive=args.allow_system_drive)
+    except (OSError, ValueError) as exc:
+        ap.error(f"无法安全读取整理范围: {exc}")
+    nodes = data["nodes"]
+    missed = 0
+
     # --answers：回填 AI 判断
     if args.answers:
-        applied, missed = apply_answers(nodes, args.answers, zones=zones)
-        by_group_id = {(n.get("id"), g.get("id")): (n, g)
-                       for n in nodes for g in n["groups"]}
+        try:
+            applied, missed = apply_answers(nodes, args.answers, zones=data["zones"], legacy_review=True)
+        except SafetyError as exc:
+            ap.error(str(exc))
+        by_group_id = {(n["id"], g["id"]): g["suggest"] for n in nodes for g in n["groups"]}
         for q in data["aiQuestions"]:
-            pair = by_group_id.get((q.get("nodeId"), q.get("groupId")))
-            if pair:
-                n, g = pair
-                q["aiJudgement"] = (g.get("suggest") or {}).get("aiJudgement")
-                q["tier"] = (g.get("suggest") or {}).get("tier")
-                q["status"] = "confirmed" if not (g.get("suggest") or {}).get("needsCheck", True) else "needs_review"
-        all_groups = [g for n in nodes for g in n["groups"]]
-        data["summary"] = {
-            "total": len(all_groups),
-            "keep": sum((g.get("suggest") or {}).get("mode") == "keep" for g in all_groups),
-            "move": sum((g.get("suggest") or {}).get("mode") == "move" for g in all_groups),
-            "new": sum((g.get("suggest") or {}).get("mode") == "new" for g in all_groups),
-            "needCheck": sum(bool((g.get("suggest") or {}).get("needsCheck")) for g in all_groups),
-        }
-        refreshed_new = {}
-        for g in all_groups:
-            sg = g.get("suggest") or {}
-            if sg.get("mode") == "new":
-                cat_name = sg.get("newName")
-                if cat_name:
-                    item = refreshed_new.setdefault(cat_name, {
-                        "name": cat_name, "parent": sg.get("newParent"), "count": 0})
-                    item["count"] += 1
-        data["newDirs"] = sorted(refreshed_new.values(),
-                                 key=lambda x: -x["count"])
+            suggestion = by_group_id[(q["nodeId"], q["groupId"])]
+            if suggestion.get("aiJudgement"):
+                q["aiJudgement"] = suggestion["aiJudgement"]
+                q["tier"] = suggestion["tier"]
+                q["status"] = "needs_review" if suggestion["needsCheck"] else "confirmed"
+        data["summary"], data["newDirs"] = summarize_decisions(nodes)
         print(f"回填 {applied} 组判断", file=sys.stderr)
-        if missed:
-            print(f"  {missed} 条没找到对应组（已忽略）", file=sys.stderr)
 
     # --need-ai：只输出问题清单，方便喂给 AI
     if args.need_ai:
         print(json.dumps({"questions": data["aiQuestions"]},
                          ensure_ascii=False, indent=2))
-        return 1 if data["aiQuestions"] else 0
+        return 1 if data["aiQuestions"] or missed else 0
 
-    out = Path(args.out) if args.out else state_dir / 'decisions.json'
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                   encoding='utf-8')
+    out = Path(args.out) if args.out else organize_dir(data["root"]) / 'decisions.json'
+
+    def owns_decisions(path):
+        try:
+            saved = json.loads(path.read_text(encoding='utf-8-sig'))
+        except ValueError:
+            return False
+        return (isinstance(saved, dict) and saved.get('root') == data['root']
+                and isinstance(saved.get('generated'), str) and isinstance(saved.get('nodes'), list)
+                and isinstance(saved.get('zones'), list) and isinstance(saved.get('summary'), dict)
+                and isinstance(saved.get('aiQuestions'), list))
+
+    try:
+        write_artifact(out, json.dumps(data, ensure_ascii=False, indent=2).encode('utf-8'),
+                       owns_existing=owns_decisions)
+    except (OSError, ValueError) as exc:
+        ap.error(str(exc))
 
     print(f'已生成: {out}')
-    print(f'  {len(nodes)} 节点 / {total} 组')
     summary = data["summary"]
+    print(f'  {len(nodes)} 节点 / {summary["total"]} 组')
     print(f'  保持原位 {summary["keep"]} · 移到已有区 {summary["move"]} · 建议新建 {summary["new"]}')
     print(f'  需确认 {summary["needCheck"]} 组')
-    if new_dirs:
+    if data["newDirs"]:
         print('  建议新建的目录:')
         for d in data["newDirs"]:
             parent = d["parent"] or "根目录"
             print(f'    {parent} / {d["name"]}　({d["count"]} 组)')
-    return 0
+    return int(bool(missed))
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ Interrupted operations block further work until `recover` reconciles them.
 import argparse
 from contextlib import contextmanager
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -24,10 +24,10 @@ import uuid
 import cross_volume
 import rules
 from safety import (BENIGN_SYSTEM_DESCENDANTS, SafetyError, MARKER_FIELDS, NESTED_DENY,
-                    PROTECTED_NAMES, assert_no_links, block_kind, encode_tsv,
+                    PROTECTED_NAMES, SAVE_AREAS, active_game_save, assert_no_links, block_kind, compile_nested_protection, encode_tsv,
                     env_dependency_reason, is_reparse, is_skeleton_path, is_system_attr,
                     is_system_protected_file, is_system_root, key, load_markers,
-                    nested_verdict, normal, organize_dir, read_tsv, replace_path,
+                    nested_policy_verdict, nested_verdict, normal, organize_dir, read_tsv, replace_path,
                     state_home, toolchain_marker_reason, within)
 
 FIELDS = ('seq', 'run_id', 'ts', 'op', 'before', 'after', 'reason', 'status')
@@ -292,11 +292,41 @@ class Journal:
         elif any((d/'marker-update.json').exists() for d in (primary.parent, self.mirror_dir)):
             raise SafetyError('主保护标记和镜像均缺失；请先人工核对保护标记')
 
-    def protection(self, policy=None):
+    def _local_protection(self, policy=None):
         if self.pending_marker_update():
             raise SafetyError('保护标记写入尚未完成；先运行 recover')
         self.check_marker_files()
         return load_protection(self.root, policy)
+
+    def _has_protection_state(self, *, include_skips=False):
+        state = self.state_dir
+        paths = (state / 'policy.json', state / 'markers.tsv', state / 'marker-update.json',
+                 self._mirror_dir / 'markers.tsv', self._mirror_dir / 'marker-update.json',
+                 self._legacy_mirror_dir / 'markers.tsv', self._legacy_mirror_dir / 'marker-update.json')
+        return any(os.path.lexists(path) for path in paths) or (
+            include_skips and os.path.lexists(state / 'probe'))
+
+    def protection(self, policy=None, *, inherit_cache_cleanup=False, include_skips=False, probe=None):
+        protection = self._local_protection(policy)
+        all_markers = list(protection.markers)
+        ancestors = list(protection_scopes(self.root, include_skips=include_skips))
+        for scope in ancestors:
+            ancestor = scope._local_protection()
+            all_markers.extend(ancestor.markers)
+            protection.markers.extend(marker for marker in ancestor.markers
+                                      if within(marker['path'], self.root) or within(self.root, marker['path']))
+            protection.extra_names.update(ancestor.extra_names)
+            protection.nested_rules.extend(ancestor.nested_rules)
+            if inherit_cache_cleanup:
+                protection.allow_cache_cleanup |= ancestor.allow_cache_cleanup
+        if include_skips:
+            for scope in [*reversed(ancestors), self]:
+                location = probe if scope is self and probe is not None else scope.state_dir / 'probe'
+                skipped = list(skipped_probes(scope.root, location, all_markers))
+                all_markers.extend(skipped)
+                protection.markers.extend(marker for marker in skipped
+                                          if within(marker['path'], self.root) or within(self.root, marker['path']))
+        return protection
 
     @contextmanager
     def locked(self, repair=False, prepare=True):
@@ -493,6 +523,71 @@ class Protection:
     markers: list
     extra_names: set
     allow_cache_cleanup: bool = False
+    nested_rules: list = field(default_factory=list)
+
+
+def protection_scopes(path, *, include_skips=False):
+    for parent in Path(normal(path)).parents:
+        try:
+            scope = Journal(parent, allow_system_drive=True)
+        except SafetyError:
+            continue
+        if scope._has_protection_state(include_skips=include_skips):
+            yield scope
+
+
+def skipped_probes(root, probe, markers):
+    """Use explicit S1 skips as run exclusions without modifying permanent markers."""
+    probe = Path(probe)
+    if block_kind(root, markers) or block_kind(probe, markers):
+        return
+    assert_no_links(probe)
+    for file in probe.glob('*.json'):
+        if file.name.startswith(('units_', 'group_', 'dup_')) or block_kind(file, markers):
+            continue
+        try:
+            if is_reparse(file):
+                continue
+            record = json.loads(file.read_text(encoding='utf-8-sig'))
+            path = record.get('path') if isinstance(record, dict) and record.get('action') == 'skip' else None
+            if isinstance(path, str) and os.path.isabs(path) and within(path, root):
+                yield {'path': normal(path), 'kind': 'NO_TOUCH'}
+        except (OSError, ValueError):
+            continue
+
+
+def check_artifact_path(path):
+    """Check protection at the actual output location, including external destinations."""
+    path = Path(normal(path))
+    assert_no_links(path)
+    if active_game_save(path.parts):
+        raise SafetyError('游戏可能正在使用该存档目录，保留原路径')
+    markers = []
+    scopes = list(protection_scopes(path, include_skips=True))
+    for scope in reversed(scopes):
+        protection = scope._local_protection()
+        markers.extend(protection.markers)
+        if block_kind(path, markers):
+            raise SafetyError('产物输出命中保护标记')
+        if not nested_policy_verdict(path, protection.nested_rules)[0]:
+            raise SafetyError('产物输出命中嵌套保护')
+        markers.extend(skipped_probes(scope.root, scope.state_dir / 'probe', markers))
+        if block_kind(path, markers):
+            raise SafetyError('产物输出命中已跳过路径')
+    return path
+
+
+def write_artifact(path, data, *, owns_existing=None):
+    path = check_artifact_path(path)
+    replacing = os.path.lexists(path)
+    if replacing and (not path.is_file() or owns_existing is None or not owns_existing(path)):
+        raise SafetyError('输出位置已有其他文件，请选择新的文件名')
+    atomic_write(path, data, replace=replacing)
+
+
+def artifact_has_signature(path, signature):
+    with path.open('rb') as file:
+        return signature in file.read(1024)
 
 
 def load_protection(root, policy=None):
@@ -502,7 +597,8 @@ def load_protection(root, policy=None):
     extra_names.update({name.casefold() for name in pack.get('nestedDeny', [])} - NESTED_DENY)
     markers = load_markers(root) + no_go_markers(root, policy)
     allow_cache = bool(policy.get('allow_cache_cleanup', False)) if isinstance(policy, dict) else False
-    return Protection(markers, extra_names, allow_cache_cleanup=allow_cache)
+    return Protection(markers, extra_names, allow_cache_cleanup=allow_cache,
+                      nested_rules=compile_nested_protection(root, policy))
 
 
 def no_go_markers(root, policy):
@@ -544,7 +640,8 @@ def guard(path, root, protection, descendants=False, allow_root=False, allow_con
     # 嵌套判定：受保护区内可以有允许点（如 Games\某游戏\Screenshots），系统强制禁区永久锁死；
     # 清理腾空间模式下按精细白名单放行 AppData 及开发缓存中的已知安全缓存子目录
     allow_cache = bool(getattr(protection, 'allow_cache_cleanup', False))
-    allowed, why = nested_verdict(path, allow_cache_cleanup=allow_cache, allow_container=allow_container)
+    allowed, why = nested_verdict(path, allow_cache_cleanup=allow_cache, allow_container=allow_container,
+                                  nested_rules=protection.nested_rules, descendants=descendants)
     if not allowed:
         raise SafetyError('命中受保护目录：' + why)
     if any(part.casefold() in protection.extra_names for part in Path(path).parts):
@@ -579,6 +676,11 @@ def guard(path, root, protection, descendants=False, allow_root=False, allow_con
                     if tc_child:
                         raise SafetyError('目录包含环境/工具链根目录：' + tc_child)
                 lower_name = name.casefold()
+                if child_is_dir and lower_name in SAVE_AREAS:
+                    allowed_save, reason = nested_verdict(child, allow_cache_cleanup=allow_cache,
+                                                          nested_rules=protection.nested_rules)
+                    if not allowed_save:
+                        raise SafetyError(reason)
                 if is_system_attr(child) and (child_is_dir or lower_name not in BENIGN_SYSTEM_DESCENDANTS):
                     raise SafetyError('目录包含 Windows 系统属性文件或目录')
                 if not child_is_dir and lower_name not in BENIGN_SYSTEM_DESCENDANTS and is_system_protected_file(child):
@@ -705,8 +807,8 @@ def cross_guard(journal, authority, before, after):
             raise SafetyError('跨卷移动的已授权根或卷已变化')
     primary, other = journal.protection(), Journal(external).protection()
     markers = primary.markers + other.markers
-    protections = {journal.root: Protection(markers, primary.extra_names),
-                   external: Protection(markers, other.extra_names)}
+    protections = {journal.root: Protection(markers, primary.extra_names, nested_rules=primary.nested_rules),
+                   external: Protection(markers, other.extra_names, nested_rules=other.nested_rules)}
     for root in protections:
         if block_kind(organize_dir(root)/'cross-volume', markers, descendants=True):
             raise SafetyError('跨卷暂存区域命中保护标记')
@@ -1073,7 +1175,8 @@ def plan(args):
     if not probe.is_dir():
         raise SafetyError('探针结果目录不存在')
     policy = rules.load_root_policy(root)
-    protection = journal.protection(policy)
+    protection = journal.protection(policy, include_skips=True, probe=probe)
+    guard(root, root, protection, allow_root=True)
     if args.policy:
         assert_no_links(args.policy)
         try:
@@ -1083,6 +1186,7 @@ def plan(args):
         if not isinstance(policy, dict):
             raise SafetyError('policy 必须是对象')
         protection.markers.extend(no_go_markers(root, policy))
+        protection.nested_rules.extend(compile_nested_protection(root, policy))
     allow_rename, allow_merge, zone_names, max_bytes = approval_settings(policy)
     has_secrets = any(marker['kind'] == 'SECRET' for marker in protection.markers)
 
@@ -1158,7 +1262,10 @@ def plan(args):
     out = Path(args.out) if args.out else journal.state_dir/'plan.tsv'
     wrote = not args.dry_run and (bool(actions) or os.path.lexists(out))
     if wrote:
-        atomic_write(out,encode_tsv(actions,('op','src','dst','reason')))
+        def owns_plan(path):
+            with path.open('r', encoding='utf-8-sig') as file:
+                return file.readline().rstrip('\r\n') == 'op\tsrc\tdst\treason'
+        write_artifact(out, encode_tsv(actions, ('op','src','dst','reason')), owns_existing=owns_plan)
 
     if not args.quiet:
         print(f'可自动执行 {len(actions)} 项')
@@ -1206,9 +1313,19 @@ def read_actions(args):
     return actions
 
 
+def rename_target(source, name, root, protection):
+    """Resolve a single-name rename destination using the executor's protection rules."""
+    if (not isinstance(name, str) or not name or name in ('.', '..')
+            or re.search(r'[\\/:*?"<>|\x00-\x1f]', name) or name.rstrip(' .') != name):
+        raise SafetyError('rename 的目标必须是有效文件名')
+    if os.name == 'nt' and re.match(r'(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)', name):
+        raise SafetyError('rename 使用了系统保留名称')
+    return guard(Path(source).with_name(name), root, protection)
+
+
 def preflight(root, actions, journal=None, external_roots=(), review=False, report=False):
     journal = journal or Journal(root)
-    protection = journal.protection()
+    protection = journal.protection(include_skips=True)
     prepared, blocked, reserved = [], [], set()
     sources, source_parents, moved_targets, destination_parents = set(), set(), set(), set()
     checked_external = set()
@@ -1241,11 +1358,7 @@ def preflight(root, actions, journal=None, external_roots=(), review=False, repo
                         source_key in destination_parents or parents & sources):
                     raise SafetyError('源路径与前序动作重叠')
                 if op == 'rename':
-                    if not dst or dst in ('.','..') or re.search(r'[\\/:*?"<>|\x00-\x1f]',dst) or dst.rstrip(' .') != dst:
-                        raise SafetyError('rename 的目标必须是有效文件名')
-                    if os.name == 'nt' and re.match(r'(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)',dst):
-                        raise SafetyError('rename 使用了系统保留名称')
-                    target = guard(str(Path(src).with_name(dst)),root,protection)
+                    target = rename_target(src, dst, root, protection)
                     if key(src) == key(target):
                         continue
                     if os.path.lexists(target) or key(target) in reserved:
@@ -1342,6 +1455,7 @@ def receipt_state(root, actions, prepared, external_roots):
 
 
 def write_receipt(path, state, journal):
+    path = check_artifact_path(path)
     if os.path.lexists(path) or not path.parent.is_dir():
         raise SafetyError('预演清单须为现有目录下的新文件，避免覆盖')
     if within(path, journal.root):
@@ -1481,6 +1595,7 @@ def apply(args):
 
     if args.dry_run:
         return execute()
+    guard(root, root, journal.protection(include_skips=True), allow_root=True)
     with journal.locked(prepare=receipt is None):
         return execute()
 
@@ -1700,6 +1815,7 @@ def marker_command(args):
                 raise SafetyError('标记路径越界')
         if args.action == 'check':
             from safety import marker_hits
+            rows = journal.protection(include_skips=True).markers
             hits = marker_hits(path,rows,descendants=True)
             kind = block_kind(path,rows,descendants=True)
             print(kind or ('NOTE' if hits else 'no-marker'))

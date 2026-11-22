@@ -126,11 +126,9 @@ python core/decisions.py --root /path --need-ai > questions.json
 你是 TidyFileTree 的判断代理。下面是要判断的组，每个都附了
 已采集的事实（内容形态、样例文件名、规则匹配情况）。
 
-只做判断，不碰文件。输出 JSON：
-{ "group": "...", "category": "...", "label": "...",
-  "confidence": "high|medium|low", "evidence": "依据" }
-
-判断不了就写 confidence=low 并说明缺什么，不要猜。
+只做判断，不碰文件。按下文的 answers 数组格式输出 JSON，逐条原样复制问题里的
+nodeId、groupId 和 observationId。按 requiredOutput.tier 提供验证字段。
+判断不了就填 confirmation.holds=false、confidence=low，并说明缺什么。
 ```
 
 **子代理拿的是事实包，不是文件名列表。** 它看到的是：
@@ -138,6 +136,9 @@ python core/decisions.py --root /path --need-ai > questions.json
 ```json
 {
   "group": "VOCALOID 编辑器与声库",
+  "nodeId": "示例-节点标识",
+  "groupId": "示例-分组标识",
+  "observationId": "示例-观察标识",
   "shape": {"kind": "installer", "dominant": ".exe", "ratio": 0.89},
   "sampleFiles": ["VEditor_v6.exe", "初音未来V4X.exe", "镜音铃V4X.exe"],
   "suggestion": {"mode": "keep", "evidence": ["内容以 installer 为主"]},
@@ -183,8 +184,8 @@ S6  覆盖检查 每个阶段结束后必跑，确认没有节点被跳过
 **S6 不是可选的。** 网格化扫描一期漏掉一个 300GB 的节点，后续所有统计都是错的。
 
 ```bash
-python core/coverage.py /root --probe /root/_organize/probe
-# 退出码 0 = 全覆盖，1 = 有遗漏
+tidy-file-tree coverage /root
+# 退出码 1 表示有遗漏或产物错误，只有旧计数的节点单独显示「未核对」
 ```
 
 ---
@@ -313,7 +314,7 @@ python tidy_file_tree.py setup show /path       # 看当前配置
 
 | 问题 | 为什么问 |
 |---|---|
-| **这次的目标是「整理归类」还是「清理腾空间」（或两步结合）** | **最先问的一题**。整理归类默认不碰 `AppData` 与开发缓存；选「清理腾空间」或「先腾空间再整理」会在 `policy.json` 开启 `allow_cache_cleanup: true`，允许检查 `AppData` 及 `.cache`/`.gradle` 中的**已知安全缓存子目录**（如 `Temp`/`Cache`/`CrashDumps`/`pip`/`npm-cache`），仍永久锁死软件本体、配置、存档和凭据 |
+| **这次的目标是「整理归类」还是「清理腾空间」（或两步结合）** | **最先问的一题**。清理模式会在 `policy.json` 开启 `allow_cache_cleanup: true`。只检查白名单明确列出的缓存路径，例如 `AppData\Local\Temp`、`AppData\Local\CrashDumps`、`AppData\Local\pip\cache` 和常见开发工具缓存。应用的泛 `Cache` 目录需单独复核，软件本体、配置、存档和凭据仍按保护规则排除。 |
 | 成人内容和普通内容要不要分开 | 影响最大。混着找普通内容会不断撞见 |
 | 视频要不要按用途分 | 影视/学习/娱乐三者都是视频，但找的时候目的不同 |
 | 游戏要不要按类型分 | 按引擎或按题材，两种分法结果完全不同 |
@@ -322,8 +323,7 @@ python tidy_file_tree.py setup show /path       # 看当前配置
 | 凭据类文件怎么处理 | 这类不该被移动，也不该进日志 |
 | 有没有明确不想让工具碰的地方 | 正在做的项目、他人资料、工作区 |
 
-**不问能自己看出来的。** 盘上有几个目录、多大体积、什么类型——
-探针会查，不用问人。
+目录结构和类型由探针做浅层判断。需要评估腾出的空间，或用户明确要求统计体积时，再通过 `tidy-file-tree scan <root> --size` 递归统计大小和文件数。
 
 ### 答案落到哪
 
@@ -618,20 +618,33 @@ keep / ask     → 跳过
 
 ### AI 判断的输出
 
+每条回答原样复制对应问题的 `nodeId`、`groupId`、`observationId`。示例中的标识需替换成实际问题里的值。
+
 ```json
 {
-  "category": "voice_synth",
-  "label": "歌声合成声库与工具",
-  "confidence": "high",
-  "evidence": "VEditor 是编辑器本体，初音/镜音是声库安装程序，
-               属于工具+素材，不是成品音乐",
-  "suggest_new": true,
-  "new_keys": ["VOCALOID", "声库", "音源"]
+  "answers": [
+    {
+      "nodeId": "示例-节点标识",
+      "groupId": "示例-分组标识",
+      "observationId": "示例-观察标识",
+      "category": "voice_synth",
+      "label": "歌声合成声库与工具",
+      "hypothesis": "这组文件用于歌声合成",
+      "verification": {
+        "method": "核对扩展名分布和问题中的样例文件名",
+        "findings": "样例是编辑器和声库安装程序"
+      },
+      "confirmation": {
+        "holds": true,
+        "confidence": "high",
+        "why": "样例与声库工具的用途一致"
+      }
+    }
+  ]
 }
 ```
 
-`suggest_new` 为真时，这个类别会写进规则的 `proposedCategories`，
-人确认后加进规则包，下次就能自动识别。
+回填前会重新采集当前组的文件样例和结构。观察标识失效时重新生成问题。只含 `parent` 和 `group` 的旧版回答在唯一匹配时保留为待人工复核，同名组需要重新生成带标识的问题。
 
 ### 但 AI 不做的
 
@@ -916,18 +929,19 @@ probe/*.json 里的 path 字段
 **每个阶段结束后必须跑。** 这是唯一能发现"漏了"的机制。
 
 ```bash
-python core/coverage.py <root> --probe <root>/_organize/probe
-# 退出码 0 = 全覆盖
-# 退出码 1 = 有遗漏，列出每个缺失项
+tidy-file-tree coverage <root>
+# 退出码 1 表示有明确遗漏或产物错误
 ```
 
 ### 它检查三件事
 
 ```
-S1  每个一级目录有没有探针判定
-S2  每个 split/enter 节点有没有单元清点
-S3  每个有清点的节点有没有归组
+S1  核对一级目录、已登记的根级文件与需要下钻的子节点
+S2  split 需要清点。只负责下钻的 enter 直接核对子节点，不要求父层重复清点
+S3  已清点的单元检查是否恰好归入一个组、独立单元或待确认项
 ```
+
+系统盘使用自动定位的外置状态目录。旧产物只有计数时显示「未核对」；兼容旧脚本，只有明确遗漏或错误才返回退出码 `1`。查看自动化结果时同时读取 `status`，确认是否已完成逐项核对。
 
 ### 实测：它抓出了三类遗漏
 
@@ -1067,12 +1081,16 @@ ComfyUI 运行环境          [选择去向 ▾]
 
 同时，**每完成一个阶段（S0 / 初筛 / S1 / S2–S3 / S4 / S5）必须做到三条硬纪律**：
 1. **把选择交给图形化页面 `ui.html`，不要在聊天框里列 1/2/3/4 文字问卷**：除 S0 初始大原则确认、系统盘 `--allow-system-drive` 授权及最后一步 `_待删除` A/B/C 删除确认外，**所有涉及目录/文件去向、保留还是移动、版本归位的拍板选择，都必须先由 AI 自动跑完 S1 → S2 → S3 → S4（含自动下钻 `Downloads`、`Desktop`、`Documents`、`Pictures`、`Videos`、`Music` 等用户目录），再生成并打开 `ui.html` 连线工作台让用户在图形化页面里直接点击连线拍板**；严禁在 S1 中途停下来在聊天框里逐条文字拷问用户。
-2. **主动下钻容器目录，并按模式严守保护边界**：遇到容器目录（特别是系统盘的 `C:\Users` → `C:\Users\<当前用户>` → `Downloads`/`Desktop`/`Documents`/`Pictures`/`Videos`/`Music`），S1 自动写 `action: "enter"` + `enter_children` 并派子代理下钻到真实用户文件层。若用户在 S0 选择了「清理腾空间」或「先腾空间再整理」（`allow_cache_cleanup: true`），允许进一步检查 `AppData\Local\Temp`、`CrashDumps`、`pip\cache`、`*\Cache`、`.cache`、`.gradle\caches` 等**安全缓存白名单**并汇总交用户最后确认；但 **`AppData\Local\Programs`、`Packages`、`Credentials`、`Protect`、`Crypto`、软件配置/游戏存档、`tidy-file-tree*` 状态目录、`.ssh`/`.gnupg`/`.vscode` 等永远禁止触碰**；也不对非零信息名的已有项目/工具目录（如 `civtest`、`pdseek`、`图吧工具箱`）提议改名。
+2. **主动下钻容器目录，并按模式严守保护边界**。遇到用户目录等容器时，S1 写 `action: "enter"` 和 `enter_children`，再下钻到真实文件层。清理模式按白名单检查具体缓存路径并汇总交用户确认。只有通用 `Cache` 名字的应用目录先列为待复核。软件配置、存档、凭据及工具状态按保护规则排除。已有项目或工具目录只在名称没有信息时提出改名建议。
 3. **每步收尾主动提示下一步**：每次阶段汇报结尾用 1–2 行明确告知当前进展与下一步动作（例如「已自动下钻并打开 `ui.html`，你在页面里只连待确认项、导出 `actions.tsv` 给我即可进入预演」）。
 
 ### 实现要点
 
 `python tidy_file_tree.py ui <root> --open` 生成自包含工作台。S4 回填结果默认从 `_organize/decisions.json` 读取；界面按节点、组及成员标识核对后展示验证级别、猜想、验证和确认。候选类别来自 S4 或当前分组的未匹配项。
+
+重新生成工作台时，文件身份未变的连线可以恢复。同名替换后的来源和缺少身份记录的旧版移动连线需重新确认。静态工作台里的文件身份取自页面生成时，正式执行仍需按预演清单核对。指定产物输出路径时，先避开保护位置和已有的无关文件。
+
+S1 的改名建议在独立卡片显示原名和新名。用户点击「确认改名」才会导出 `rename` 动作，再用相同的预演和执行流程核对。
 
 曲线从左侧来源圆点接到右侧专用圆点，中间预留走线空间。可点击区域比可见线宽。整组连线只填未分配项，需要重设时明确选择覆盖并确认。整组各单元已连且去向相同时，合并成一条线。界面支持撤销和重做连线。
 
@@ -1167,6 +1185,23 @@ path  kind  by  note  ts
 同名同大小的凭据可能有多份。**移动"包含凭据的父目录"同样危险**，即使 SECRET 文件本身不被选中——路径会变，标记会失效。
 
 ---
+
+### 锁定母目录并放行明确的导出子目录
+
+在整理根状态目录的 `policy.json` 设置 `nested_protection`。普通目录使用 `<root>/_organize/policy.json`。路径可以写成绝对路径或相对整理根的路径。`*` 只匹配一个完整的路径段。确认 `Screenshots` 是独立的导出目录后，可以用下例锁定 `Games` 并放行该子路径。
+
+```json
+{
+  "nested_protection": [
+    {
+      "no_touch": "Games",
+      "exceptions": ["Games/*/Screenshots"]
+    }
+  ]
+}
+```
+
+扫描可以沿只读通道找到例外，移动或改名仍须限定在获准的子路径里。正式保护标记、系统和程序强制禁区、游戏运行区及疑似活跃存档仍然优先拦截。实际游戏存档保留原路径，已经独立复制出来的备份可另行整理。
 
 ## 枚举的坑：Hidden 属性
 
@@ -1266,7 +1301,7 @@ vpn.pem            名字里没有内容信息
 
 若处理某项内容会违反当前模型的要求，将该项标记为「不做处理」，结束对该项的查看和整理。原因统一写「受模型要求限制」，将该项排除在归组、统计和执行清单之外。
 
-探针用 `action: "skip"` 记录跳过。模型允许记录路径时，由主代理用 `scripts/markers.ps1` 登记 `NO_TOUCH`，并指定 `-By inferred`。执行预检会拦截该路径及会一并移动该项的父目录。
+探针用 `action: "skip"` 记录本次范围里的跳过项。读取到该判定后，同路径的旧清点和归组产物不再参与扫描、判断、连线和预检。模型允许记录路径时，由主代理用 `scripts/markers.ps1` 登记 `NO_TOUCH`，并指定 `-By inferred`，让保护在后续任务中继续有效。执行预检也会拦截一并移动该项的父目录。
 
 ---
 

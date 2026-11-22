@@ -243,6 +243,21 @@ class TransactionCase(unittest.TestCase):
         with self.assertRaises(SafetyError):
             executor.preflight(self.root, [dict(op='rename', src=str(source), dst='renamed', reason='test')])
 
+    def test_narrowing_the_root_keeps_parent_exclusions(self):
+        private = self.put('shared/private/record.txt')
+        public = self.put('shared/public/record.txt')
+        self.put('_organize/policy.json', json.dumps({'no_go_zones': ['shared/private']}))
+        action = dict(op='rename', src=str(private), dst='renamed.txt', reason='test')
+        for scope in (self.root, private.parent.parent, private.parent):
+            with self.subTest(scope=scope):
+                prepared, blocked = executor.preflight(scope, [action])
+                self.assertFalse(prepared)
+                self.assertEqual(len(blocked), 1)
+        prepared, blocked = executor.preflight(public.parent, [{**action, 'src': str(public)}])
+        self.assertEqual(len(prepared), 1)
+        self.assertFalse(blocked)
+        self.assertTrue(private.exists())
+
     def test_apply_stops_on_missing_primary_markers_and_recover_restores_from_mirror(self):
         source = self.put('before.txt')
         markers = self.root/'_organize'/'markers.tsv'
@@ -652,6 +667,7 @@ class TransactionCase(unittest.TestCase):
             sys_drive + 'Users\\alice\\AppData\\Local\\CrashDumps\\app.dmp',
             sys_drive + 'Users\\alice\\AppData\\Local\\pip\\cache\\pkg.whl',
             sys_drive + 'Users\\alice\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache\\f_001',
+            sys_drive + 'Users\\alice\\AppData\\Local\\Mozilla\\Firefox\\Profiles\\sample.default-release\\cache2\\entries\\entry',
             sys_drive + 'Users\\alice\\.cache\\huggingface\\hub\\blob',
             sys_drive + 'Users\\alice\\.gradle\\caches\\modules-2\\a.jar',
         )
@@ -668,6 +684,9 @@ class TransactionCase(unittest.TestCase):
             sys_drive + 'Users\\alice\\.ssh\\id_ed25519',
             sys_drive + 'Users\\alice\\.vscode\\settings.json',
             sys_drive + 'Windows\\Temp\\a.tmp',
+            sys_drive + 'Users\\alice\\AppData\\Local\\UnknownApp\\Cache\\save.dat',
+            sys_drive + 'Users\\alice\\AppData\\Local\\UnknownApp\\Caches\\save.dat',
+            sys_drive + 'Users\\alice\\AppData\\Local\\SomeApp\\cache_data\\save.dat',
         )
         # Default organize mode: safe caches are still blocked
         for p in safe_caches:
@@ -682,6 +701,9 @@ class TransactionCase(unittest.TestCase):
                                        allow_cache_cleanup=True, allow_container=True)[0])
         self.assertFalse(nested_verdict(sys_drive + 'Users\\alice\\AppData\\Local\\Programs',
                                         allow_cache_cleanup=True, allow_container=True)[0])
+        profile = sys_drive + 'Users\\alice\\AppData\\Local\\Google\\Chrome\\User Data\\Default'
+        self.assertFalse(nested_verdict(profile, allow_cache_cleanup=True)[0])
+        self.assertTrue(nested_verdict(profile, allow_cache_cleanup=True, allow_container=True)[0])
 
 
 if __name__=='__main__':

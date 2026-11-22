@@ -219,10 +219,10 @@ class FilesystemCase(unittest.TestCase):
         self.apply([('move',link/'outside.txt', self.root/'dest')])
         self.assertTrue(file.exists())
         import signals
-        data = signals.analyze(str(self.root))
-        # Count other known test files, but never outside.txt through the link.
-        expected = sum(1 for p in (self.root/'_organize').rglob('*') if p.is_file())
-        self.assertEqual(data['file-count-total'], expected)
+        with patch.dict(os.environ, {'LOCALAPPDATA': str(self.base/'local')}):
+            data = signals.analyze(str(self.root), totals=True)
+        # The protected link and internal _organize state are both excluded.
+        self.assertEqual(data['file-count-total'], 0)
 
     def test_dry_run_does_not_create_state_directory(self):
         file = self.put('input.txt')

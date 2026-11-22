@@ -25,7 +25,7 @@ import os
 import sys
 from pathlib import Path
 
-from executor import atomic_write
+from executor import atomic_write, check_artifact_path
 from rules import load_root_policy
 from safety import SafetyError, assert_no_links, is_system_root, normal, organize_dir, within
 
@@ -165,6 +165,45 @@ def cmd_ask(args):
     return 0
 
 
+VIDEO_SPLIT_MAPPING = {
+    "video_movie": "影视",
+    "video_series": "动画",
+    "video_course": "学习资料",
+    "video_clip": "娱乐视频",
+}
+
+
+def update_video_mapping(policy, previous_choice, choice):
+    mapping = policy.setdefault("mapping", {})
+    recorded = policy.get("_setupGeneratedMapping")
+    generated = dict(recorded) if isinstance(recorded, dict) else {}
+    if not isinstance(recorded, dict) and str(previous_choice or "").startswith("分开：影视"):
+        # Earlier versions stored no provenance. Only exact old defaults can be retired.
+        generated.update(VIDEO_SPLIT_MAPPING)
+
+    for category in VIDEO_SPLIT_MAPPING:
+        previous = generated.pop(category, None)
+        if previous is not None and mapping.get(category) == previous:
+            del mapping[category]
+
+    choice = str(choice or "")
+    if choice.startswith("分开：影视"):
+        targets = VIDEO_SPLIT_MAPPING
+    elif choice.startswith("只分影视和其他"):
+        targets = {"video_movie": "影视", "video_series": "影视",
+                   "video_course": "其他视频", "video_clip": "其他视频"}
+    elif choice.startswith("全放一起"):
+        targets = dict.fromkeys(VIDEO_SPLIT_MAPPING, "视频")
+    else:
+        targets = {}
+
+    for category, target in targets.items():
+        if not mapping.get(category):
+            mapping[category] = target
+            generated[category] = target
+    policy["_setupGeneratedMapping"] = generated
+
+
 def cmd_apply(args):
     try:
         answers = json.loads(Path(args.answers).read_text(encoding="utf-8-sig"))
@@ -183,6 +222,7 @@ def cmd_apply(args):
             raise SafetyError("整理根目录不存在")
         if is_system_root(root) and not getattr(args, "allow_system_drive", False):
             raise SafetyError("整理系统盘根目录或 Users 根目录需显式加 --allow-system-drive")
+        p = check_artifact_path(find_policy(root))
         policy = load_root_policy(root)
         if not isinstance(policy.get("setup", {}), dict):
             raise SafetyError("现有 policy 的 setup 必须是对象")
@@ -204,6 +244,7 @@ def cmd_apply(args):
         return 1
 
     setup = policy.get("setup") or {}
+    previous_video_split = setup.get("video_split")
     setup.update(answers)
     policy["setup"] = setup
 
@@ -221,12 +262,8 @@ def cmd_apply(args):
                 mapping[cat] = "成人内容"
         policy["_adultSeparated"] = True
 
-    if setup.get("video_split", "").startswith("分开：影视"):
-        mapping = policy.setdefault("mapping", {})
-        mapping.setdefault("video_movie", "影视")
-        mapping.setdefault("video_series", "动画")
-        mapping.setdefault("video_course", "学习资料")
-        mapping.setdefault("video_clip", "娱乐视频")
+    if "video_split" in answers:
+        update_video_mapping(policy, previous_video_split, setup["video_split"])
 
     if setup.get("tool_vs_product", "") == "分开":
         mapping = policy.setdefault("mapping", {})
@@ -239,8 +276,12 @@ def cmd_apply(args):
     if isinstance(no_go, list):
         policy["no_go_zones"] = no_go
 
-    p = find_policy(root)
-    atomic_write(p, json.dumps(policy, ensure_ascii=False, indent=2).encode("utf-8"))
+    try:
+        checked = check_artifact_path(p)
+        atomic_write(checked, json.dumps(policy, ensure_ascii=False, indent=2).encode("utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"无法保存整理设置: {exc}", file=sys.stderr)
+        return 1
 
     print(f"已写入 {p}")
     print(f"  回答了 {len(setup)} 个问题")

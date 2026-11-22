@@ -8,13 +8,13 @@ import secrets
 import time
 import webbrowser
 
-from coverage import SKIP_NAMES
-from executor import (Journal, active_events, atomic_write, completed, meta,
+from coverage import SKIP_NAMES, grouping_coverage, unit_count, valid_action
+from executor import (Journal, active_events, artifact_has_signature, completed, meta, write_artifact,
                       read_journal)
 import rules
 from safety import (SafetyError, USER_SHELL_FOLDERS, assert_no_links, block_kind,
                     env_dependency_reason, is_reparse, is_system_attr, is_system_root,
-                    is_user_profile_root, key, nested_verdict, normal, organize_dir,
+                    is_user_profile_root, key, nested_policy_verdict, nested_verdict, normal, organize_dir,
                     toolchain_marker_reason, within)
 
 TEMPLATE = Path(__file__).with_name('progress_ui.html')
@@ -95,14 +95,14 @@ def collect_snapshot(root, probe_override=None):
     markers = []
     marker_error = False
     try:
-        if (state_dir / 'markers.tsv').exists() or (state_dir / 'policy.json').exists():
-            protection = journal.protection()
-            markers = protection.markers
-    except (OSError, ValueError):
+        protection = journal.protection(include_skips=True, probe=probe_dir)
+        markers = protection.markers
+    except (OSError, ValueError, SafetyError) as exc:
         marker_error = True
+        raise SafetyError(f'无法读取保护标记，进度扫描已停止：{exc}') from exc
 
     secret_markers = [m for m in markers if m['kind'] == 'SECRET']
-    if block_kind(root_path, secret_markers):
+    if block_kind(root_path, markers):
         raise SafetyError('整理根目录命中凭据保护标记')
     secret_count = len(secret_markers)
 
@@ -138,6 +138,7 @@ def collect_snapshot(root, probe_override=None):
     # ── Discover top-level directories (and expand current user's shell folders on system root) ──
     expected = {}
     protected_skipped = 0
+    node_scan_truncated = False
     is_sys = is_system_root(root_path)
 
     def _register_dir(dir_path):
@@ -148,7 +149,10 @@ def collect_snapshot(root, probe_override=None):
                 return
             if block_kind(dir_path, secret_markers):
                 return
-            if is_sys and (is_system_attr(dir_path) or not nested_verdict(dir_path, allow_cache_cleanup=allow_cache_cleanup)[0]):
+            if (not nested_policy_verdict(dir_path, protection.nested_rules, allow_container=True)[0]
+                    or is_sys and (is_system_attr(dir_path) or not nested_verdict(dir_path,
+                        allow_cache_cleanup=allow_cache_cleanup, allow_container=bool(protection.nested_rules),
+                        nested_rules=protection.nested_rules)[0])):
                 protected_skipped += 1
                 return
             if env_dependency_reason(dir_path, root=root_path, allow_ancestor=True) or toolchain_marker_reason(dir_path):
@@ -180,6 +184,7 @@ def collect_snapshot(root, probe_override=None):
         with os.scandir(root_path) as it:
             for idx, entry in enumerate(it):
                 if idx >= NODE_SCAN_LIMIT:
+                    node_scan_truncated = True
                     break
                 lname = entry.name.casefold()
                 if lname in SKIP_NAMES:
@@ -257,7 +262,8 @@ def collect_snapshot(root, probe_override=None):
                     continue
                 if not within(norm, root_path, inclusive=False):
                     continue
-                if block_kind(norm, secret_markers, descendants=True):
+                if (block_kind(norm, secret_markers, descendants=True)
+                        or not nested_policy_verdict(norm, protection.nested_rules, allow_container=True)[0]):
                     continue
                 k = key(norm)
                 mtime = _iso_mtime(file)
@@ -268,11 +274,18 @@ def collect_snapshot(root, probe_override=None):
                         'derived': True, 'enter_child': False,
                     }
                 if file.name.startswith('units_'):
-                    total_u = obj.get('total_units')
-                    total_u = int(total_u) if isinstance(total_u, (int, float)) and not isinstance(total_u, bool) and total_u >= 0 else 0
-                    units[k] = {'total_units': total_u, 'mtime': mtime}
+                    try:
+                        total_u = unit_count(obj.get('total_units'))
+                    except SafetyError:
+                        probe_errors += 1
+                        continue
+                    units[k] = {'total_units': total_u, 'mtime': mtime, 'record': obj}
                     add_event('S2', 'units', expected[k]['name'], f'{total_u}', mtime)
-                    for child in (obj.get('sub_containers') or []):
+                    children = obj.get('sub_containers') or []
+                    if not isinstance(children, list):
+                        probe_errors += 1
+                        continue
+                    for child in children:
                         cval = child.get('path') if isinstance(child, dict) else child
                         if isinstance(cval, str) and cval:
                             try:
@@ -287,11 +300,17 @@ def collect_snapshot(root, probe_override=None):
                             except (OSError, ValueError):
                                 pass
                 elif file.name.startswith('group_'):
-                    glist = obj.get('groups') if isinstance(obj.get('groups'), list) else []
-                    groups[k] = {'count': len(glist), 'mtime': mtime}
+                    glist = obj.get('groups')
+                    if not isinstance(glist, list):
+                        probe_errors += 1
+                        continue
+                    groups[k] = {'count': len(glist), 'mtime': mtime, 'record': obj}
                     add_event('S3', 'group', expected[k]['name'], f'{len(glist)}', mtime)
                 else:
-                    action = str(obj.get('action') or 'unclear')
+                    action = obj.get('action')
+                    if not valid_action(action):
+                        probe_errors += 1
+                        continue
                     probes[k] = {
                         'action': action,
                         'confidence': str(obj.get('confidence') or ''),
@@ -299,7 +318,11 @@ def collect_snapshot(root, probe_override=None):
                     }
                     add_event('S1', 'probe', expected[k]['name'], action, mtime)
                     if action == 'enter':
-                        for child in (obj.get('enter_children') or []):
+                        children = obj.get('enter_children') or []
+                        if not isinstance(children, list):
+                            probe_errors += 1
+                            continue
+                        for child in children:
                             cval = child.get('path') if isinstance(child, dict) else child
                             if isinstance(cval, str) and cval:
                                 try:
@@ -325,6 +348,7 @@ def collect_snapshot(root, probe_override=None):
     total_units = 0
     total_groups = 0
     missing_nodes = 0
+    unverified_nodes = 0
 
     for k, info in sorted(expected.items(), key=lambda pair: pair[1]['name'].casefold()):
         if info['protected']:
@@ -358,7 +382,7 @@ def collect_snapshot(root, probe_override=None):
             s1_expected += 1
             if p_info:
                 s1_done += 1
-        needs_s2 = action in ('split', 'enter')
+        needs_s2 = action == 'split' or u_info is not None
         if needs_s2:
             s2_expected += 1
             if u_info:
@@ -376,6 +400,16 @@ def collect_snapshot(root, probe_override=None):
             node_missing.append('S2')
         if needs_s3 and not g_info:
             node_missing.append('S3')
+        if u_info and g_info:
+            try:
+                gaps, unverified = grouping_coverage(info['path'], u_info['record'], g_info['record'], markers,
+                                                    root=root_path, nested_rules=protection.nested_rules)
+                if gaps:
+                    node_missing.append('S3')
+                elif unverified:
+                    unverified_nodes += 1
+            except (OSError, ValueError):
+                node_missing.append('S3')
         if node_missing:
             missing_nodes += 1
 
@@ -401,15 +435,32 @@ def collect_snapshot(root, probe_override=None):
     # ── S4: decisions.json, plan.tsv, ui.html ──
     decisions_path = state_dir / 'decisions.json'
     decisions_obj = _safe_read_json(decisions_path) if decisions_path.is_file() else None
-    dec_summary = (decisions_obj or {}).get('summary') or {}
-    ai_questions = (decisions_obj or {}).get('aiQuestions') or []
+    raw_summary = (decisions_obj or {}).get('summary')
+    dec_summary = raw_summary if isinstance(raw_summary, dict) else {}
+    invalid_artifacts = []
+
+    def _summary_count(field):
+        value = dec_summary.get(field, 0)
+        integral = type(value) is int or (isinstance(value, float) and value.is_integer())
+        if not integral or not 0 <= value < 2**53:
+            invalid_artifacts.append('decisions.summary.' + field)
+            return 0
+        return int(value)
+
+    dec_counts = {field: _summary_count(field) for field in ('total', 'needCheck', 'move', 'keep', 'new')}
+    if decisions_path.is_file() and not isinstance(raw_summary, dict):
+        invalid_artifacts.append('decisions.summary')
+    ai_questions = (decisions_obj or {}).get('aiQuestions', [])
+    if not isinstance(ai_questions, list):
+        invalid_artifacts.append('decisions.aiQuestions')
+        ai_questions = []
     ai_answered = sum(1 for q in ai_questions if isinstance(q, dict) and q.get('aiJudgement'))
     plan_path = state_dir / 'plan.tsv'
     plan_count = _count_tsv_rows(plan_path) if plan_path.is_file() else 0
     ui_path = state_dir / 'ui.html'
     ui_ready = ui_path.is_file()
     if decisions_path.is_file():
-        add_event('S4', 'decisions', 'decisions.json', f"{dec_summary.get('total', 0)}", _iso_mtime(decisions_path))
+        add_event('S4', 'decisions', 'decisions.json', f"{dec_counts['total']}", _iso_mtime(decisions_path))
     if plan_path.is_file():
         add_event('S4', 'plan', 'plan.tsv', f'{plan_count}', _iso_mtime(plan_path))
     if ui_ready:
@@ -467,12 +518,13 @@ def collect_snapshot(root, probe_override=None):
 
     # Determine current stage without falsely jumping to S4 on an empty decisions.json
     s4_has_work = bool(
-        int(dec_summary.get('total', 0)) > 0
+        dec_counts['total'] > 0
         or plan_count > 0
         or (ui_ready and s1_done > 0)
     )
     if done_rows:
-        current_stage = 'S6' if (missing_nodes == 0 and unresolved_count == 0) else 'S5'
+        current_stage = 'S6' if (missing_nodes == 0 and unverified_nodes == 0 and probe_errors == 0
+                                 and unresolved_count == 0 and not node_scan_truncated) else 'S5'
     elif s4_has_work:
         current_stage = 'S4'
     elif s3_done > 0:
@@ -520,11 +572,12 @@ def collect_snapshot(root, probe_override=None):
             's3': {'done': s3_done, 'total': s3_expected, 'groups': total_groups},
             's4': {
                 'ready': s4_has_work,
-                'totalGroups': int(dec_summary.get('total', 0)),
-                'needCheck': int(dec_summary.get('needCheck', 0)),
-                'move': int(dec_summary.get('move', 0)),
-                'keep': int(dec_summary.get('keep', 0)),
-                'newDirs': int(dec_summary.get('new', 0)),
+                'totalGroups': dec_counts['total'],
+                'needCheck': dec_counts['needCheck'],
+                'move': dec_counts['move'],
+                'keep': dec_counts['keep'],
+                'newDirs': dec_counts['new'],
+                'invalidArtifactCount': len(set(invalid_artifacts)),
                 'aiTotal': len(ai_questions),
                 'aiAnswered': ai_answered,
                 'planCount': plan_count,
@@ -542,12 +595,16 @@ def collect_snapshot(root, probe_override=None):
                 'historyReady': history_ready,
             },
             's6': {
-                'covered': max(0, s1_expected - missing_nodes),
+                'covered': max(0, s1_expected - missing_nodes - unverified_nodes),
                 'total': s1_expected,
                 'missing': missing_nodes,
-                'ok': s1_expected > 0 and missing_nodes == 0 and probe_errors == 0,
+                'unverified': unverified_nodes,
+                'truncated': node_scan_truncated,
+                'ok': s1_expected > 0 and missing_nodes == 0 and unverified_nodes == 0
+                      and probe_errors == 0 and not node_scan_truncated,
             },
         },
+        'scan': {'truncated': node_scan_truncated, 'limit': NODE_SCAN_LIMIT},
         'artifacts': {
             'policy': str(policy_path) if policy_path.is_file() else None,
             'decisions': str(decisions_path) if decisions_path.is_file() else None,
@@ -653,7 +710,8 @@ def main(root, *, lang='zh-CN', probe=None, out=None, open_browser=True, interva
             raise SafetyError('进度页输出文件须使用 .html 扩展名')
         snap = collect_snapshot(root, probe_override=probe)
         html = render_page({'lang': lang, 'live': False}, snap)
-        atomic_write(out_path, html)
+        signature = '<title>整理实时进度</title>'.encode('utf-8')
+        write_artifact(out_path, html, owns_existing=lambda path: artifact_has_signature(path, signature))
         print(f'Created: {out_path}' if lang == 'en' else f'已生成进度快照：{out_path}')
         if open_browser:
             webbrowser.open(out_path.resolve().as_uri())

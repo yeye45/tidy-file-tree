@@ -427,7 +427,7 @@ propose_new_categories()  从未匹配的组里发现候选类别
 
 ```bash
 # 生成问题清单
-python core/decisions.py --root /path --need-ai > questions.json
+python tidy_file_tree.py decisions /path --need-ai > questions.json
 ```
 
 问题包只放事实：
@@ -500,8 +500,10 @@ python core/decisions.py --root /path --need-ai > questions.json
 ### 回填
 
 ```bash
-python core/decisions.py --root /path --answers ai.json
+python tidy_file_tree.py decisions /path --answers ai.json
 ```
+
+每条回答放进 `answers` 数组，原样带回对应问题的 `nodeId`、`groupId` 和 `observationId`。文件样本变化后重新生成问题。仅凭名称匹配的旧答案只能供人工复核。同名时重新导出问题再回答。
 
 代码做什么：
 
@@ -638,10 +640,12 @@ python tidy_file_tree.py coverage /path
 ### 它检查三件事
 
 ```
-S1  每个一级目录有没有探针判定
-S2  每个 split/enter 节点有没有单元清点
-S3  每个有清点的节点有没有归组
+S1  核对一级目录、已登记的根级文件和下钻子节点
+S2  split 要清点。只负责下钻的 enter 直接核对子节点
+S3  已清点的单元应恰好归入一个组、独立单元或待确认项
 ```
+
+状态目录由命令自动定位。只有计数的旧记录会显示「未核对」，退出码 `1` 表示有明确遗漏或产物错误。
 
 ### 实测它抓出的三类遗漏
 
@@ -767,12 +771,13 @@ C 组 · 判断后删除    不属于当前主题、看着像垃圾、但没直�
 ```bash
 # 查看
 python core/rules.py show              规则包内容
-python tidy_file_tree.py scan /path          看信号
+python tidy_file_tree.py scan /path          看浅层结构信号
+python tidy_file_tree.py scan /path --size   按需递归统计大小和文件数
 python tidy_file_tree.py coverage /path      覆盖检查
 
 # 决策
-python core/decisions.py --root /path --need-ai    生成 AI 问题
-python core/decisions.py --root /path --answers ai.json   回填
+python tidy_file_tree.py decisions /path --need-ai    生成 AI 问题
+python tidy_file_tree.py decisions /path --answers ai.json   回填
 python tidy_file_tree.py ui /path --open      人看界面
 
 # 执行

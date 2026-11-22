@@ -52,6 +52,8 @@ def load_cases(path):
         for c in items:
             if isinstance(c, dict):
                 c["_source"] = f.name
+                if isinstance(data, dict) and isinstance(data.get("zones"), list):
+                    c.setdefault("zones", data["zones"])
                 cases.append(c)
     return cases
 
@@ -123,11 +125,9 @@ def run_case(case, decisions_mod):
         # 验建议
         shape = case.get("shape")
         path = case.get("path")
-        if path and os.path.isdir(path):
-            shape = decisions_mod.content_shape(path)
 
         zones = case.get("zones")
-        if not zones:
+        if zones is None:
             # 没给 zones 时，从规则包的 categories.suggest 造一份
             # 否则什么都匹配不上，全返回 keep，测了等于没测
             zones = _zones_from_rules(decisions_mod)
@@ -135,7 +135,7 @@ def run_case(case, decisions_mod):
         sug = decisions_mod.suggest_group(
             case.get("group", ""), case.get("parent", ""),
             zones, node_path=case.get("nodePath"),
-            group_path=path if (path and os.path.isdir(path)) else None)
+            group_path=path if (path and os.path.isdir(path)) else None, shape=shape)
 
         expect_mode = case.get("expectMode")
         expect_check = case.get("expectNeedsCheck")
@@ -219,54 +219,34 @@ def cmd_run(args):
 
 def cmd_record(args):
     """从当前判断生成用例——人工确认后作为回归基准。"""
-    import decisions as dec_mod
+    from decisions import evaluate_root
+    from executor import artifact_has_signature, write_artifact
 
-    try:
-        import rules
-        pack = rules.load()
-        if not pack.get("_missing"):
-            rules.apply_to(pack, decisions_mod=dec_mod)
-    except Exception:
-        pass
-
-    root = args.root
-    zones = dec_mod.collect_zones(root)
-
-    # 复用 decisions.py 的节点构建
-    try:
-        from decisions import load_probes, build_nodes
-    except ImportError:
-        print("无法导入节点构建函数", file=sys.stderr)
-        return 1
-
-    probe_dir = Path(root) / "_organize" / "probe"
-    probes, units, groups = load_probes(probe_dir)
-    nodes = build_nodes(root, probes, units, groups)
-
+    evaluation = evaluate_root(args.root, allow_system_drive=True, quiet=True)
     cases = []
-    for n in nodes:
+    for n in evaluation["nodes"]:
         for g in n["groups"]:
-            sug = dec_mod.suggest_group(
-                g["name"], n["name"], zones, n["path"])
-            case = {
+            suggestion = g["suggest"]
+            cases.append({
                 "name": f"{n['name']} / {g['name']}",
                 "kind": "suggest",
                 "group": g["name"],
                 "parent": n["name"],
                 "nodePath": n["path"],
-                "expectMode": sug["mode"],
-            }
-            if sug.get("needsCheck"):
-                case["expectNeedsCheck"] = True
-            cases.append(case)
+                "shape": g.get("shape"),
+                "expectMode": suggestion["mode"],
+                "expectNeedsCheck": bool(suggestion.get("needsCheck")),
+            })
 
     out = {
         "_about": "从当前判断自动生成。人工确认后作为回归基准。",
-        "_root": root,
+        "_root": evaluation["root"],
+        "zones": evaluation["zones"],
         "cases": cases,
     }
-    Path(args.out).write_text(
-        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    signature = json.dumps({"_about": out["_about"]}, ensure_ascii=False)[1:-1].encode('utf-8')
+    write_artifact(args.out, json.dumps(out, ensure_ascii=False, indent=2).encode('utf-8'),
+                   owns_existing=lambda path: artifact_has_signature(path, signature))
     print(f"已生成 {len(cases)} 个用例: {args.out}")
     print("  注意：这是当前判断的快照，不等于正确。")
     print("  要作为回归基准，得先人工核对一遍。")
@@ -275,54 +255,37 @@ def cmd_record(args):
 
 def cmd_coverage(args):
     """规则包能覆盖多少真实内容。"""
-    import decisions as dec_mod
+    from decisions import evaluate_root
 
-    try:
-        import rules
-        pack = rules.load()
-        if not pack.get("_missing"):
-            rules.apply_to(pack, decisions_mod=dec_mod)
-    except Exception:
-        pass
-
-    root = args.root
-    zones = dec_mod.collect_zones(root)
-
-    try:
-        from decisions import load_probes, build_nodes
-    except ImportError:
-        print("无法导入节点构建", file=sys.stderr)
-        return 1
-
-    probe_dir = Path(root) / "_organize" / "probe"
-    probes, units, groups = load_probes(probe_dir)
-    nodes = build_nodes(root, probes, units, groups)
-
-    stats = {"total": 0, "matched": 0, "unmatched": 0, "conflict": 0}
+    evaluation = evaluate_root(args.root, allow_system_drive=True, quiet=True)
+    questions = {(q["nodeId"], q["groupId"]): q["trigger"] for q in evaluation["aiQuestions"]}
+    stats = {"total": 0, "matched": 0, "unmatched": 0, "kept": 0, "pending": 0}
     unmatched_names = []
 
-    for n in nodes:
+    for n in evaluation["nodes"]:
         for g in n["groups"]:
             stats["total"] += 1
-            sug = dec_mod.suggest_group(
-                g["name"], n["name"], zones, n["path"])
-            if sug.get("needsCheck"):
-                stats["conflict"] += 1
-            if sug["mode"] == "keep" and sug.get("evidence"):
+            suggestion = g["suggest"]
+            trigger = questions.get((n["id"], g["id"]))
+            if trigger or suggestion.get("needsCheck"):
+                stats["pending"] += 1
+            if trigger == "no_rule_match" or suggestion.get("unmatched"):
                 stats["unmatched"] += 1
                 unmatched_names.append(g["name"])
-            elif sug["mode"] in ("move", "new"):
+            elif suggestion["mode"] in ("move", "new") or suggestion.get("category"):
                 stats["matched"] += 1
+            else:
+                stats["kept"] += 1
 
     total = stats["total"] or 1
-    print(f"规则覆盖统计  ({root})")
+    print(f"规则覆盖统计  ({evaluation['root']})")
     print(f"  总组数        {stats['total']}")
     print(f"  已匹配        {stats['matched']}  "
           f"({stats['matched']/total:.0%})")
     print(f"  未匹配        {stats['unmatched']}  "
           f"({stats['unmatched']/total:.0%})")
-    print(f"  需人工/AI     {stats['conflict']}  "
-          f"({stats['conflict']/total:.0%})")
+    print(f"  原位保留      {stats['kept']}  ({stats['kept']/total:.0%})")
+    print(f"  需人工/AI     {stats['pending']}  ({stats['pending']/total:.0%})")
 
     if unmatched_names:
         print()
@@ -357,7 +320,11 @@ def main(argv=None):
 
     args = p.parse_args(argv)
     sys.path.insert(0, str(HERE))
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (OSError, ValueError) as exc:
+        print(f"无法完成验证: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

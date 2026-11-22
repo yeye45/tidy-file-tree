@@ -85,19 +85,42 @@ def scan(path, max_items=None):
     return out
 
 
-def subtree_size(path, limit=None):
+def subtree_size(path, limit=None, protection=None):
     assert_no_links(path)
+    if protection is None:
+        from scan_tree import scan_protection
+        root, protection = scan_protection(path)
+        path = str(root)
+    from safety import (block_kind, is_system_attr, is_system_protected_file,
+                        nested_verdict)
+    from executor import guard
     total = n = 0
     try:
         def fail(error):
             raise error
         for dp, dns, fns in os.walk(path,onerror=fail):
-            dns[:] = [dn for dn in dns if not is_reparse(os.path.join(dp, dn))]
+            kept = []
+            for dn in dns:
+                child = os.path.join(dp, dn)
+                try:
+                    marker = block_kind(child, protection.markers) if protection.markers else None
+                    if marker or is_reparse(child) or is_system_attr(child):
+                        continue
+                    guard(child, path, protection, allow_container=True)
+                    kept.append(dn)
+                except (OSError, SafetyError):
+                    continue
+            dns[:] = kept
             for fn in fns:
                 try:
-                    if is_reparse(os.path.join(dp, fn)):
+                    child = os.path.join(dp, fn)
+                    marker = block_kind(child, protection.markers) if protection.markers else None
+                    if (marker or is_reparse(child) or is_system_attr(child)
+                            or is_system_protected_file(child)
+                            or not nested_verdict(child, allow_cache_cleanup=protection.allow_cache_cleanup,
+                                                  nested_rules=protection.nested_rules)[0]):
                         continue
-                    total += os.path.getsize(os.path.join(dp, fn))
+                    total += os.path.getsize(child)
                     n += 1
                 except OSError:
                     raise
@@ -314,7 +337,7 @@ def sig_name_content_match(entries, base):
     }
 
 
-def sig_nested_dup(entries, base):
+def sig_nested_dup(entries, base, protection=None):
     """同名嵌套目录：A/A/ 的快速特征。
 
     不比对哈希（成本高），只报告存在性和各自文件数，
@@ -330,6 +353,9 @@ def sig_nested_dup(entries, base):
     inner = os.path.join(base, inner_name)
     try:
         assert_no_links(inner)
+        if protection is not None:
+            from executor import guard
+            guard(inner, base, protection, allow_container=True)
         with os.scandir(inner) as it:
             inner_items = list(it)
     except OSError:
@@ -355,39 +381,95 @@ SIGNAL_FUNCS = [
 ]
 
 
-def analyze(path):
+def analyze(path, *, totals=False):
     path = os.path.abspath(path)
     try:
-        entries = scan(path)
-        size, nfiles = subtree_size(path)
+        # Reuse the scan tree's vetted protection context (including markers
+        # inherited from parent roots) before observing any entries.
+        from scan_tree import scan_protection
+        from safety import (block_kind, is_system_attr,
+                            is_system_protected_file, nested_verdict)
+        from executor import guard
+        root, protection = scan_protection(path)
+        path = str(root)
+        entries = []
+        protected_seen = False
+        with os.scandir(path) as it:
+            for item in it:
+                if item.name.casefold() == '_organize':
+                    continue
+                try:
+                    marker = block_kind(item.path, protection.markers) if protection.markers else None
+                    if marker == 'SECRET':
+                        protected_seen = True
+                        continue
+                    isdir = item.is_dir(follow_symlinks=False)
+                    if isdir:
+                        if marker or is_reparse(item.path) or is_system_attr(item.path):
+                            protected_seen = True
+                            continue
+                        try:
+                            guard(item.path, path, protection, allow_container=True)
+                        except SafetyError:
+                            protected_seen = True
+                            continue
+                    elif (marker or not item.is_file(follow_symlinks=False)
+                          or is_reparse(item.path) or is_system_attr(item.path)
+                          or is_system_protected_file(item.path)
+                          or not nested_verdict(item.path, allow_cache_cleanup=protection.allow_cache_cleanup,
+                                                nested_rules=protection.nested_rules)[0]):
+                        protected_seen = protected_seen or bool(marker or is_reparse(item.path)
+                            or is_system_attr(item.path) or is_system_protected_file(item.path))
+                        continue
+                    st = item.stat(follow_symlinks=False)
+                    entries.append({'name': item.name, 'dir': isdir,
+                                    'size': 0 if isdir else st.st_size,
+                                    'mtime': st.st_mtime, 'ctime': st.st_ctime,
+                                    'reparse': is_reparse(item.path)})
+                except (OSError, SafetyError):
+                    raise
+        size = nfiles = None
+        if totals:
+            size, nfiles = subtree_size(path, protection=protection)
     except (OSError,SafetyError):
         return {'path':path,'dir_name':os.path.basename(path),'empty':None,
                 'complete':False,'error':'无法完整读取目录；不能据此判断为空','signals':{}}
+    protected_only = not entries and protected_seen
     r = {"path": path, "dir_name": os.path.basename(path.rstrip(os.sep)),
-         "empty": len(entries) == 0, "complete":True,"signals": {}}
+         "empty": None if protected_only else len(entries) == 0,
+         "status": "protected-only" if protected_only else ("empty" if not entries else "scanned"),
+         "complete":True,"signals": {}}
+    if totals:
+        r["size-gb"] = round(size / 2**30, 2)
+        r["file-count-total"] = nfiles
     if not entries:
         return r
-    r["size-gb"] = round(size / 2**30, 2)
-    r["file-count-total"] = nfiles
     for fn in SIGNAL_FUNCS:
         try:
             r["signals"].update(fn(entries))
         except Exception as e:
             r["signals"][f"_err_{fn.__name__}"] = str(e)
     # 需要 base 路径的信号，单独调用
-    for fn in (sig_name_content_match, sig_nested_dup, sig_shell):
+    for fn in (sig_name_content_match, sig_shell):
         try:
             r["signals"].update(fn(entries, path))
         except Exception as e:
             r["signals"][f"_err_{fn.__name__}"] = str(e)
+    try:
+        r["signals"].update(sig_nested_dup(entries, path, protection))
+    except Exception as e:
+        r["signals"]["_err_sig_nested_dup"] = str(e)
     return r
 
 
 def fmt(r):
     L = ["=" * 74,
-         f"{r['dir_name']}   {r.get('size-gb', 0)} GB   {r.get('file-count-total', 0)} 文件"]
+         f"{r['dir_name']}" + (f"   {r['size-gb']} GB   {r['file-count-total']} 文件" if 'size-gb' in r else '')]
     if not r.get('complete',True):
         return '\n'.join(L+[r['error']])
+    if r.get("status") == "protected-only":
+        L.append("  (仅包含受保护项目，未据此判断为空)")
+        return "\n".join(L)
     if r["empty"]:
         L.append("  (空目录)")
         return "\n".join(L)
@@ -458,13 +540,14 @@ def main():
         print(__doc__)
         return 1
     as_json = "--json" in sys.argv
+    totals = "--size" in sys.argv
     paths = [a for a in sys.argv[1:] if not a.startswith("--")]
     results = []
     for p in paths:
         if not os.path.isdir(p):
             print(f"跳过（不是目录）: {p}")
             continue
-        results.append(analyze(p))
+        results.append(analyze(p, totals=totals))
     if as_json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
     else:

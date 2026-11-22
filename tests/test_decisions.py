@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """内容形态检测与新类别发现的测试。"""
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,6 +13,7 @@ CORE = HERE.parent / "core"
 sys.path.insert(0, str(CORE))
 
 import decisions as D  # noqa: E402
+from safety import MARKER_FIELDS, encode_tsv  # noqa: E402
 
 
 def make_dir(root, exts, count=1):
@@ -19,6 +22,146 @@ def make_dir(root, exts, count=1):
         p = Path(root) / f"f{i}{e}"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("x", encoding="utf-8")
+
+
+class TestProtectedDecisions(unittest.TestCase):
+    def test_cli_filters_old_probes_and_prunes_protected_samples(self):
+        with tempfile.TemporaryDirectory(prefix=".organizer-test-", dir=HERE.parent) as tmp:
+            base = Path(tmp)
+            root = base / "root"
+            state = root / "_organize"
+            probe = state / "probe"
+            node = root / "Downloads"
+            bundle = node / "Bundle"
+            safe = bundle / "Shareable"
+            private = bundle / "ProtectedNested"
+            excluded = root / "ProtectedTop"
+            for folder in (probe, safe, private, excluded):
+                folder.mkdir(parents=True)
+            for path in (safe / "public.exe", bundle / "protected-file.txt",
+                         private / "protected-nested.exe", excluded / "protected-top.exe"):
+                path.touch()
+
+            def write_record(file, data):
+                file.write_text(json.dumps(data), encoding="utf-8")
+
+            for parent, suffix in ((node, "main"), (excluded, "excluded")):
+                write_record(probe / f"probe_{suffix}.json", {"path": str(parent), "action": "split"})
+            write_record(probe / "group_excluded.json", {
+                "path": str(excluded), "groups": [{"name": "Private record", "units": [str(excluded)]}],
+            })
+            write_record(probe / "group_main.json", {"path": str(node), "groups": [
+                {"name": "Bundle", "units": [str(safe)]},
+                {"name": "Mixed private group", "units": [str(safe), "Bundle/ProtectedNested"]},
+                {"name": "Bundle/ProtectedNested", "units": 1},
+            ]})
+
+            command = [sys.executable, "-B", str(HERE.parent / "tidy_file_tree.py"), "decisions", str(root)]
+            environment = dict(os.environ, LOCALAPPDATA=str(base / "local"), PYTHONIOENCODING="utf-8")
+            protected = [excluded, private, bundle / "protected-file.txt"]
+            for source in ("policy", "marker"):
+                with self.subTest(source=source):
+                    policy = {"no_go_zones": [p.relative_to(root).as_posix() for p in protected]} if source == "policy" else {}
+                    write_record(state / "policy.json", policy)
+                    if source == "marker":
+                        rows = [dict(path=str(p), kind="NO_TOUCH", by="inferred", note="-", ts="-")
+                                for p in protected]
+                        (state / "markers.tsv").write_bytes(encode_tsv(rows, MARKER_FIELDS))
+                    questions = subprocess.run(command + ["--need-ai"], env=environment,
+                                               capture_output=True, encoding="utf-8")
+                    self.assertEqual(questions.returncode, 1, questions.stdout + questions.stderr)
+                    generated = json.loads(questions.stdout)["questions"]
+                    self.assertEqual([q["group"] for q in generated], ["Bundle"])
+                    self.assertEqual(generated[0]["sampleFiles"], ["public.exe"])
+                    snapshot = subprocess.run(command, env=environment, capture_output=True, encoding="utf-8")
+                    self.assertEqual(snapshot.returncode, 0, snapshot.stdout + snapshot.stderr)
+                    payload = (state / "decisions.json").read_text(encoding="utf-8")
+                    for hidden in ("ProtectedTop", "ProtectedNested", "Mixed private group", "protected-file.txt"):
+                        self.assertNotIn(hidden, payload)
+
+
+class TestAnswerObservations(unittest.TestCase):
+    def test_cli_accepts_current_answer_and_rejects_old_or_incomplete_identity(self):
+        with tempfile.TemporaryDirectory(prefix=".organizer-test-", dir=HERE.parent) as tmp:
+            base = Path(tmp)
+            root = base / "root"
+            state = root / "_organize"
+            probe = state / "probe"
+            node = root / "Incoming"
+            payload = node / "PackageFixture"
+            payload.mkdir(parents=True)
+            probe.mkdir(parents=True)
+            (probe / "group_incoming.json").write_text(json.dumps({
+                "path": str(node), "groups": [{"name": "x7F3 batch", "units": [str(payload)]}],
+            }), encoding="utf-8")
+            source = payload / "original.exe"
+            source.write_text("installer fixture", encoding="utf-8")
+            command = [sys.executable, "-B", str(HERE.parent / "tidy_file_tree.py"), "decisions", str(root)]
+            env = dict(os.environ, LOCALAPPDATA=str(base / "local"), PYTHONIOENCODING="utf-8")
+
+            def run(*args):
+                return subprocess.run(command + list(args), env=env, capture_output=True, encoding="utf-8")
+
+            question = json.loads(run("--need-ai").stdout)["questions"][0]
+            self.assertIn("observationId", question)
+            self.assertEqual(json.loads(run("--need-ai").stdout)["questions"][0]["observationId"],
+                             question["observationId"])
+            answer = {field: question[field] for field in ("nodeId", "groupId", "observationId")}
+            answer.update(category="software_installer", label="Installers", hypothesis="Installer files",
+                          verification={"method": "Checked sampled extension", "findings": "original.exe"},
+                          confirmation={"holds": True, "confidence": "high"})
+            answers = base / "answers.json"
+
+            def apply(response):
+                answers.write_text(json.dumps({"answers": [response]}), encoding="utf-8")
+                result = run("--answers", str(answers))
+                snapshot = json.loads((state / "decisions.json").read_text(encoding="utf-8"))
+                return result, snapshot["nodes"][0]["groups"][0]["suggest"], snapshot["aiQuestions"][0]
+
+            result, suggestion, updated_question = apply(answer)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(suggestion["aiJudgement"]["label"], "Installers")
+            self.assertEqual(updated_question["status"], "confirmed")
+            snapshot = json.loads((state / "decisions.json").read_text(encoding="utf-8"))
+            saved_group = snapshot["nodes"][0]["groups"][0]
+            self.assertTrue(D.observation_is_current(saved_group, root, permit=lambda _: True))
+            self.assertFalse(D.observation_is_current(saved_group, root, permit=lambda _: False))
+            incomplete = {key: value for key, value in answer.items() if key != "observationId"}
+            result, suggestion, updated_question = apply(incomplete)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIsNone(suggestion["aiJudgement"])
+            self.assertEqual(updated_question["status"], "pending")
+
+            legacy = {key: value for key, value in answer.items() if key not in D.ANSWER_ID_FIELDS}
+            legacy.update(parent=question["parent"], group=question["group"])
+            result, suggestion, updated_question = apply(legacy)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(suggestion["aiJudgement"]["label"], "Installers")
+            self.assertEqual(suggestion["mode"], "keep")
+            self.assertEqual(updated_question["status"], "needs_review")
+
+            # A replacement can keep its name and extension while invalidating sampled evidence.
+            source.write_text("different fixture with the same filename", encoding="utf-8")
+            self.assertFalse(D.observation_is_current(saved_group, root, permit=lambda _: True))
+            result, suggestion, updated_question = apply(answer)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIsNone(suggestion["aiJudgement"])
+            self.assertEqual(updated_question["sampleFiles"], question["sampleFiles"])
+            self.assertNotEqual(updated_question["observationId"], question["observationId"])
+
+            source.rename(payload / "replacement.mp4")
+            result, suggestion, updated_question = apply(answer)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIsNone(suggestion["aiJudgement"])
+            self.assertEqual(updated_question["groupId"], question["groupId"])
+            self.assertNotEqual(updated_question["observationId"], question["observationId"])
+            self.assertEqual(updated_question["status"], "pending")
+
+            previous_snapshot = (state / "decisions.json").read_bytes()
+            answers.write_text(json.dumps(answer), encoding="utf-8")
+            result = run("--answers", str(answers))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual((state / "decisions.json").read_bytes(), previous_snapshot)
 
 
 class TestContentShape(unittest.TestCase):
@@ -475,6 +618,14 @@ class TestApplyAnswers(unittest.TestCase):
         self.assertEqual(applied, 0)
         self.assertEqual(missed, 1)
         os.unlink(path)
+
+    def test_legacy_same_name_is_ambiguous_across_nodes(self):
+        nodes = self._nodes(1) + self._nodes(1)
+        nodes[0]["id"], nodes[1]["id"] = "first", "second"
+        path = self._write([{"parent": "P", "group": "G0", "category": "x", "label": "X"}])
+        self.addCleanup(os.unlink, path)
+        self.assertEqual(D.apply_answers(nodes, path), (0, 1))
+        self.assertTrue(all("aiJudgement" not in node["groups"][0]["suggest"] for node in nodes))
 
 
 class TestQuestionPackage(unittest.TestCase):

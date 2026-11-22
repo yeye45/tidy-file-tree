@@ -22,6 +22,10 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'core'))
+from executor import artifact_has_signature, check_artifact_path, write_artifact
+from safety import organize_dir
+
 TEXT_EXT = {".json", ".tsv", ".log", ".md", ".txt", ".csv"}
 SKIP_NAMES = {"feedback-summary.md", "ui.html", "policy.json"}
 MAX_FILE_BYTES = 200_000
@@ -146,7 +150,7 @@ def summarize(artifacts):
 def main():
     ap = argparse.ArgumentParser(description="本地生成仅含安全统计的反馈摘要（不联网、不上传）")
     ap.add_argument("--root", required=True, help="整理任务的根目录")
-    ap.add_argument("--out", default=None, help="输出路径，默认 <root>/_organize/feedback-summary.md")
+    ap.add_argument("--out", default=None, help="输出路径，默认在该整理根的状态目录下生成 feedback-summary.md")
     # 兼容旧命令行；输出是固定短摘要，不再截取原始输入行。
     ap.add_argument("--max-lines", type=int, default=40, help=argparse.SUPPRESS)
     args = ap.parse_args()
@@ -154,11 +158,11 @@ def main():
     root = Path(os.path.abspath(args.root))
     if not root.is_dir():
         sys.exit("根目录不存在")
-    organize = root / "_organize"
-    out = Path(os.path.abspath(args.out)) if args.out else organize / "feedback-summary.md"
-    for path in (organize, out):
-        if any(os.path.lexists(p) and is_reparse(p) for p in (path, *path.parents)):
-            ap.error('反馈产物或输出路径含链接或重解析点')
+    try:
+        organize = check_artifact_path(organize_dir(root))
+        out = check_artifact_path(args.out or organize / "feedback-summary.md")
+    except (OSError, ValueError) as exc:
+        ap.error(str(exc))
     artifacts = collect_artifacts(organize)
     type_counts, enum_counts, json_valid, json_invalid, text_lines, tsv_rows = summarize(artifacts)
 
@@ -194,8 +198,12 @@ def main():
         lines.append("- 未找到允许输出的状态或规则信号")
     lines.append("")
 
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(lines), encoding="utf-8")
+    try:
+        signature = (lines[0] + '\n').encode('utf-8')
+        write_artifact(out, "\n".join(lines).encode('utf-8'),
+                       owns_existing=lambda path: artifact_has_signature(path, signature))
+    except (OSError, ValueError) as exc:
+        ap.error(str(exc))
     print("已生成本地统计摘要。")
     print("产物 %d 个 | 未联网、未上传、未提交。" % len(artifacts))
     return 0
