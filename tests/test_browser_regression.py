@@ -440,6 +440,14 @@ class BrowserRegression(unittest.TestCase):
                 "path": str(source), "groups": [{"name": "Wire Set", "units": [replaced.name, stable.name]}],
             }), encoding="utf-8")
             board = workspace / "review.html"
+            snapshot = workspace / "decisions.json"
+            fingerprint = group_key({"name": "Wire Set", "units": [replaced.name, stable.name]})
+            snapshot.write_text(json.dumps({
+                "root": str(root), "nodes": [{"path": str(source), "groups": [{
+                    "id": f"{fingerprint}:0", "fingerprint": fingerprint,
+                    "suggest": {"mode": "new", "newName": "Transient Suggestion", "needsCheck": True},
+                }]}],
+            }), encoding="utf-8")
             env = os.environ.copy()
             if env.get("TIDY_FILE_TREE_BROWSER_USE_INSTALLED") != "1":
                 env["PYTHONPATH"] = str(PROJECT) + os.pathsep + env.get("PYTHONPATH", "")
@@ -449,6 +457,8 @@ class BrowserRegression(unittest.TestCase):
             def regenerate():
                 command = [sys.executable, "-m", "tidy_file_tree", "ui", str(root),
                            "--out", str(board), "--lang", "en"]
+                if snapshot.exists():
+                    command.extend(["--decisions", str(snapshot)])
                 result = subprocess.run(command, cwd=temp, env=env, capture_output=True, text=True, encoding="utf-8")
                 self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -461,6 +471,8 @@ class BrowserRegression(unittest.TestCase):
                 page = browser.new_page(accept_downloads=True)
                 page.set_default_timeout(5000)
                 page.goto(board.as_uri())
+                automatic_target = page.get_by_role("button", name="Assign to Transient Suggestion", exact=True)
+                expect(automatic_target).to_be_visible()
                 page.locator("article.card button.group-port[data-source]").click()
                 custom_label = "personal $tick`'s"
                 page.locator("#newTargetInput").fill(custom_label)
@@ -468,9 +480,11 @@ class BrowserRegression(unittest.TestCase):
                 custom_target = page.locator("[data-target]").filter(has=page.locator(".target-label", has_text=custom_label))
                 custom_target.first.locator(".target-port").click()
                 self.assertEqual(page.evaluate("window.foState().linked"), 2)
+                snapshot.unlink()
                 regenerate()
                 page.reload()
                 self.assertEqual(page.evaluate("window.foState().linked"), 2)
+                self.assertEqual(automatic_target.count(), 0)
                 custom_target = page.locator("[data-target]").filter(has=page.locator(".target-label", has_text=custom_label))
                 self.assertTrue(custom_target.is_visible())
 

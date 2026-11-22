@@ -259,6 +259,7 @@ const themeKey = 'tidy-file-tree-theme';
 const rootSep = /^(?:[A-Za-z]:\\|\\\\)/.test(DATA.root) ? '\\' : '/';
 const targets = new Map([[KEEP,{path:KEEP,label:t('保持原位'),depth:0}], ...DATA.zones.map(z => [z.path,z])]);
 const customTargetsKey = 'tidy-file-tree-custom-targets-v1:' + DATA.root;
+const customTargets = new Set();
 const groups = DATA.nodes.flatMap(node => node.groups.map(group => {
   const id = JSON.stringify([node.id,group.id]);
   const units = group.units.map(unit => ({...unit,key:JSON.stringify([id,unit.id])}));
@@ -326,10 +327,13 @@ function addCustomTargetPath(label) {
   const parts = label.split('/');
   if (!parts.length || parts.some(p => !p || p === '.' || p === '..' || /[\\/:*?"<>|\x00-\x1f]/.test(p) || /[ .]$/.test(p))) return;
   const path = DATA.root.replace(/[\\/]$/, '') + rootSep + parts.join(rootSep);
-  if (targets.has(path)) return;
-  const zone = {path, label:parts.join('/'), depth:parts.length, files:0, new:true};
-  targets.set(path,zone);
-  DATA.zones.push(zone);
+  customTargets.add(label);
+  if (!targets.has(path)) {
+    const zone = {path, label, depth:parts.length, files:0, new:true};
+    targets.set(path,zone);
+    DATA.zones.push(zone);
+  }
+  return path;
 }
 for (const label of readSetting(customTargetsKey, null, parseCustomTargets) ?? []) addCustomTargetPath(label);
 function allowedAssignment(id,target) {
@@ -456,7 +460,6 @@ function save() {
     const saved = [...places].map(([id,target]) => [id,target,sourceWitnesses.get(id) ?? null]);
     for (const id of unresolvedPlaces()) saved.push([id,null,null]);
     localStorage.setItem(storageKey,JSON.stringify(saved));
-    localStorage.setItem(customTargetsKey,JSON.stringify(DATA.zones.filter(zone => zone.new).map(zone => zone.label)));
   } catch (_) {}
   updateHistoryButtons();
 }
@@ -814,17 +817,14 @@ function jumpToTarget(dest) {
 }
 function addCustomTarget(raw) {
   const clean = raw.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/');
-  const parts = clean ? clean.split('/') : [];
-  if (!parts.length || parts.some(p => !p || p === '.' || p === '..' || /[\\/:*?"<>|\x00-\x1f]/.test(p) || p.rstrip?.(' .') !== undefined && p.replace(/[ .]+$/,'') !== p || /[ .]$/.test(p))) {
+  const fullPath = addCustomTargetPath(clean);
+  if (!fullPath) {
     selectionNotice = t('目录名无效：不能包含 ..、冒号或非法符号');
     markActive();
     return;
   }
-  const fullPath = DATA.root.replace(/[\\/]$/, '') + rootSep + parts.join(rootSep);
-  if (!targets.has(fullPath)) {
-    addCustomTargetPath(parts.join('/'));
-    try { localStorage.setItem(customTargetsKey,JSON.stringify(DATA.zones.filter(zone => zone.new).map(zone => zone.label))); } catch (_) {}
-  }
+  try { localStorage.setItem(customTargetsKey,JSON.stringify([...customTargets])); } catch (_) {}
+  const parts = clean.split('/');
   if (parts.length > 1) openZones.add(parts[0]);
   renderRight();
   jumpToTarget(fullPath);
