@@ -355,9 +355,9 @@ const nextSteps = {
   preview_plan: [['预演已生成的动作表', 'Preview the action plan'],
                  ['动作表有 {count} 项。AI 会生成预演供你核对，不写入文件变更。', 'The plan contains {count} action(s). Generate a read-only preview for review.']],
   review_plan: [['确认要整理的项目和去向', 'Review what should move and where'],
-                ['打开连线工作台，选好去向后提交预演。', 'Open the review board, choose destinations, and submit the plan for preview.']],
+                ['打开连线工作台，选择要整理的项目和去向，再点击「查看预演」。', 'Open the review board, choose the items and destinations, then select Preview changes.']],
   confirm_preview: [['预演已生成，等你确认', 'Preview ready for your confirmation'],
-                    ['拟执行 {count} 项。核对来源和落点后，确认这份预演是否可以执行。', 'There are {count} proposed actions. Review the sources and destinations before confirming this preview.']],
+                    ['拟执行 {count} 项。核对来源和落点后，在当前整理对话中说「确认执行这份预演」。', 'Review the source and destination of each of the {count} proposed actions, then say “Confirm this preview” in the current conversation.']],
   review_blocked: [['核对被拦截的动作', 'Review blocked actions'],
                    ['有 {count} 项未通过检查。先核对原因，修正后再提交预演。', '{count} actions were blocked. Check why and correct the plan before previewing again.']],
   review_partial: [['核对已执行的部分', 'Review what ran'],
@@ -409,7 +409,9 @@ function renderNextStep(step) {
   const detail = (translated?.[1][index] || step?.reason || t('next_unavailable_detail'))
     .replace(/\{(\w+)\}/g, (_, name) => String(step?.[name] ?? ''));
   const actor = step?.actor === 'auto' || step?.actor === 'user' ? step.actor : 'none';
-  const content = `<span class="next-tag">${esc(t('next_' + actor))}</span><div class="next-body"><strong>${esc(title)}</strong><span>${esc(connBroken || paused ? t('next_wait') : detail)}</span></div>`;
+  const previewLink = cfg.live && !paused && !connBroken && /^preview\/[a-f0-9]{24}$/.test(snap?.previewUrl)
+    ? `<a href="${esc(snap.previewUrl)}" target="_blank" rel="noopener">${lang === 'en' ? 'Open preview' : '打开预演'}</a>` : '';
+  const content = `<span class="next-tag">${esc(t('next_' + actor))}</span><div class="next-body"><strong>${esc(title)}</strong><span>${esc(connBroken || paused ? t('next_wait') : detail)}</span></div>${previewLink}`;
   banner.hidden = false;
   banner.dataset.actor = actor;
   banner.dataset.step = step?.id || 'loading';

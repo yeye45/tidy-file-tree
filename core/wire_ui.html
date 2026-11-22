@@ -230,7 +230,7 @@ dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);bo
     <section id="corrections"><h3 data-i18n="本地分类修正（可选）">本地分类修正（可选）</h3><p class="meta" data-i18n="可选：记录你改选的原因，仅保存在本地，不会上传也不会移动文件。">可选：记录你改选的原因，仅保存在本地，不会上传也不会移动文件。</p><div id="correctionRows"></div></section>
   </div>
   <div class="dialog-actions"><form method="dialog"><button data-i18n="关闭">关闭</button></form>
-    <button id="downloadReview" data-i18n="下载核对摘要 (.md)">下载核对摘要 (.md)</button><button id="downloadCorrections" data-i18n="下载分类修正 (.tsv)">下载分类修正 (.tsv)</button><button id="downloadActions" class="primary" data-i18n="下载动作表 (.tsv)">下载动作表 (.tsv)</button><button id="submitActions" type="button" class="primary" data-i18n="提交预演" hidden>提交预演</button></div>
+    <button id="downloadReview" data-i18n="下载核对摘要 (.md)">下载核对摘要 (.md)</button><button id="downloadCorrections" data-i18n="下载分类修正 (.tsv)">下载分类修正 (.tsv)</button><button id="downloadActions" class="primary" data-i18n="下载动作表 (.tsv)">下载动作表 (.tsv)</button><button id="submitActions" type="button" class="primary" data-i18n="重试预演" hidden>重试预演</button></div>
 </dialog>
 <dialog id="proposals" aria-labelledby="proposalsTitle">
   <div class="dialog-head"><h2 id="proposalsTitle" data-i18n="候选类别">候选类别</h2></div>
@@ -280,7 +280,8 @@ const openGroups = new Set();
 const unitLimits = new Map();
 const openZones = new Set();
 const svgNS = 'http://www.w3.org/2000/svg';
-const defaultHint = '点击卡片查看推荐目标，拖线或点选完成指定；未连线的项默认留在原处。';
+const defaultHint = LIVE ? '点左侧项目的圆点，再点右侧目标的圆点。选好后点「查看预演」。'
+  : '点击卡片查看推荐目标，拖线或点选完成指定；未连线的项默认留在原处。';
 let active = null;
 let pointer = null;
 let frame = 0;
@@ -722,7 +723,8 @@ function refresh() {
   $('proposalsButton').hidden = !propCount;
   $('proposalsButton').textContent = t('候选类别 {count}',{count:propCount});
   const actionCount = moveCount + renameCount;
-  $('reviewButton').textContent = actionCount ? t('导出计划 ({count})',{count:actionCount}) : t('导出计划');
+  const reviewLabel = LIVE ? ['查看预演', '查看预演（{count} 项）'] : ['导出计划', '导出计划 ({count})'];
+  $('reviewButton').textContent = t(reviewLabel[Number(actionCount > 0)], {count:actionCount});
   $('conflictPill').hidden = !currentConflicts.size;
   if (currentConflicts.size) $('conflictPill').textContent = t('存在 {count} 处路径冲突',{count:currentConflicts.size});
   $('targetFilterChip').hidden = !filterTarget;
@@ -1201,8 +1203,8 @@ function showReview() {
   const r = collectReview();
   exportRows = r.conflicts.size ? [] : r.actions.map(action => action.row);
   $('submitStatus').hidden = true;
-  $('submitActions').hidden = !LIVE;
-  $('submitActions').disabled = !exportRows.length;
+  $('submitActions').hidden = true;
+  $('downloadActions').classList.toggle('primary', !LIVE);
   const describe = ({row,target}) => `${row[1]} → ${target}`;
   const sections = [
     [t('待移动'),r.actions.filter(action => action.row[0] === 'move').map(describe)],
@@ -1211,7 +1213,8 @@ function showReview() {
   ];
   $('reviewStatus').textContent = r.conflicts.size
     ? t('以下动作存在来源或落点冲突，请先取消冲突的安排。')
-    : t(LIVE ? '共 {actions} 项拟操作，{pending} 项未确认将留在原处。提交后可回到进度页查看预演状态。'
+    : t(LIVE ? (exportRows.length ? '预演包含 {actions} 项。另有 {pending} 项未选去向，将留在原处。'
+      : '请先在左侧选择要整理的项目，再在右侧点选目标文件夹。选好后点击「查看预演」。')
       : '共 {actions} 项待执行，{pending} 项未确认将留在原处。下载动作表后，请先预演，再使用同一份预演清单执行。',{actions:r.actions.length,pending:r.pending.length});
   $('reviewConflicts').hidden = !r.conflicts.size;
   if (r.conflicts.size) {
@@ -1251,34 +1254,50 @@ function download(name,text,type) {
 function tsv(value) {
   return /[\t\r\n"]/.test(value) ? '"' + value.replace(/"/g,'""') + '"' : value;
 }
-$('reviewButton').addEventListener('click',showReview);
+$('reviewButton').addEventListener('click',() => {
+  showReview();
+  if (LIVE && exportRows.length) submitPreview();
+});
 $('undoButton').addEventListener('click',()=>{if(undoStack.length) restore(undoStack.pop(),redoStack);});
 $('redoButton').addEventListener('click',()=>{if(redoStack.length) restore(redoStack.pop(),undoStack);});
 $('downloadReview').addEventListener('click',() => download('tidy-file-tree-review.md','# TidyFileTree · '+t('核对整理计划')+'\n\n'+$('reviewText').textContent,'text/markdown;charset=utf-8'));
 $('downloadActions').addEventListener('click',() => {
   if (exportRows.length) download('tidy-file-tree-actions.tsv','op\tsrc\tdst\treason\n'+exportRows.map(row => row.map(tsv).join('\t')).join('\n')+'\n','text/tab-separated-values;charset=utf-8');
 });
-$('submitActions').addEventListener('click',async () => {
-  if (!LIVE || !exportRows.length) return;
+let generatingPreview = false;
+async function submitPreview() {
+  if (!LIVE || !exportRows.length || generatingPreview) return;
+  generatingPreview = true;
   const button = $('submitActions');
   const status = $('submitStatus');
+  let retry = true;
+  button.hidden = true;
   button.disabled = true;
   status.hidden = false;
-  status.textContent = t('正在保存动作表…');
+  status.textContent = t('正在生成预演，文件保持原位。');
   try {
-    const response = await fetch('workbench-actions', {
+    const response = await fetch(`workbench-actions?lang=${language}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(exportRows),
     });
     if (!response.ok) throw new Error('Could not save the draft');
-    status.textContent = t('已提交预演请求。你可以回到进度页。');
+    const result = await response.json();
+    if (/^preview\/[a-f0-9]{24}$/.test(result.preview) && $('review').open) {
+      retry = false;
+      window.location.assign(result.preview);
+    } else {
+      status.textContent = t('动作表已保存。若未打开预演，回到当前整理对话，请 AI 检查预演状态。');
+    }
   } catch (_) {
     status.textContent = t('提交失败。检查进度页是否仍在运行，也可以下载动作表。');
   } finally {
+    generatingPreview = false;
+    button.hidden = !retry;
     button.disabled = !exportRows.length;
   }
-});
+}
+$('submitActions').addEventListener('click',submitPreview);
 $('downloadCorrections').addEventListener('click',()=>{
   const rows=[...$('correctionRows').querySelectorAll('.correction-row')];
   if(!rows.length) return;

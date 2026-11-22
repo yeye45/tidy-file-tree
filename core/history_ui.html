@@ -81,6 +81,7 @@ button:disabled{opacity:.5;cursor:default}
 .muted,footer{color:var(--muted)}
 .notice{margin:0 0 12px;padding:9px 13px;background:var(--warn-bg);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent);border-left:3px solid var(--warn);border-radius:8px;color:var(--warn);font-size:13px}
 .notice.danger{background:var(--danger-bg);border-color:color-mix(in srgb,var(--danger) 35%,transparent);border-left-color:var(--danger);color:var(--danger)}
+.notice a{color:inherit;font-weight:700}
 .notice ul{margin:6px 0 0;padding-left:20px;overflow-wrap:anywhere;max-height:220px;overflow:auto}
 .result-bar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:11px 0;font-size:13px;flex-wrap:wrap}
 .result-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -241,6 +242,7 @@ footer{margin-top:18px;font-size:12px}
   </div>
 </header>
 <main>
+  <p class="notice" id="previewInstructions" hidden><span id="previewNext"></span> <a id="previewBoard" hidden></a></p>
   <p class="notice" id="mirror" hidden></p>
   <p class="notice" id="hidden" hidden></p>
   <section class="explorer-shell" id="explorerPane" hidden>
@@ -371,6 +373,10 @@ const labels = {
   parents:['将自动创建的父目录','Parent folders to be created'],
   previewFrom:['来源路径','Source'], previewTo:['预计落点','Expected destination'],
   previewSnapshot:['执行前预检快照，生成于 {time}（尚未改动任何文件）。','Preflight snapshot captured {time} (no files changed).'],
+  previewNextConfirm:['先核对每一项的来源和预计落点。都正确的话，回到当前整理对话说「确认执行这份预演」。','Check each source and expected destination. If they are correct, return to the current conversation and say “Confirm this preview.”'],
+  previewNextBlocked:['先查看下方的拦截原因，修正后重新预演。','Check the blocked actions below, correct them, then preview again.'],
+  previewNextEmpty:['这份预演没有需要执行的操作。','This preview has no actions to apply.'],
+  previewBackBoard:['返回连线工作台','Back to the review board'],
   previewSearch:['筛选预演动作','Filter preview actions'], previewHint:['输入路径或编号（如 #3）','Path or action number (e.g. #3)'],
   previewResult:['共 {count} 项待执行动作','{count} planned actions'],
   eligibleResult:['{count} 项通过预检，但因上方存在拦截项，整批不会执行','{count} passed preflight, but the whole batch is blocked'],
@@ -950,6 +956,14 @@ function applyLanguage(next) {
   $('hidden').hidden = !data.hidden;
   $('snapshot').textContent = t(preview ? 'previewSnapshot' : 'snapshot',{time:time(data.captured)});
   if (preview) {
+    if (/\/preview\/[a-f0-9]{24}$/.test(location.pathname)) {
+      $('previewInstructions').hidden = false;
+      $('previewNext').textContent = t(data.blocked.length ? 'previewNextBlocked' :
+        data.operations.length ? 'previewNextConfirm' : 'previewNextEmpty');
+      $('previewBoard').href = '../workbench?lang=' + lang;
+      $('previewBoard').textContent = t('previewBackBoard');
+      $('previewBoard').hidden = false;
+    }
     $('filters').classList.add('preview');
     $('statusWrap').hidden = true;
     $('searchLabel').textContent = t('previewSearch');

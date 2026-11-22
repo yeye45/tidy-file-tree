@@ -1600,6 +1600,9 @@ def apply(args):
         if preview_html:
             from history import write_preview
             write_preview(journal, Path(preview_html), prepared, blocked, external_roots, receipt is not None, args.lang)
+            if review_record is not None:
+                page_path = check_artifact_path(preview_html)
+                review_record.update(preview=str(page_path), preview_sha256=digest(page_path.read_bytes()))
             print(f'已写图形预演：{preview_html}')
         if receipt is not None:
             if blocked:
@@ -1626,10 +1629,6 @@ def apply(args):
                     'phase': 'previewed' if args.dry_run else 'executing',
                     'run': None if args.dry_run else run,
                 })
-                if preview_html:
-                    page_path = check_artifact_path(preview_html)
-                    review_record['preview'] = str(page_path)
-                    review_record['preview_sha256'] = digest(page_path.read_bytes())
                 write_plan_review(review_path, review_record)
         if args.dry_run:
             for action in prepared:

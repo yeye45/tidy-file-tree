@@ -43,8 +43,10 @@ tidy-file-tree ui (Join-Path $demo.FullName "root") --open
 
 1. **查看目录。** 运行 `tidy-file-tree scan "D:\ToSort" --tree`，在浏览器查看只读交互式目录树（支持自由缩放、拖动、宽分支折叠、按需逐级下钻展开）、目录类型与剧集草稿。
 2. **确定范围、清点与追踪进度。** 用 `tidy-file-tree setup ask <目录>` 查看目标（整理归类 vs 清理腾空间）、分类偏好及保护路径的问题，再用 `tidy-file-tree setup apply <目录> answers.json` 保存答案。让 AI 代理按 [SKILL.md](SKILL.md) 记录探针、单元清点与归组结果；过程中可随时运行 `tidy-file-tree progress <目录>` 查看 S0–S6 实时进度看板与下一步建议，并用 `tidy-file-tree coverage <目录>` 查漏。
-3. **确认去向。** 运行 `tidy-file-tree decisions <目录>` 和 `tidy-file-tree ui <目录> --open`，在工作台连线确认分组及单目录改名/去留决策（被安全护栏保护跳过的目录会透明列出原因），核对后下载动作表。
-4. **预演与执行。** 先用下面的命令生成图形预演和 JSON 清单。
+3. **选去向并查看预演。** 运行 `tidy-file-tree decisions <目录>` 和 `tidy-file-tree ui <目录> --no-open`。从实时进度页点「打开连线工作台」，在左侧选择要整理的项目，在右侧点选目标文件夹，再点「查看预演」。未选去向的项目留在原位。
+4. **核对并确认。** 预演页会列出每项操作的来源、预计落点和拦截原因。核对通过后，在当前整理对话中确认执行这份预演。
+
+独立操作时，也可以用 `tidy-file-tree ui <目录> --open` 打开离线工作台，下载动作表，再用下面的命令生成预演和核对清单。
 
 ```powershell
 tidy-file-tree apply "D:\ToSort" --actions tidy-file-tree-actions.tsv --dry-run --preview-html plan.html --receipt plan.tidy-file-tree-receipt.json

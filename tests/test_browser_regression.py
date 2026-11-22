@@ -24,6 +24,59 @@ from ui import group_key
 
 @unittest.skipIf(sync_playwright is None, "install the browser extra: pip install playwright")
 class BrowserRegression(unittest.TestCase):
+    def test_offline_preview_and_progress_and_project_site(self):
+        with tempfile.TemporaryDirectory(prefix=".organizer-test-visual-reports-", dir=PROJECT) as temp:
+            base = Path(temp)
+            root = base / "root"
+            root.mkdir()
+            source = root / "sample.txt"
+            source.touch()
+            actions = base / "actions.tsv"
+            actions.write_text(f"op\tsrc\tdst\treason\nrename\t{source}\tfiled.txt\tfixture\n", encoding="utf-8")
+            offline = base / "progress.html"
+            preview = base / "preview.html"
+            env = dict(os.environ, LOCALAPPDATA=str(base / "app-state"),
+                       XDG_STATE_HOME=str(base / "state"), PYTHONIOENCODING="utf-8")
+            if env.get("TIDY_FILE_TREE_BROWSER_USE_INSTALLED") != "1":
+                env["PYTHONPATH"] = str(PROJECT) + os.pathsep + env.get("PYTHONPATH", "")
+
+            def run(*args):
+                proc = subprocess.run([sys.executable, "-m", "tidy_file_tree", *map(str, args)],
+                                      cwd=base, env=env, capture_output=True, encoding="utf-8")
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+            run("progress", root, "--out", offline, "--no-open", "--lang", "en")
+            run("apply", root, "--actions", actions, "--dry-run", "--preview-html", preview,
+                "--receipt", base / "receipt.json", "--lang", "en")
+            self.assertTrue(source.is_file())
+            with sync_playwright() as playwright:
+                chrome = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+                edge = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+                executable = next((str(path) for path in (chrome, edge) if path.is_file()), None)
+                browser = playwright.chromium.launch(executable_path=executable)
+                page = browser.new_page(viewport={"width": 390, "height": 844})
+                page.goto(offline.as_uri())
+                expect(page.locator("#liveText")).to_have_text("Offline progress snapshot")
+                expect(page.locator("#refreshBtn")).to_be_hidden()
+                expect(page.locator("#openWorkbench")).to_be_hidden()
+                page.locator("#langSelect").select_option("zh-CN")
+                expect(page.locator("#liveText")).to_have_text("静态进度快照")
+
+                page.goto(preview.as_uri())
+                expect(page.locator("#title")).to_contain_text("Execution preview")
+                expect(page.locator("#snapshot")).to_contain_text("no files changed")
+                expect(page.get_by_text("filed.txt", exact=True).first).to_be_visible()
+
+                page.goto((PROJECT / "site" / "index.html").as_uri())
+                expect(page.get_by_role("heading", name="从样本开始")).to_be_visible()
+                self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+                page.get_by_role("link", name="English", exact=True).click()
+                expect(page.get_by_role("link", name="简体中文", exact=True)).to_be_visible()
+                self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+                page.get_by_role("link", name="Try the sample").click()
+                self.assertTrue(page.url.endswith("#demo"))
+                browser.close()
+
     def test_progress_opens_before_setup_and_updates_its_next_step(self):
         with tempfile.TemporaryDirectory(prefix=".tidy-file-tree-progress-browser-", dir=PROJECT) as temp:
             base = Path(temp)
@@ -76,24 +129,29 @@ class BrowserRegression(unittest.TestCase):
                         with page.context.expect_page() as popup:
                             page.locator("#openWorkbench").click()
                         board = popup.value
+                        board.get_by_role("button", name="Preview changes").click()
+                        expect(board.locator("#reviewStatus")).to_contain_text("Select an item on the left")
+                        board.locator('#review form button').click()
                         board.get_by_role("button", name="Confirm rename").click()
-                        board.locator("#reviewButton").click()
-                        with board.expect_response(lambda response: response.url.endswith("/workbench-actions")) as reply:
-                            board.get_by_role("button", name="Submit for preview").click()
+                        with board.expect_response(lambda response: "/workbench-actions?" in response.url) as reply:
+                            board.get_by_role("button", name="Preview changes (1)").click()
                         self.assertEqual(reply.value.status, 200, f"Origin={reply.value.request.header_value('origin')}")
-                        expect(board.locator("#submitStatus")).to_contain_text("Submitted for preview")
-                        expect(step).to_have_attribute("data-step", "preview_plan")
-                        actions = org / "workbench-actions.tsv"
-                        receipt = base / "preview.json"
-                        self.assertTrue(actions.is_file())
-                        self.assertFalse((org / "journal.tsv").exists())
-                        run("apply", root, "--actions", actions, "--dry-run", "--receipt", receipt,
-                            "--preview-html", base / "preview.html")
+                        expect(board.locator("#previewNext")).to_contain_text("Check each source")
+                        expect(board.locator("#previewBoard")).to_have_text("Back to the review board")
+                        board.locator("#language").select_option("zh-CN")
+                        expect(board.locator("#previewNext")).to_contain_text("确认执行这份预演")
                         expect(step).to_have_attribute("data-step", "confirm_preview")
-                        expect(step).to_contain_text("Preview ready for your confirmation")
+                        expect(step.get_by_role("link", name="Open preview")).to_be_visible()
+                        actions = org / "workbench-actions.tsv"
+                        snapshot = page.request.get(url + "snapshot").json()
+                        receipt = Path(snapshot["planReview"]["receipt"])
+                        self.assertTrue(actions.is_file())
+                        self.assertTrue(receipt.is_file())
+                        self.assertFalse((org / "journal.tsv").exists())
                         self.assertTrue(inbox.is_dir())
                         run("apply", root, "--actions", actions, "--receipt", receipt)
                         expect(page.locator("#artSub")).to_contain_text("1 action executed")
+                        self.assertEqual(page.request.get(url + snapshot["previewUrl"]).status, 404)
                         self.assertTrue((root / "Filed").is_dir())
                         run("undo", "--journal", org / "journal.tsv", "--last")
                         self.assertTrue(inbox.is_dir())

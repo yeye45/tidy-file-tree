@@ -43,8 +43,10 @@ tidy-file-tree ui (Join-Path $demo.FullName "root") --lang en --open
 
 1. **Inspect folders.** Run `tidy-file-tree scan "D:\ToSort" --tree` to open the read-only interactive directory tree (with free pan/zoom, collapsible wide branches, and on-demand drill-down) and review folder types and episode drafts.
 2. **Set the scope, inventory, and track progress.** Use `tidy-file-tree setup ask <directory>` to confirm your goal (organizing vs. reclaiming disk space), category preferences, and protected paths, then save answers with `tidy-file-tree setup apply <directory> answers.json`. Give your AI agent [SKILL.md](SKILL.md) to record probes, inventory units, and group related items. Run `tidy-file-tree progress <directory>` anytime for a live S0–S6 dashboard and next-step guidance, and `tidy-file-tree coverage <directory>` to check for omissions.
-3. **Confirm destinations.** Run `tidy-file-tree decisions <directory>` and `tidy-file-tree ui <directory> --open`. Connect groups and node-level decisions to destinations (protected/skipped folders are surfaced transparently), review the evidence, and download the actions table.
-4. **Preview and apply.** Generate a browser preview and JSON receipt first.
+3. **Choose destinations and preview.** Run `tidy-file-tree decisions <directory>` and `tidy-file-tree ui <directory> --no-open`. From the live dashboard, select **Open review board**, choose an item on the left and a destination on the right, then select **Preview changes**. Unassigned items stay in place.
+4. **Review and confirm.** The preview shows the source, expected destination, and any blockers for each action. If the changes look right, confirm this preview in your current conversation.
+
+For a standalone workflow, open the offline board with `tidy-file-tree ui <directory> --open`, download the action plan, and generate a preview and receipt with the command below.
 
 ```powershell
 tidy-file-tree apply "D:\ToSort" --actions tidy-file-tree-actions.tsv --dry-run --preview-html plan.html --receipt plan.tidy-file-tree-receipt.json

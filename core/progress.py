@@ -1,4 +1,5 @@
 """Live progress snapshots and local workbench drafts for stages S0-S6."""
+from argparse import Namespace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -11,7 +12,7 @@ import time
 import webbrowser
 
 from coverage import SKIP_NAMES, grouping_coverage, unit_count, valid_action
-from executor import (ACTION_FIELDS, PLAN_REVIEW_FORMAT, TRACKED_PLANS, WORKBENCH_PLAN, Journal,
+from executor import (ACTION_FIELDS, PLAN_REVIEW_FORMAT, TRACKED_PLANS, WORKBENCH_PLAN, Journal, apply,
                       actions_digest, active_events, artifact_has_signature,
                       check_artifact_path, completed, cross_scopes, digest, directory_identity, guard, meta,
                       plan_review_path, read_journal, receipt_path, rename_target, write_artifact)
@@ -90,7 +91,9 @@ def _plan_review(journal, plan, done_rows):
         phase = record.get('phase')
         if type(count) is not int or not 0 <= count <= len(actions):
             return None
-        if phase in ('draft', 'blocked'):
+        if phase == 'blocked':
+            return {'status': phase, 'count': count, 'preview': _review_artifact(record, 'preview')}
+        if phase == 'draft':
             return {'status': phase, 'count': count}
         if phase == 'no_changes' and count == 0:
             return {'status': phase, 'count': 0}
@@ -149,6 +152,23 @@ def _submit_workbench(journal, rows, probe=None):
 
             write_artifact(plan, data, owns_existing=owns_plan)
         return len(actions)
+
+
+def _workbench_preview(journal, lang):
+    """Use the executor's dry run and receipt checks for browser previews."""
+    draft = journal.state_dir / WORKBENCH_PLAN
+    folder = check_artifact_path(journal.mirror_dir / 'workbench-previews' / secrets.token_hex(12))
+    folder.mkdir(parents=True, exist_ok=False)
+    report = folder / 'preview.html'
+    try:
+        apply(Namespace(root=str(journal.root), actions=str(draft), rename=None, plan=None,
+                        dry_run=True, allow_cross_drive=False, batch_size=50, lang=lang,
+                        preview_html=str(report), receipt=str(folder / 'receipt.json')))
+    except SafetyError:
+        review = _plan_review(journal, draft, ())
+        if not review or review['status'] != 'blocked' or review.get('preview') != str(report):
+            raise
+    return 'preview/' + folder.name
 
 
 def _quarantine_info(root, markers):
@@ -836,8 +856,16 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
     interval = max(0.4, interval)
     page = render_page({'lang': lang, 'live': True, 'intervalMs': int(interval * 1000)})
     scan_lock = Lock()
+    preview_lock = Lock()
     latest = None
     refresh_at = 0.0
+
+    def preview_url(path):
+        if path:
+            folder = Path(path).parent
+            if folder.parent == journal.mirror_dir / 'workbench-previews':
+                return 'preview/' + folder.name
+        return None
 
     def read_snapshot():
         nonlocal latest, refresh_at
@@ -845,10 +873,20 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
             if latest is None or time.monotonic() >= refresh_at:
                 try:
                     latest = collect_snapshot(root, probe_override=probe)
+                    review = latest.get('planReview')
+                    latest['previewUrl'] = preview_url(review.get('preview')) if review else None
                 except (OSError, ValueError):
                     latest = {'nextStep': {'id': 'snapshot_unavailable', 'actor': 'user'}}
                 refresh_at = time.monotonic() + interval
             return latest
+
+    def active_preview():
+        draft = journal.state_dir / WORKBENCH_PLAN
+        review = _plan_review(journal, draft, ())
+        path = Path(review['preview']) if review and review.get('preview') else None
+        if preview_url(path):
+            return path
+        return None
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -875,7 +913,8 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
             if self.headers.get('Host') != host or self.headers.get('Origin') != f'http://{host}':
                 self.send_error(403)
                 return
-            if self.path != page_path + 'workbench-actions':
+            if self.path not in (page_path + 'workbench-actions', page_path + 'workbench-actions?lang=en',
+                                 page_path + 'workbench-actions?lang=zh-CN'):
                 self.send_error(404)
                 return
             if self.headers.get_content_type() != 'application/json':
@@ -888,13 +927,21 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
                     return
                 self.connection.settimeout(5)
                 rows = json.loads(self.rfile.read(length))
-                count = _submit_workbench(journal, rows, probe=probe)
+                with preview_lock:
+                    count = _submit_workbench(journal, rows, probe=probe)
+                    preview = None
+                    if not is_system_root(root):
+                        locale = self.path.split('?lang=')[-1] if '?' in self.path else lang
+                        try:
+                            preview = _workbench_preview(journal, locale)
+                        except (OSError, ValueError):
+                            preview = None
             except (OSError, ValueError, TypeError, RecursionError):
                 self.send_error(400, 'Could not save this draft')
                 return
             with scan_lock:
                 refresh_at = 0.0
-            body = json.dumps({'count': count}).encode('utf-8')
+            body = json.dumps({'count': count, 'preview': preview}).encode('utf-8')
             self._send_security_headers('application/json', len(body))
             self.wfile.write(body)
 
@@ -917,6 +964,20 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
                 self._send_security_headers('text/html', len(body))
                 self.wfile.write(body)
                 return
+            if self.path.startswith(page_path + 'preview/'):
+                try:
+                    path = active_preview()
+                    if path and self.path == page_path + 'preview/' + path.parent.name:
+                        record = _safe_read_json(plan_review_path(journal, journal.state_dir / WORKBENCH_PLAN))
+                        body = check_artifact_path(path).read_bytes()
+                        if record and record.get('preview') == str(path) and digest(body) == record.get('preview_sha256'):
+                            self._send_security_headers('text/html', len(body))
+                            self.wfile.write(body)
+                            return
+                except (OSError, ValueError):
+                    pass
+                self.send_error(404, 'This preview is no longer current')
+                return
             if self.path == page_path + 'snapshot':
                 data = read_snapshot()
                 body = json.dumps(data, ensure_ascii=False).encode('utf-8')
@@ -931,13 +992,13 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
                     while True:
                         snap = read_snapshot()
                         comparable = {k: v for k, v in snap.items() if k != 'captured'}
-                        digest = json.dumps(comparable, sort_keys=True, ensure_ascii=True)
+                        snapshot_digest = json.dumps(comparable, sort_keys=True, ensure_ascii=True)
                         now_mono = time.monotonic()
-                        if digest != last_digest:
+                        if snapshot_digest != last_digest:
                             line = 'data: ' + json.dumps(snap, ensure_ascii=False) + '\n\n'
                             self.wfile.write(line.encode('utf-8'))
                             self.wfile.flush()
-                            last_digest = digest
+                            last_digest = snapshot_digest
                             last_heartbeat = now_mono
                         elif now_mono - last_heartbeat >= 10.0:
                             self.wfile.write(b': keepalive\n\n')

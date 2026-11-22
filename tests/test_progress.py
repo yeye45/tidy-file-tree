@@ -132,6 +132,22 @@ class ProgressDashboardTests(unittest.TestCase):
         self.assertTrue((self.root / 'a-filed.txt').is_file())
         self.assertTrue((self.root / 'b.txt').is_file())
 
+    def test_workbench_preview_explains_blocked_actions_without_receipt(self):
+        source = self.root / 'source.txt'
+        source.touch()
+        (self.root / 'existing.txt').touch()
+        journal = executor.Journal(self.root)
+        progress._submit_workbench(journal, [['rename', str(source), 'existing.txt', 'test']])
+        url = progress._workbench_preview(journal, 'zh-CN')
+        snap = progress.collect_snapshot(self.root)
+        self.assertEqual(snap['nextStep']['id'], 'review_blocked')
+        report = Path(snap['planReview']['preview'])
+        self.assertEqual(url, f'preview/{report.parent.name}')
+        self.assertIn('目标名称已存在', report.read_text(encoding='utf-8'))
+        self.assertFalse((report.parent / 'receipt.json').exists())
+        self.assertFalse(journal.path.exists())
+        self.assertTrue(source.exists())
+
     def test_full_pipeline_stages_quarantine_and_secret_redaction(self):
         dl = self.root / 'Downloads'
         media = self.root / 'Media'
