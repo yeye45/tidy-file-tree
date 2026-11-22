@@ -140,10 +140,12 @@ def cmd_undo(args):
         argv.append("--last")
     elif args.seq is not None:
         argv += ["--seq", str(args.seq)]
+    elif getattr(args, "exact_seq", None) is not None:
+        argv += ["--exact-seq", str(args.exact_seq)]
     elif args.list:
         argv.append("--list")
     else:
-        sys.exit("undo 需要 --run-id、--last、--seq 或 --list 之一")
+        sys.exit("undo 需要 --run-id、--last、--seq、--exact-seq 或 --list 之一")
     if args.dry_run:
         argv.append("--dry-run")
     if args.allow_system_drive:
@@ -378,10 +380,12 @@ def main(argv=None):
 
     s = command("undo", "逆序撤销", "Undo recorded actions in reverse order")
     s.add_argument("--journal", required=True)
-    s.add_argument("--run-id")
-    s.add_argument("--last", action="store_true")
-    s.add_argument("--seq", type=int)
-    s.add_argument("--list", action="store_true")
+    selection = s.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--run-id")
+    selection.add_argument("--last", action="store_true")
+    selection.add_argument("--seq", type=int, help=text("撤销截至该序号的正向动作", "Undo original actions up through this sequence"))
+    selection.add_argument("--exact-seq", type=int, help=text("只撤销指定的已完成动作", "Undo only the specified completed action"))
+    selection.add_argument("--list", action="store_true")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--allow-system-drive", action="store_true", help=sys_drive_help)
     s.set_defaults(func=cmd_undo)

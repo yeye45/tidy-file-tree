@@ -394,6 +394,114 @@ class TransactionCase(unittest.TestCase):
             self.assertTrue(source.exists())
             self.assertFalse(target.exists())
 
+    def test_exact_sequence_undo_then_exact_inverse_redo(self):
+        first=self.put('first.txt')
+        first_target=self.root/'first-moved.txt'
+        second=self.put('second.txt')
+        second_target=self.root/'second-moved.txt'
+        self.move(first,first_target,'same-run')
+        first_seq=executor.read_journal(self.journal.path)[-1]['seq']
+        self.move(second,second_target,'same-run')
+        second_seq=executor.read_journal(self.journal.path)[-1]['seq']
+        result = subprocess.run([sys.executable, '-B', str(PROJECT / 'tidy_file_tree.py'), 'undo',
+                                 '--journal', str(self.journal.path), '--exact-seq', str(second_seq),
+                                 '--dry-run'], capture_output=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f'[dry] undo seq {second_seq}:', result.stdout)
+        self.assertNotIn(f'[dry] undo seq {first_seq}:', result.stdout)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code=executor.undo(Namespace(journal=str(self.journal.path),run_id=None,last=False,
+                                         seq=None,exact_seq=second_seq,list=False,dry_run=False))
+        self.assertEqual(code,0)
+        self.assertTrue(first_target.exists())
+        self.assertTrue(second.exists())
+        self.assertFalse(second_target.exists())
+        undo_seq=executor.read_journal(self.journal.path)[-1]['seq']
+        with contextlib.redirect_stdout(io.StringIO()):
+            code=executor.undo(Namespace(journal=str(self.journal.path),run_id=None,last=False,
+                                         seq=None,exact_seq=undo_seq,list=False,dry_run=False))
+        self.assertEqual(code,0)
+        self.assertTrue(first_target.exists())
+        self.assertTrue(second_target.exists())
+
+    def test_undo_preview_includes_directory_emptied_by_earlier_inverse(self):
+        source = self.put('sample.txt')
+        created = self.root / 'auto-created'
+        target = created / source.name
+        with self.journal.locked():
+            executor.transaction(self.journal, 'batch', 'mkdir', 'mkdir', '-', str(created), 'test')
+            executor.transaction(self.journal, 'batch', 'move', 'move', str(source), str(target), 'test')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = executor.undo(Namespace(journal=str(self.journal.path), run_id='batch', last=False,
+                                           seq=None, list=False, dry_run=True))
+        self.assertEqual(code, 0)
+        self.assertIn(f'{created} -> -', output.getvalue())
+        self.assertTrue(target.is_file())
+        self.assertEqual(self.undo('batch'), 0)
+        self.assertTrue(source.is_file())
+        self.assertFalse(created.exists())
+
+    def test_undo_move_preserves_replacement_swapped_before_transaction(self):
+        source = self.put('source.txt', 'original')
+        target = self.root / 'target.txt'
+        self.move(source, target)
+        transaction = executor.transaction
+
+        def replace(*args, **kwargs):
+            target.rename(self.root / 'held-original.txt')
+            target.write_text('replacement', encoding='utf-8')
+            return transaction(*args, **kwargs)
+
+        with patch.object(executor, 'transaction', side_effect=replace):
+            self.assertEqual(self.undo('test-run'), 1)
+        self.assertEqual(target.read_text(encoding='utf-8'), 'replacement')
+        self.assertEqual((self.root / 'held-original.txt').read_text(encoding='utf-8'), 'original')
+        self.assertFalse(source.exists())
+
+    def test_exact_sequence_rejects_unknown_sequence(self):
+        source=self.put('item.txt')
+        self.move(source,self.root/'moved.txt')
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SafetyError):
+                executor.undo(Namespace(journal=str(self.journal.path),run_id=None,last=False,
+                                        seq=None,exact_seq=999,list=False,dry_run=True))
+
+    def test_pending_journal_without_manifest_stops_recovery_and_undo(self):
+        source = self.put('recorded.txt')
+        with self.journal.locked():
+            self.journal.append('interrupted', 'move', str(source), str(self.root / 'other.txt'),
+                                json.dumps({'tx': 'a' * 32, 'effect': 'move'}), 'pending')
+        with self.assertRaisesRegex(SafetyError, '缺少可核对的恢复清单'):
+            self.recover()
+        with self.assertRaisesRegex(SafetyError, '缺少可核对的恢复清单'):
+            self.undo('interrupted')
+        self.assertTrue(source.is_file())
+
+    def test_undo_mkdir_preserves_replacement_swapped_after_prepare(self):
+        created=self.root/'created'
+        with self.journal.locked():
+            executor.transaction(self.journal,'mkdir-run','mkdir','mkdir','-',str(created),'test')
+        seq=executor.read_journal(self.journal.path)[-1]['seq']
+        append=self.journal.append
+        swapped=False
+        def swap_on_pending(run,op,before,after,reason,status='done'):
+            nonlocal swapped
+            result=append(run,op,before,after,reason,status)
+            if status=='pending' and op=='undo-mkdir' and not swapped:
+                created.rename(self.root/'original-created')
+                created.mkdir()
+                swapped=True
+            return result
+        with patch.object(executor.Journal,'append',side_effect=swap_on_pending):
+            with contextlib.redirect_stdout(io.StringIO()):
+                code=executor.undo(Namespace(journal=str(self.journal.path),run_id=None,last=False,
+                                             seq=None,exact_seq=seq,list=False,dry_run=False))
+        self.assertEqual(code,1)
+        self.assertTrue(swapped)
+        self.assertTrue(created.is_dir())
+        self.assertTrue((self.root/'original-created').is_dir())
+
     def test_interrupted_secret_marker_update_blocks_apply_until_recovered(self):
         source=self.put('private.txt')
         write=executor.atomic_write

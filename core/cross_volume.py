@@ -351,9 +351,6 @@ def remove_original(path, record, expected):
         verify_purge_original(record, expected)
         path.rmdir() if record['dir'] else path.unlink()
         return
-    import msvcrt
-
-    api = windows_api()
     descriptor = open_reader(path, delete=True)
     try:
         st = os.fstat(descriptor)
@@ -368,11 +365,32 @@ def remove_original(path, record, expected):
                 if not unchanged_handle(os.fstat(descriptor), record):
                     raise SafetyError('隔离原件在清理前发生变化，保留现场')
         verify_purge_original(record, expected)
-        # FileDispositionInfo acts on the verified handle, so a racing pathname
-        # replacement cannot redirect removal to a different object.
-        flag = api.ctypes.c_ubyte(1)
-        if not api.disposition(msvcrt.get_osfhandle(descriptor), 4, api.ctypes.byref(flag), 1):
-            raise api.ctypes.WinError(api.ctypes.get_last_error())
+        dispose_open_handle(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def dispose_open_handle(descriptor):
+    """On Windows, dispose of the verified object, never a replacement pathname."""
+    import msvcrt
+
+    api = windows_api()
+    flag = api.ctypes.c_ubyte(1)
+    if not api.disposition(msvcrt.get_osfhandle(descriptor), 4, api.ctypes.byref(flag), 1):
+        raise api.ctypes.WinError(api.ctypes.get_last_error())
+
+
+def remove_empty_directory(path, expected):
+    """Remove a tool-created empty directory by its pinned Windows handle."""
+    descriptor = open_reader(path, delete=True)
+    try:
+        st = os.fstat(descriptor)
+        if ((st.st_dev, st.st_ino) != (expected['dev'], expected['ino'])
+                or not stat.S_ISDIR(st.st_mode)
+                or getattr(st, 'st_file_attributes', 0) & 0x400):
+            raise SafetyError('撤销目录在准备后发生变化，保留')
+        # FileDispositionInfo rejects a directory with any remaining children.
+        dispose_open_handle(descriptor)
     finally:
         os.close(descriptor)
 

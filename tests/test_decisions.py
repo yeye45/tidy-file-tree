@@ -490,6 +490,29 @@ class TestNeedsAI(unittest.TestCase):
                "evidence": []}
         self.assertIsNone(D.needs_ai(sug, {"kind": "media"}))
 
+    def test_specialized_placement_waits_for_user_even_if_ai_offers_a_target(self):
+        group = "ComfyUI 便携运行环境"
+        zones = [{"path": "/ai", "label": "AI工具", "depth": 1, "files": 3}]
+        suggestion = D.suggest_group(group, "下载", zones)
+        self.assertEqual(suggestion["mode"], "keep")
+        self.assertTrue(suggestion["needsCheck"])
+        self.assertIsNone(D.needs_ai(suggestion, {"kind": "installer"}))
+        with tempfile.TemporaryDirectory() as folder:
+            reply = Path(folder) / "reply.json"
+            reply.write_text(json.dumps([{
+                "parent": "下载", "group": group, "target": "/ai",
+            }]), encoding="utf-8")
+            nodes = [{"name": "下载", "groups": [{"name": group, "suggest": suggestion}]}]
+            self.assertEqual(D.apply_answers(nodes, reply, zones), (0, 1))
+            self.assertEqual(suggestion["mode"], "keep")
+            self.assertNotIn("target", suggestion)
+
+    def test_model_extension_suggests_checking_the_app_location(self):
+        suggestion = D.placement_review("用途待核实", member_paths=["weights.gguf"])
+        self.assertEqual(suggestion["category"], "ai_model")
+        self.assertEqual(suggestion["mode"], "keep")
+        self.assertTrue(suggestion["userDecision"])
+
 
 class TestBuildQuestion(unittest.TestCase):
     def test_question_has_facts(self):
@@ -952,19 +975,25 @@ class TestPolicyMapping(unittest.TestCase):
 class TestUiLoadsRules(unittest.TestCase):
     """ui.py 必须加载规则包，否则建议全线失效。"""
 
-    def test_ui_imports_rules(self):
-        import inspect
-        import ui
-        src = inspect.getsource(ui.main)
-        self.assertIn("rules", src, "ui.main 应加载规则包")
-        self.assertIn("apply_to", src, "ui.main 应应用规则包")
-
     def test_ui_applies_policy_mapping(self):
-        import inspect
+        from unittest.mock import patch
         import ui
-        src = inspect.getsource(ui.main)
-        self.assertIn("load_policy_mapping", src,
-                      "ui.main 应应用 policy.json 的 mapping")
+        from executor import Journal
+
+        with tempfile.TemporaryDirectory(prefix=".test-ui-rules-", dir=CORE.parent) as temp:
+            base = Path(temp)
+            root = base / "root"
+            state = root / "_organize"
+            state.mkdir(parents=True)
+            mapping = {"video_course": "Fixture Courses"}
+            (state / "policy.json").write_text(json.dumps({"mapping": mapping}), encoding="utf-8")
+            environment = {"LOCALAPPDATA": str(base / "local"), "XDG_STATE_HOME": str(base / "local")}
+            with patch.dict(os.environ, environment), patch.object(ui, "build_board") as build:
+                ui.board_for_root(Journal(root))
+                rule_state = build.call_args.kwargs["decision_rules"]
+        self.assertIn("Fixture Courses", rule_state.CATEGORY_NODE_NAMES)
+        self.assertTrue(any(rule["to"] == ["Fixture Courses"] for rule in rule_state.CROSS_RULES))
+        self.assertTrue(rule_state.NEW_CATEGORIES)
 
 
 class TestSuggestNotAllKeep(unittest.TestCase):

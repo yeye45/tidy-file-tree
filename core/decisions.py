@@ -175,6 +175,7 @@ def build_nodes(root, probes, units, groups):
                 "confidence": x.get("confidence", ""),
                 "n": unit_num(x),
                 "units": x.get("units") if isinstance(x.get("units"), list) else [],
+                "keep_together": x.get("keep_together") is True,
                 "fingerprint": group_key(x),
             } for x in (g.get("groups") or [])],
             "solo_n": len(g.get("solo_units") or []),
@@ -678,6 +679,8 @@ def needs_ai(suggest, shape=None):
 
     返回 None 表示代码已能定论；否则返回触发原因。
     """
+    if suggest.get("userDecision"):
+        return None
     if suggest.get("needsCheck"):
         # needsCheck 为真就是代码对结论没把握，必须交人/AI
         # 有 evidence 说明是形态与名字的矛盾
@@ -852,10 +855,40 @@ SHAPE_TO_CATEGORY = {
     "mixed":     None,
     "empty":     None,
 }
+MODEL_EXTENSIONS = {".safetensors", ".gguf", ".ckpt"}
+
+
+def placement_review(group_name, *, keep_together=False, member_paths=()):
+    """Keep specialized placements out of default moves and AI approvals."""
+    name = (group_name or "").casefold()
+    if keep_together or ("声库" in name and any(word in name for word in ("编辑器", "安装器", "安装包"))):
+        category = "voice_synth" if "声库" in name else None
+        return {"mode": "keep", "needsCheck": True, "userDecision": True, "keepTogether": True,
+                "category": category,
+                "reason": ("存在强依赖，保留完整单元，去向由用户决定" if keep_together
+                           else "疑似强依赖，核实组件关系前保持原位")}
+    if name.strip() == "comfyui" or ("comfyui" in name and any(
+            word in name for word in ("运行环境", "便携包", "解压即用", "整合包"))):
+        category = "comfy_runtime"
+    elif (any(word in name for word in ("语音合成与转换工具链", "语音合成工具", "语音转换工具", "语音合成软件"))
+          or ("语音合成" in name and "转换" in name
+              and any(word in name for word in ("工具", "svc", "vits", "moegoe", "uvr5")))):
+        category = "voice_toolchain"
+    else:
+        category = None
+    if category:
+        return {"mode": "keep", "needsCheck": True, "userDecision": True, "category": category,
+                "reason": "专用功能目录默认保留原位，去向由用户决定"}
+    if (re.search(r"\b(?:lora|checkpoint|safetensors|gguf)\b|ai\s*模型", name)
+            or any(Path(path).suffix.casefold() in MODEL_EXTENSIONS for path in member_paths)):
+        return {"mode": "keep", "needsCheck": True, "userDecision": True, "category": "ai_model",
+                "reason": "保留模型现位置，核实应用配置中的模型路径后由用户决定"}
+    return None
 
 
 def suggest_group(group_name, node_name, zones, node_path=None,
-                  group_path=None, *, permit=None, shape=None, decision_rules=None):
+                  group_path=None, *, permit=None, shape=None, decision_rules=None,
+                  keep_together=False, member_paths=()):
     """给一组算出去向建议。
 
     判断顺序（重要）：
@@ -868,6 +901,9 @@ def suggest_group(group_name, node_name, zones, node_path=None,
 
     返回 {mode, target, newName, newParent, reason, needsCheck, evidence}
     """
+    review = placement_review(group_name, keep_together=keep_together, member_paths=member_paths)
+    if review:
+        return review
     decision_rules = decision_rules if decision_rules is not None else sys.modules[__name__]
     evidence = []
 
@@ -889,52 +925,6 @@ def suggest_group(group_name, node_name, zones, node_path=None,
         return {"mode": "keep",
                 "reason": "所在目录已是分类目录，组在内部无需移动",
                 "needsCheck": False, "evidence": evidence}
-
-    # 具体工具链/运行环境信号高于通用“图像”“安装包”“工具”关键词。
-    group_lower = (group_name or "").casefold()
-    specific_category = None
-    if ("语音合成与转换工具链" in group_lower
-            or ("语音合成" in group_lower and "转换" in group_lower
-                and any(x in group_lower for x in
-                        ("工具", "svc", "vits", "moegoe", "uvr5")))):
-        specific_category = "voice_toolchain"
-        preferred = ("语音合成", "语音转换", "歌声合成", "AI工具语音区", "AI工具/语音", "AI工具")
-        proposed = "语音合成与转换工具链"
-    elif "comfyui" in group_lower and any(
-            marker in group_lower for marker in
-            ("运行环境", "便携包", "解压即用", "整合包")):
-        specific_category = "comfy_runtime"
-        preferred = ("AI工具/图像生成", "AI工具")
-        proposed = "AI 图像生成运行环境"
-    else:
-        preferred = ()
-        proposed = ""
-    if specific_category:
-        priority = {label: index for index, label in enumerate(preferred)}
-        candidates = []
-        for zone in zones:
-            label = zone.get("label", "")
-            rank = priority.get(label, priority.get(label.rsplit("/", 1)[-1]))
-            if rank is not None:
-                candidates.append((rank, zone))
-        if candidates:
-            _, target = min(candidates, key=lambda item: (
-                item[0], item[1].get("depth", 99), -item[1].get("files", 0)))
-            already_there = (node_path is not None and os.path.normcase(os.path.normpath(node_path))
-                             == os.path.normcase(os.path.normpath(target["path"])))
-            return {"mode": "keep" if already_there else "move", "target": target["path"],
-                    "targetLabel": target["label"],
-                    "category": specific_category,
-                    "reason": "已位于符合用途的目录" if already_there else f"明确内容证据命中 {specific_category}",
-                    "needsCheck": False,
-                    "evidence": evidence + [
-                        "具体工具链/运行环境用途优先于通用媒体或安装包关键词"]}
-        return {"mode": "new", "newName": proposed,
-                "newParent": "AI工具", "category": specific_category,
-                "reason": "具体用途已识别，但没有可信的现有目标区",
-                "needsCheck": True,
-                "evidence": evidence + [
-                    "未发现名称精确匹配的语音/AI工具目标区，需 full 复核"]}
 
     # ③ 名字匹配
     for rule in decision_rules.CROSS_RULES:
@@ -1245,6 +1235,10 @@ def apply_answers(nodes, answers_path, zones=None, *, legacy_review=False):
             continue
 
         g = candidates[0]
+        if g.get("suggest", {}).get("userDecision"):
+            message = "此组的去向由用户决定，已保留原位"
+            rejected[message] = rejected.get(message, 0) + 1
+            continue
         review_only = not bound and legacy_review
         sg = g.setdefault("suggest", {})
         required_tier = verification_tier(g["name"], sg)
@@ -1458,13 +1452,16 @@ def evaluate_root(root, probe=None, *, allow_system_drive=False, quiet=False):
     for n in nodes:
         for g in n["groups"]:
             members = [os.path.join(n["path"], member) for member in group_paths(g)]
-            group_path = next((path for path in members if permitted(path) and os.path.isdir(path)), None)
+            review = placement_review(g["name"], keep_together=g.get("keep_together"),
+                                      member_paths=members)
+            group_path = (None if review else
+                          next((path for path in members if permitted(path) and os.path.isdir(path)), None))
             candidates = []
             shape = content_shape(group_path, permit=sample_permitted,
                                   candidates=candidates) if group_path else None
             g["shape"] = shape
-            suggestion = suggest_group(g["name"], n["name"], zones, n["path"], shape=shape,
-                                       decision_rules=decision_rules)
+            suggestion = review or suggest_group(g["name"], n["name"], zones, n["path"], shape=shape,
+                                                 decision_rules=decision_rules)
             g["suggest"] = suggestion
             suggestion["tier"] = verification_tier(g["name"], suggestion, shape)
             suggestion["aiJudgement"] = None

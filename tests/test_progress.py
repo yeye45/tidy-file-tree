@@ -1,11 +1,13 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from http.client import HTTPConnection
 from pathlib import Path
 from threading import Thread
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 from unittest.mock import patch
 
@@ -24,7 +26,8 @@ class ProgressDashboardTests(unittest.TestCase):
         self.root = self.workspace / 'disk'
         self.root.mkdir()
         self.addCleanup(self.temp.cleanup)
-        environment = patch.dict(os.environ, {'LOCALAPPDATA': str(self.workspace / 'local-state')})
+        environment = patch.dict(os.environ, {'LOCALAPPDATA': str(self.workspace / 'local-state'),
+                                              'XDG_STATE_HOME': str(self.workspace / 'local-state')})
         environment.start()
         self.addCleanup(environment.stop)
 
@@ -36,6 +39,98 @@ class ProgressDashboardTests(unittest.TestCase):
         self.assertEqual(snap['stages']['s1']['total'], 2)
         self.assertEqual(snap['stages']['s1']['done'], 0)
         self.assertFalse((self.root / '_organize').exists())
+        self.assertEqual(snap['nextStep']['id'], 'start_analysis')
+        self.assertEqual(snap['nextStep']['actor'], 'auto')
+
+    def test_next_step_reports_empty_range_and_no_changes(self):
+        empty = progress.collect_snapshot(self.root)
+        self.assertEqual(empty['nextStep']['id'], 'no_data')
+        (self.root / '_organize').mkdir()
+        (self.root / '_organize' / 'policy.json').write_text(json.dumps({'setup': {'ready': True}}), encoding='utf-8')
+        no_changes = progress.collect_snapshot(self.root)
+        self.assertEqual(no_changes['nextStep']['id'], 'no_changes')
+
+    def test_next_step_prioritizes_pending_transaction_recovery(self):
+        (self.root / 'Inbox').mkdir()
+        (self.root / '_organize' / 'transactions').mkdir(parents=True)
+        with patch.object(executor.Journal, 'unresolved', return_value=[{'id': 'x'}, {'id': 'y'}]):
+            snap = progress.collect_snapshot(self.root)
+        self.assertEqual(snap['nextStep']['id'], 'recover_transactions')
+        self.assertEqual(snap['nextStep']['actor'], 'auto')
+        self.assertEqual(snap['currentStage'], 'S5')
+        self.assertEqual(snap['nextStep']['count'], 2)
+
+    def test_plan_page_prompts_review_not_approval_or_apply(self):
+        org = self.root / '_organize'
+        org.mkdir()
+        (org / 'decisions.json').write_text(json.dumps({
+            'summary': {'total': 1, 'keep': 0, 'move': 1, 'new': 0, 'needCheck': 0},
+            'aiQuestions': [],
+        }), encoding='utf-8')
+        (org / 'plan.tsv').write_text('group\taction\nA\tmove\n', encoding='utf-8')
+        (org / 'ui.html').write_text('<html></html>', encoding='utf-8')
+        snap = progress.collect_snapshot(self.root)
+        self.assertEqual(snap['nextStep']['id'], 'preview_plan')
+        self.assertEqual(snap['nextStep']['actor'], 'auto')
+        (org / 'plan.tsv').unlink()
+        snap = progress.collect_snapshot(self.root)
+        self.assertEqual(snap['nextStep']['id'], 'review_plan')
+        self.assertEqual(snap['nextStep']['actor'], 'user')
+
+    def test_tracked_preview_requires_the_same_plan_and_receipt(self):
+        org = self.root / '_organize'
+        org.mkdir()
+        plan = org / 'plan.tsv'
+        source = self.root / 'sample.txt'
+        source.touch()
+        plan.write_bytes(encode_tsv([
+            {'op': 'rename', 'src': str(source), 'dst': 'first.txt', 'reason': 'test'},
+        ], executor.ACTION_FIELDS))
+
+        def preview(name):
+            receipt = self.workspace / f'{name}.json'
+            proc = subprocess.run([sys.executable, '-B', str(PROJECT / 'tidy_file_tree.py'), 'apply',
+                                   str(self.root), '--actions', str(plan), '--dry-run', '--receipt', str(receipt)],
+                                  capture_output=True)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(progress.collect_snapshot(self.root)['nextStep']['id'], 'confirm_preview')
+            return receipt
+
+        receipt = preview('first')
+        receipt.write_bytes(receipt.read_bytes() + b'\n')
+        self.assertEqual(progress.collect_snapshot(self.root)['nextStep']['id'], 'preview_plan')
+        preview('second')
+        plan.write_bytes(plan.read_bytes().replace(b'first.txt', b'other.txt'))
+        self.assertEqual(progress.collect_snapshot(self.root)['nextStep']['id'], 'preview_plan')
+        self.assertTrue(source.is_file())
+
+    def test_partial_execution_does_not_report_completion(self):
+        org = self.root / '_organize'
+        org.mkdir()
+        plan = org / executor.WORKBENCH_PLAN
+        rows = []
+        for name in ('a', 'b'):
+            source = self.root / f'{name}.txt'
+            source.touch()
+            rows.append({'op': 'rename', 'src': str(source), 'dst': f'{name}-filed.txt', 'reason': 'test'})
+        plan.write_bytes(encode_tsv(rows, executor.ACTION_FIELDS))
+        receipt = self.workspace / 'partial.json'
+        command = [sys.executable, '-B', str(PROJECT / 'tidy_file_tree.py'), 'apply', str(self.root),
+                   '--actions', str(plan), '--batch-size', '1']
+        no_receipt = subprocess.run(command, input=b'n\n', capture_output=True)
+        self.assertNotEqual(no_receipt.returncode, 0)
+        self.assertFalse((org / 'journal.tsv').exists())
+        self.assertTrue((self.root / 'a.txt').is_file())
+        command += ['--receipt', str(receipt)]
+        preview = subprocess.run([*command, '--dry-run'], capture_output=True)
+        self.assertEqual(preview.returncode, 0, preview.stdout + preview.stderr)
+        apply = subprocess.run(command, input=b'n\n', capture_output=True)
+        self.assertEqual(apply.returncode, 0, apply.stdout + apply.stderr)
+        snap = progress.collect_snapshot(self.root)
+        self.assertEqual(snap['nextStep']['id'], 'review_partial')
+        self.assertEqual(snap['planReview'], {'status': 'partial', 'count': 2, 'done': 1})
+        self.assertTrue((self.root / 'a-filed.txt').is_file())
+        self.assertTrue((self.root / 'b.txt').is_file())
 
     def test_full_pipeline_stages_quarantine_and_secret_redaction(self):
         dl = self.root / 'Downloads'
@@ -99,6 +194,31 @@ class ProgressDashboardTests(unittest.TestCase):
         self.assertEqual(snap['stages']['s5']['moves'], 1)
         self.assertTrue(snap['stages']['s6']['ok'])
         self.assertEqual(snap['currentStage'], 'S6')
+        self.assertEqual(snap['nextStep']['id'], 'completed')
+
+    def test_live_page_opens_before_scan_and_shares_snapshot_reads(self):
+        (self.root / 'Inbox').mkdir()
+        real_snapshot = progress.collect_snapshot
+        with patch.object(progress, 'collect_snapshot', wraps=real_snapshot) as collect:
+            server, url = progress.make_server(self.root, interval=10)
+            with server:
+                worker = Thread(target=server.serve_forever, daemon=True)
+                worker.start()
+                try:
+                    with urlopen(url, timeout=3) as response:
+                        html = response.read().decode('utf-8')
+                    self.assertIn('id="progress-snapshot" type="application/json">null', html)
+                    collect.assert_not_called()
+                    for _ in range(2):
+                        with urlopen(url + 'snapshot', timeout=3) as response:
+                            self.assertEqual(json.load(response)['nextStep']['id'], 'start_analysis')
+                    with urlopen(url + 'events', timeout=3) as response:
+                        body = response.readline().decode('utf-8')
+                        self.assertEqual(json.loads(body.removeprefix('data: '))['nextStep']['id'], 'start_analysis')
+                    collect.assert_called_once()
+                finally:
+                    server.shutdown()
+                    worker.join()
 
     def test_live_server_snapshot_sse_and_offline_export(self):
         (self.root / 'Inbox').mkdir()
@@ -117,7 +237,20 @@ class ProgressDashboardTests(unittest.TestCase):
                 conn = HTTPConnection('127.0.0.1', server.server_port, timeout=3)
                 try:
                     conn.request('GET', '/', headers={'Host': 'evil.local'})
-                    self.assertEqual(conn.getresponse().status, 400)
+                    response = conn.getresponse()
+                    self.assertEqual(response.status, 400)
+                    response.read()
+                    parts = urlsplit(url)
+                    source = self.root / 'Inbox'
+                    body = json.dumps([['rename', str(source), 'Filed', 'test']])
+                    path = parts.path + 'workbench-actions'
+                    conn.request('POST', path, body, {'Origin': 'https://example.invalid',
+                                                      'Content-Type': 'application/json'})
+                    response = conn.getresponse()
+                    self.assertEqual(response.status, 403)
+                    response.read()
+                    self.assertFalse((self.root / '_organize').exists())
+                    self.assertTrue(source.is_dir())
                 finally:
                     conn.close()
             finally:

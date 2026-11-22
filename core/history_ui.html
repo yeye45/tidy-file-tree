@@ -357,7 +357,9 @@ const labels = {
   showAllBatches:['显示全部批次','Show all batches'],
   hits:['命中 {count}','{count} hits'],
   undoBatchBtn:['撤销此批次…','Undo this batch…'], undoBatchHide:['收起撤销命令','Hide undo command'],
-  copyUndo:['复制撤销预演命令','Copy undo preview cmd'], copySingleUndo:['复制单条撤销','Undo item'], copied:['已复制','Copied'],
+  copyUndo:['复制撤销预演命令','Copy undo preview cmd'],
+  copySingleUndo:['预演撤销此操作','Preview undo for this operation'],
+  copyParentUndo:['预演撤销父目录操作','Preview undo for the parent folder operation'], copied:['已复制','Copied'],
   stepDetails:['步骤详情','Step details'],
   undoneBy:['已被 #{seq} 撤销','Undone by #{seq}'],
   expandAllGroups:['展开全部分组','Expand all groups'], collapseAllGroups:['收起全部分组','Collapse all groups'],
@@ -1537,7 +1539,7 @@ function renderExplorerInspector(item) {
     : `<button type="button" class="exp-btn-sec" id="expCopyRevealBtn" data-copy-reveal="${esc(destAbs)}">${esc(t('expCopyRevealCmd'))}</button>`;
   const logBtn = item.lastSeq ? `<button type="button" class="exp-btn-sec" data-exp-jump-seq="${item.lastSeq}">${esc(t('expViewLog'))}</button>` : '';
   const undoBtn = (item.lastSeq && item.status !== 'unchanged' && item.status !== 'undone')
-    ? `<button type="button" class="exp-btn-sec" data-exp-undo-seq="${item.lastSeq}">${esc(t('copySingleUndo'))}</button>`
+    ? `<button type="button" class="exp-btn-sec" data-exp-undo-seq="${item.lastSeq}" data-inherited="${item.steps.at(-1)?.inherited === true}">${esc(t(item.steps.at(-1)?.inherited ? 'copyParentUndo' : 'copySingleUndo'))}</button>`
     : '';
   const toastHtml = expRevealStatus
     ? `<div class="exp-toast${expRevealStatus.ok ? '' : ' err'}">${esc(expRevealStatus.msg)}</div>`
@@ -1883,8 +1885,8 @@ $('expInspector').addEventListener('click', event => {
   const undoBtn = event.target.closest('[data-exp-undo-seq]');
   if (undoBtn) {
     const seq = undoBtn.dataset.expUndoSeq;
-    const cmd = `tidy-file-tree undo --journal ${shellArg(journalPath)} --seq ${seq}${sysFlag} --dry-run`;
-    copyCmdText(cmd, undoBtn, 'copySingleUndo');
+    const cmd = `tidy-file-tree undo --journal ${shellArg(journalPath)} --exact-seq ${seq}${sysFlag} --dry-run`;
+    copyCmdText(cmd, undoBtn, undoBtn.dataset.inherited === 'true' ? 'copyParentUndo' : 'copySingleUndo');
     return;
   }
   const jumpBtn = event.target.closest('[data-exp-jump-seq]');
@@ -2010,7 +2012,7 @@ $('operations').addEventListener('click',event => {
   const copyBtn = event.target.closest('[data-copy-seq]');
   if (copyBtn) {
     const seq = copyBtn.dataset.copySeq;
-    const cmd = `tidy-file-tree undo --journal ${shellArg(journalPath)} --seq ${seq}${sysFlag} --dry-run`;
+    const cmd = `tidy-file-tree undo --journal ${shellArg(journalPath)} --exact-seq ${seq}${sysFlag} --dry-run`;
     copyCmdText(cmd, copyBtn, 'copySingleUndo');
     return;
   }

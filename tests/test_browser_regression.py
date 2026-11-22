@@ -24,6 +24,84 @@ from ui import group_key
 
 @unittest.skipIf(sync_playwright is None, "install the browser extra: pip install playwright")
 class BrowserRegression(unittest.TestCase):
+    def test_progress_opens_before_setup_and_updates_its_next_step(self):
+        with tempfile.TemporaryDirectory(prefix=".tidy-file-tree-progress-browser-", dir=PROJECT) as temp:
+            base = Path(temp)
+            root = base / "root"
+            inbox = root / "Inbox"
+            inbox.mkdir(parents=True)
+            env = dict(os.environ, LOCALAPPDATA=str(base / "app-state"),
+                       XDG_STATE_HOME=str(base / "state"), PYTHONIOENCODING="utf-8")
+            if env.get("TIDY_FILE_TREE_BROWSER_USE_INSTALLED") != "1":
+                env["PYTHONPATH"] = str(PROJECT) + os.pathsep + env.get("PYTHONPATH", "")
+            command = [sys.executable, "-m", "tidy_file_tree", "progress", str(root), "--no-open", "--lang", "en"]
+            with subprocess.Popen(command, cwd=temp, env=env, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True, encoding="utf-8") as server:
+                try:
+                    url = server.stdout.readline().strip()
+                    self.assertTrue(url.startswith("http://127.0.0.1:"), url)
+                    with sync_playwright() as playwright:
+                        windows_browsers = [Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+                                            Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")]
+                        executable = next((str(path) for path in windows_browsers if path.is_file()), None)
+                        browser = playwright.chromium.launch(executable_path=executable)
+                        page = browser.new_page()
+                        page.goto(url)
+                        step = page.locator("#nextStepBanner")
+                        expect(step).to_have_attribute("data-step", "start_analysis")
+                        expect(step).to_contain_text("AI next step")
+                        expect(page.locator("#stepper .step")).to_have_count(7)
+                        expect(page.locator("#stepper")).to_contain_text("S6")
+                        org = root / "_organize"
+                        self.assertFalse(org.exists())
+                        probe = org / "probe"
+                        probe.mkdir(parents=True)
+                        (org / "policy.json").write_text(json.dumps({"setup": {"goal": "organize"}}),
+                                                         encoding="utf-8")
+                        expect(step).to_have_attribute("data-step", "continue_classification")
+                        (probe / "probe_inbox.json").write_text(json.dumps({"path": str(inbox), "action": "split"}),
+                                                               encoding="utf-8")
+                        expect(step).to_have_attribute("data-step", "continue_counting")
+
+                        def run(*args):
+                            result = subprocess.run([sys.executable, "-m", "tidy_file_tree", *map(str, args)],
+                                                    cwd=base, env=env, capture_output=True, encoding="utf-8")
+                            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+                        (probe / "probe_inbox.json").write_text(json.dumps({
+                            "path": str(inbox), "action": "rename", "rename_to": "Filed",
+                        }), encoding="utf-8")
+                        run("ui", root, "--no-open")
+                        expect(step).to_have_attribute("data-step", "review_plan")
+                        with page.context.expect_page() as popup:
+                            page.locator("#openWorkbench").click()
+                        board = popup.value
+                        board.get_by_role("button", name="Confirm rename").click()
+                        board.locator("#reviewButton").click()
+                        with board.expect_response(lambda response: response.url.endswith("/workbench-actions")) as reply:
+                            board.get_by_role("button", name="Submit for preview").click()
+                        self.assertEqual(reply.value.status, 200, f"Origin={reply.value.request.header_value('origin')}")
+                        expect(board.locator("#submitStatus")).to_contain_text("Submitted for preview")
+                        expect(step).to_have_attribute("data-step", "preview_plan")
+                        actions = org / "workbench-actions.tsv"
+                        receipt = base / "preview.json"
+                        self.assertTrue(actions.is_file())
+                        self.assertFalse((org / "journal.tsv").exists())
+                        run("apply", root, "--actions", actions, "--dry-run", "--receipt", receipt,
+                            "--preview-html", base / "preview.html")
+                        expect(step).to_have_attribute("data-step", "confirm_preview")
+                        expect(step).to_contain_text("Preview ready for your confirmation")
+                        self.assertTrue(inbox.is_dir())
+                        run("apply", root, "--actions", actions, "--receipt", receipt)
+                        expect(page.locator("#artSub")).to_contain_text("1 action executed")
+                        self.assertTrue((root / "Filed").is_dir())
+                        run("undo", "--journal", org / "journal.tsv", "--last")
+                        self.assertTrue(inbox.is_dir())
+                        browser.close()
+                finally:
+                    if server.poll() is None:
+                        server.terminate()
+
     def test_explicit_rename_exports_previews_executes_and_undoes(self):
         with tempfile.TemporaryDirectory(prefix='.tidy-file-tree-browser-rename-', dir=PROJECT) as tmp:
             base = Path(tmp)
@@ -208,11 +286,20 @@ class BrowserRegression(unittest.TestCase):
                 executable = next((str(path) for path in (chrome, edge) if path.is_file()), None)
                 browser = playwright.chromium.launch(executable_path=executable)
                 page = browser.new_page()
+                page.add_init_script("""
+                    Object.defineProperty(navigator, 'clipboard', {value: {
+                      writeText: async (text) => { window.copiedUndo = text; }
+                    }});
+                """)
                 page.set_default_timeout(7000)
                 page.goto(report.as_uri())
                 page.locator('#expTree button[data-exp-dir="Intake"]').click()
                 page.locator("#expListPane tr").filter(has_text="Toolkit").dblclick()
                 expect(page.locator("#expListPane .exp-item-name")).to_have_text(["original.txt"])
+                page.get_by_role("button", name="Preview undo for the parent folder operation").click()
+                expect(page.locator("[data-exp-undo-seq]")).to_have_text("Copied")
+                self.assertIn(" --exact-seq ", page.evaluate("window.copiedUndo"))
+                self.assertTrue(page.evaluate("window.copiedUndo").endswith(" --dry-run"))
                 page.locator("#expHome").click()
                 page.locator("#expListPane tr").filter(has_text="Crowded").dblclick()
                 expect(page.locator("#expBanner")).to_contain_text("contains only part of this folder")

@@ -31,6 +31,10 @@ from safety import (BENIGN_SYSTEM_DESCENDANTS, SafetyError, MARKER_FIELDS, NESTE
                     state_home, toolchain_marker_reason, within)
 
 FIELDS = ('seq', 'run_id', 'ts', 'op', 'before', 'after', 'reason', 'status')
+ACTION_FIELDS = ('op', 'src', 'dst', 'reason')
+WORKBENCH_PLAN = 'workbench-actions.tsv'
+TRACKED_PLANS = ('plan.tsv', WORKBENCH_PLAN)
+PLAN_REVIEW_FORMAT = 'tidy-file-tree-plan-review-v1'
 PATH_KEYS = {'path', 'src', 'dst', 'target', 'merge_target', 'before', 'after',
              'enter_children', 'loose_files_as_units', 'empty', 'units',
              'solo_units', 'paths', 'shell_inner'}
@@ -55,7 +59,12 @@ def identity(path):
 def same_identity(path, expected, content=False):
     if not os.path.lexists(path) or not expected or is_reparse(path):
         return False
-    actual = identity(path)
+    return identity_matches(identity(path), expected, content=content)
+
+
+def identity_matches(actual, expected, *, content=False):
+    if not actual or not expected:
+        return False
     names = ('dev', 'ino', 'dir')
     if content and not actual['dir']:
         names += ('size', 'mtime_ns')
@@ -478,6 +487,7 @@ class Journal:
     def unresolved(self):
         rows = read_journal(self.path)
         terminal = {meta(r).get('tx') for r in rows if r['status'] in ('done','aborted')}
+        pending = [meta(row).get('tx') for row in rows if row['status'] == 'pending']
         found = {}
         for directory in (self.mirror_dir/'transactions', self.tx_dir):
             assert_no_links(directory)
@@ -493,6 +503,8 @@ class Journal:
                         raise SafetyError('同一版本恢复记录冲突，停止操作')
                     if not previous or previous.get('generation',0) < tx.get('generation',0):
                         found[tx['id']] = tx
+        if any(not isinstance(tx, str) or (tx not in terminal and tx not in found) for tx in pending):
+            raise SafetyError('日志存在未完成事务，但缺少可核对的恢复清单，保留现场')
         return list(found.values())
 
     def validate_manifest(self, tx):
@@ -805,7 +817,8 @@ def cross_guard(journal, authority, before, after):
         cross_volume.require_local_root(root)
         if not same_identity(root, expected):
             raise SafetyError('跨卷移动的已授权根或卷已变化')
-    primary, other = journal.protection(), Journal(external).protection()
+    primary = journal.protection(include_skips=True)
+    other = Journal(external).protection(include_skips=True)
     markers = primary.markers + other.markers
     protections = {journal.root: Protection(markers, primary.extra_names, nested_rules=primary.nested_rules),
                    external: Protection(markers, other.extra_names, nested_rules=other.nested_rules)}
@@ -964,18 +977,21 @@ def recover_cross_move(journal, tx):
 
 
 def transaction(journal, run, op, effect, before, after, reason, inverse_of=None,
-                cross=None, expected_fingerprint=None, expected_source=None, expected_parent=None):
+                cross=None, expected_fingerprint=None, expected_source=None, expected_parent=None,
+                expected_identity=None):
     if effect == 'cross-move':
         with cross_lock(journal, cross, before, after):
             return execute_transaction(journal, run, op, effect, before, after, reason,
-                                       inverse_of, cross, expected_fingerprint, expected_source, expected_parent)
+                                       inverse_of, cross, expected_fingerprint, expected_source, expected_parent,
+                                       expected_identity)
     return execute_transaction(journal, run, op, effect, before, after, reason,
-                               inverse_of, cross, expected_fingerprint, expected_source, expected_parent)
+                               inverse_of, cross, expected_fingerprint, expected_source, expected_parent,
+                               expected_identity)
 
 
 def execute_transaction(journal, run, op, effect, before, after, reason, inverse_of,
-                        cross, expected_fingerprint, expected_source, expected_parent):
-    protection = journal.protection()
+                        cross, expected_fingerprint, expected_source, expected_parent, expected_identity):
+    protection = journal.protection(include_skips=True)
     if effect == 'move':
         guard(before,journal.root,protection,descendants=True)
         guard(after,journal.root,protection)
@@ -1005,6 +1021,8 @@ def execute_transaction(journal, run, op, effect, before, after, reason, inverse
             raise SafetyError('建目录目标已存在')
         if effect == 'rmdir' and (not os.path.isdir(before) or os.listdir(before)):
             raise SafetyError('撤销建目录时目录非空，保留')
+    if expected_identity is not None and not identity_matches(source_id, expected_identity, content=True):
+        raise SafetyError('撤销对象已被替换或修改，保留文件')
     if expected_source is not None and reviewed_identity(before) != expected_source:
         raise SafetyError('源在预演后发生变化，请重新预演')
     if expected_parent is not None:
@@ -1028,7 +1046,7 @@ def execute_transaction(journal, run, op, effect, before, after, reason, inverse
     # Recheck immediately after recording intent. A failed check leaves an explicit
     # unresolved prepare for recovery, never an unrecorded filesystem operation.
     if effect == 'move':
-        protection = journal.protection()
+        protection = journal.protection(include_skips=True)
         guard(before,journal.root,protection,descendants=True)
         guard(after,journal.root,protection)
         if not same_identity(before,source_id,content=True) or os.path.lexists(after):
@@ -1050,14 +1068,21 @@ def execute_transaction(journal, run, op, effect, before, after, reason, inverse
         os.mkdir(staging)
         tx['identity'] = identity(staging)
         journal.save_manifest(tx)
-        guard(after,journal.root,journal.protection())
+        guard(after,journal.root,journal.protection(include_skips=True))
         if tx['identity']['dev'] != os.stat(Path(after).parent).st_dev:
             raise SafetyError('目标目录不在同一卷')
         if expected_parent is not None:
             check_reviewed_parent(Path(after).parent, expected_parent)
         rename_noreplace(staging,after)
     else:
-        os.rmdir(before)
+        protection = journal.protection(include_skips=True)
+        guard(before,journal.root,protection,descendants=True)
+        if os.listdir(before) or not same_identity(before,source_id):
+            raise SafetyError('撤销目录在准备后发生变化，保留')
+        if os.name == 'nt':
+            cross_volume.remove_empty_directory(before, source_id)
+        else:
+            os.rmdir(before)
     finish_references(edits)
     sync_reference_mirror(journal,edits)
     tx['state'] = 'done'
@@ -1289,7 +1314,7 @@ def read_actions(args):
     if args.actions:
         if not os.path.isfile(args.actions):
             raise SafetyError('动作表不存在')
-        return read_tsv(args.actions,('op','src','dst','reason'))
+        return read_tsv(args.actions, ACTION_FIELDS)
     if not os.path.isfile(args.plan):
         raise SafetyError('决策表不存在')
     rows = read_tsv(args.plan,('path','hypothesis','evidence','verdict','confidence','target','note'))
@@ -1442,7 +1467,7 @@ def receipt_state(root, actions, prepared, external_roots):
         'version': 1,
         'root': root,
         'root_id': directory_identity(root),
-        'actions_sha256': digest(json.dumps(actions, sort_keys=True).encode('utf-8')),
+        'actions_sha256': actions_digest(actions),
         'destination_roots': sorted(
             ({'path': item['root'], 'id': directory_identity(item['root'])} for item in external_roots),
             key=lambda item: item['path'],
@@ -1452,6 +1477,31 @@ def receipt_state(root, actions, prepared, external_roots):
             for action in prepared
         ],
     }
+
+
+def actions_digest(actions):
+    return digest(json.dumps(actions, sort_keys=True).encode('utf-8'))
+
+
+def plan_review_path(journal, actions_path):
+    if actions_path:
+        for name in TRACKED_PLANS:
+            plan = journal.state_dir / name
+            if key(actions_path) == key(plan):
+                return plan.with_suffix('.review.json')
+    return None
+
+
+def write_plan_review(path, record):
+    def owns_review(existing):
+        try:
+            data = json.loads(existing.read_text(encoding='utf-8'))
+            return isinstance(data, dict) and data.get('format') == PLAN_REVIEW_FORMAT
+        except (OSError, ValueError):
+            return False
+
+    data = json.dumps({**record, 'format': PLAN_REVIEW_FORMAT}, ensure_ascii=False).encode('utf-8')
+    write_artifact(path, data, owns_existing=owns_review)
 
 
 def write_receipt(path, state, journal):
@@ -1466,11 +1516,11 @@ def write_receipt(path, state, journal):
     for external in state['destination_roots']:
         if within(path, external['path']):
             guard(path, external['path'], Journal(external['path']).protection())
+    data = (json.dumps(state, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
     fd, temporary = tempfile.mkstemp(prefix='.tidy-file-tree-preview-', dir=path.parent)
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as file:
-            json.dump(state, file, ensure_ascii=False, indent=2)
-            file.write('\n')
+        with os.fdopen(fd, 'wb') as file:
+            file.write(data)
             file.flush()
             os.fsync(file.fileno())
         assert_no_links(path)
@@ -1478,13 +1528,15 @@ def write_receipt(path, state, journal):
     finally:
         if os.path.lexists(temporary):
             os.unlink(temporary)
+    return digest(data)
 
 
 def verify_receipt(path, actual):
     if not path.is_file():
         raise SafetyError('预演清单不存在，请先预演')
     try:
-        reviewed = json.loads(path.read_text(encoding='utf-8'))
+        content = path.read_bytes()
+        reviewed = json.loads(content.decode('utf-8'))
     except ValueError as exc:
         raise SafetyError('预演清单格式无效，请重新预演') from exc
     if not isinstance(reviewed, dict) or reviewed.get('version') != 1:
@@ -1503,6 +1555,7 @@ def verify_receipt(path, actual):
         for row in changed:
             print(f'动作 {row}: 源、最终落点或父目录在预演后发生变化')
         raise SafetyError('实际动作与预演清单不符，请重新预演')
+    return digest(content)
 
 
 def apply(args):
@@ -1513,8 +1566,13 @@ def apply(args):
     preview_html = getattr(args, 'preview_html', None)
     if preview_html and not args.dry_run:
         raise SafetyError('--preview-html 须与 --dry-run 一起使用')
-    actions = read_actions(args)
+    journal = Journal(root, allow_system_drive=getattr(args, 'allow_system_drive', False))
     receipt = receipt_path(args.receipt) if getattr(args, 'receipt', None) else None
+    if (not args.dry_run and receipt is None and args.actions
+            and key(args.actions) == key(journal.state_dir / WORKBENCH_PLAN)):
+        raise SafetyError('工作台动作表须先预演，执行时提供同一份预演清单')
+    review_path = plan_review_path(journal, args.actions) if receipt is not None else None
+    untracked_actions = read_actions(args) if review_path is None else None
     if not 1 <= args.batch_size <= 200:
         raise SafetyError('批次大小必须为 1–200')
     external_roots = []
@@ -1526,10 +1584,13 @@ def apply(args):
         if any(within(external, item['root']) or within(item['root'], external) for item in external_roots):
             raise SafetyError('授权的跨卷目标根不能重复或重叠')
         external_roots.append(cross_authority(root, external))
-    journal = Journal(root, allow_system_drive=getattr(args, 'allow_system_drive', False))
     run = run_id()
 
     def execute():
+        actions = read_actions(args) if review_path is not None else untracked_actions
+        review_record = None
+        if review_path is not None:
+            review_record = {'root_id': directory_identity(root), 'actions_sha256': actions_digest(actions)}
         if journal.unresolved():
             raise SafetyError('存在未完成操作；请先运行 recover')
         prepared, blocked = preflight(root, actions, journal, external_roots, review=receipt is not None,
@@ -1542,14 +1603,34 @@ def apply(args):
             print(f'已写图形预演：{preview_html}')
         if receipt is not None:
             if blocked:
+                if review_path is not None:
+                    write_plan_review(review_path, {**review_record, 'phase': 'blocked', 'count': len(blocked)})
                 raise SafetyError('整份清单已停止，请处理拦截项后重新预演')
             state = receipt_state(root, actions, prepared, external_roots)
             if args.dry_run:
-                write_receipt(receipt, state, journal)
+                receipt_hash = write_receipt(receipt, state, journal)
                 print(f'已写预演清单：{receipt}')
             else:
-                verify_receipt(receipt, state)
+                try:
+                    receipt_hash = verify_receipt(receipt, state)
+                except SafetyError:
+                    if review_path is not None:
+                        write_plan_review(review_path, {**review_record, 'phase': 'draft', 'count': len(actions)})
+                    raise
                 journal.ensure_ready()
+            if review_path is not None:
+                review_record.update({
+                    'count': len(prepared),
+                    'receipt': str(receipt),
+                    'receipt_sha256': receipt_hash,
+                    'phase': 'previewed' if args.dry_run else 'executing',
+                    'run': None if args.dry_run else run,
+                })
+                if preview_html:
+                    page_path = check_artifact_path(preview_html)
+                    review_record['preview'] = str(page_path)
+                    review_record['preview_sha256'] = digest(page_path.read_bytes())
+                write_plan_review(review_path, review_record)
         if args.dry_run:
             for action in prepared:
                 print(f"[dry] {action['op']}: {action['src']} -> {action['dst']}")
@@ -1589,11 +1670,18 @@ def apply(args):
                 created[key(target)] = tx['identity']
             done += 1
             print(f'{op}: {src} -> {target}')
+        if review_path is not None:
+            phase = 'no_changes' if not prepared else 'executed' if done == len(prepared) else 'partial'
+            review_record.update(phase=phase, done=done)
+            write_plan_review(review_path, review_record)
         print(f'完成：成功 {done} | 拦截 {len(blocked)} | run_id={run}')
         print('日志: '+str(journal.path))
         return 1 if blocked else 0
 
     if args.dry_run:
+        if review_path is not None:
+            with journal.locked(prepare=False):
+                return execute()
         return execute()
     guard(root, root, journal.protection(include_skips=True), allow_root=True)
     with journal.locked(prepare=receipt is None):
@@ -1641,6 +1729,8 @@ def resolve_journal_root(path):
 def undo(args):
     if args.seq is not None and args.seq < 0:
         raise SafetyError('Seq 不能为负数')
+    if getattr(args, 'exact_seq', None) is not None and args.exact_seq < 0:
+        raise SafetyError('Seq 不能为负数')
     path = Path(normal(args.journal))
     assert_no_links(path)
     root, _is_sys = resolve_journal_root(path)
@@ -1661,22 +1751,29 @@ def undo(args):
         rid = args.run_id
         if args.last:
             rid = events[-1]['run_id'] if events else None
+        if getattr(args, 'exact_seq', None) is not None:
+            selected = [r for r in events if r['seq'] == args.exact_seq]
+            if not selected:
+                raise SafetyError(f'完成日志中不存在 seq {args.exact_seq}')
         # A sequence boundary selects original forward operations. Selecting
         # inverse history too would toggle old undo/redo states on repetition.
-        if args.seq:
+        elif args.seq:
             selected = [r for r in events if r['seq']<=args.seq and
                         not meta(r).get('inverse_of') and r['op'] in ('move','rename','mkdir')]
         else:
             selected = [r for r in events if r['run_id']==rid]
         counts = dict(ok=0,skip=0,conflict=0,fail=0)
+        preview_removed = set()
+        preview_added = set()
         for row in reversed(selected):
             if row['seq'] not in active:
                 counts['skip'] += 1
                 continue
             try:
                 effect,src,dst = inverse_action(row)
-                protection = journal.protection()
+                protection = journal.protection(include_skips=True)
                 cross, fingerprint = None, None
+                pinned_identity = None
                 if effect == 'cross-move':
                     data = meta(row)
                     cross, fingerprint = data.get('cross', {}), data.get('cross_fingerprint', '')
@@ -1689,7 +1786,8 @@ def undo(args):
                     if not os.path.lexists(src):
                         counts['skip'] += 1
                         continue
-                    if not same_identity(src,current_identity(row,rows,active,src),content=True):
+                    pinned_identity = current_identity(row,rows,active,src)
+                    if not same_identity(src,pinned_identity,content=True):
                         raise SafetyError('操作对象已被替换或修改，保留文件')
                     if cross and args.dry_run:
                         tree = cross_volume.inventory(src, identity(src)['dev'], check)
@@ -1697,25 +1795,34 @@ def undo(args):
                             raise SafetyError('跨卷操作对象内容或权限已改变，保留文件')
                 if dst != '-' and not cross:
                     guard(dst,root,protection)
-                if effect == 'rmdir' and os.listdir(src):
-                    counts['skip'] += 1
-                    continue
-                if effect != 'rmdir' and os.path.lexists(dst):
+                if effect == 'rmdir':
+                    children = {key(Path(src)/name) for name in os.listdir(src)}
+                    if (children - preview_removed
+                            or any(within(added, src, inclusive=False) for added in preview_added)):
+                        counts['skip'] += 1
+                        continue
+                if effect != 'rmdir' and ((os.path.lexists(dst) and key(dst) not in preview_removed)
+                                          or key(dst) in preview_added):
                     if row['op'] == 'rename':
                         p = Path(dst)
-                        dst = collision(p.with_name(p.stem+'_undone'+p.suffix),set())
+                        dst = collision(p.with_name(p.stem+'_undone'+p.suffix),preview_added)
                         guard(dst,root,protection)
                     else:
                         counts['conflict'] += 1
                         continue
                 if args.dry_run:
                     print(f'[dry] undo seq {row["seq"]}: {src} -> {dst}')
+                    if src != '-':
+                        preview_removed.add(key(src))
+                        preview_added.discard(key(src))
+                    if dst != '-':
+                        preview_added.add(key(dst))
                 else:
                     if dst != '-' and not cross:
                         ensure_parents(journal,run,Path(dst).parent,'撤销时恢复父目录')
                     transaction(journal,run,'undo-'+row['op'],effect,src,dst,
                                 f'撤销 seq {row["seq"]}',inverse_of=row['seq'],cross=cross,
-                                expected_fingerprint=fingerprint)
+                                expected_fingerprint=fingerprint,expected_identity=pinned_identity)
                 counts['ok'] += 1
             except (OSError,ValueError) as exc:
                 counts['fail'] += 1
@@ -1744,7 +1851,7 @@ def recover(args):
                     applied = recover_cross_move(journal, tx)
                 untouched = not applied
             else:
-                protection = journal.protection()
+                protection = journal.protection(include_skips=True)
                 for path in (src,dst):
                     if path != '-':
                         guard(path,journal.root,protection,descendants=path==src)
@@ -1878,6 +1985,7 @@ def main(argv=None):
     selection.add_argument('--run-id')
     selection.add_argument('--last',action='store_true')
     selection.add_argument('--seq',type=int)
+    selection.add_argument('--exact-seq',type=int)
     selection.add_argument('--list',action='store_true')
     p.add_argument('--dry-run',action='store_true')
     p.add_argument('--allow-system-drive',action='store_true')

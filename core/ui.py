@@ -191,7 +191,7 @@ def rename_proposal(path, name, root, protection, witness_for):
     return {**proposal, 'target': target}, source, witness
 
 
-def build_board(root, probe_dir, snapshot, protection):
+def build_board(root, probe_dir, snapshot, protection, *, decision_rules=None):
     witness_for = lru_cache(maxsize=8192)(source_witness)
     probes, inventory, groups, protected_nodes = load_probes(probe_dir, root, protection)
     snapshots = decision_index(snapshot, root)
@@ -238,11 +238,29 @@ def build_board(root, probe_dir, snapshot, protection):
             stored = stored if isinstance(stored, dict) else None
             old_answer = stored.get('aiJudgement') if stored else None
             has_answer = isinstance(old_answer, dict)
-            if stored is not None and (not has_answer or decisions.observation_is_current(record, root, permitted)):
+            review = decisions.placement_review(
+                group['name'], keep_together=group.get('keep_together'),
+                member_paths=decisions.group_paths(group),
+            )
+            if review:
+                suggestion = review
+                if review.get('keepTogether'):
+                    source = units[0]['source'] if len(units) == 1 else None
+                    intact = source and len(group['units']) == 1 and (
+                        os.path.isdir(source) or Path(source).suffix.casefold() in decisions.ARCHIVE_EXT
+                    )
+                    if not intact:
+                        suggestion['reason'] = '请核实组件依赖，并确认可整组移动的完整目录或压缩包'
+                        units = [{**unit, 'source': None, 'sourceWitness': None} for unit in units]
+                for unit in units:
+                    if unit['sourceWitness']:
+                        unit['sourceWitness'] = 'user-decision:' + unit['sourceWitness']
+            elif stored is not None and (not has_answer or decisions.observation_is_current(record, root, permitted)):
                 suggestion = dict(stored)
             else:
                 sample = next((u['source'] for u in units if u['source'] and os.path.isdir(u['source'])), None)
-                suggestion = decisions.suggest_group(group['name'], node['name'], zones, path, group_path=sample)
+                suggestion = decisions.suggest_group(group['name'], node['name'], zones, path, group_path=sample,
+                                                     decision_rules=decision_rules)
                 if has_answer:
                     suggestion['needsCheck'] = True
                     if old_answer.get('observationId'):
@@ -278,7 +296,7 @@ def build_board(root, probe_dir, snapshot, protection):
                         'path': path_new, 'label': relative.as_posix(),
                         'depth': len(relative.parts), 'files': 0, 'new': True})
                     destination = zone['path']
-            if suggestion.get('mode') == 'keep':
+            if suggestion.get('mode') == 'keep' and not suggestion.get('userDecision'):
                 kind = next((k for k in ('installer', 'media', 'image', 'code', 'document', 'archive')
                              if any(k in str(e) for e in evidence)), None)
                 if kind:
@@ -388,7 +406,7 @@ def build_board(root, probe_dir, snapshot, protection):
     }
 
 
-def render_html(root, data, *, lang='zh-CN'):
+def render_html(root, data, *, lang='zh-CN', live=False):
     # JSON values cannot end the script element or introduce an HTML tag.
     from html import escape
     if lang not in ('zh-CN', 'en'):
@@ -402,8 +420,28 @@ def render_html(root, data, *, lang='zh-CN'):
     messages = json.loads(ENGLISH_MESSAGES.read_text(encoding='utf-8'))
     catalog = json.dumps(messages, ensure_ascii=False).replace('<', r'\u003c')
     title = escape(str(root))
-    return (before.replace('__BOARD_LANG__', lang).replace('__ROOT__', title) + payload
+    connect_src = "'self'" if live else "'none'"
+    head = before.replace('__BOARD_LANG__', lang).replace('__BOARD_CONNECT__', connect_src)
+    head = head.replace('__BOARD_LIVE__', json.dumps(live)).replace('__ROOT__', title)
+    return (head + payload
             + script_start.replace('__ROOT__', title) + catalog + script_end.replace('__ROOT__', title))
+
+
+def board_for_root(journal, *, probe=None, decisions_path=None):
+    root = journal.root
+    assert_no_links(root)
+    policy = rules.load_root_policy(root)
+    probe_dir = Path(probe) if probe else journal.state_dir / 'probe'
+    protection = journal.protection(policy, include_skips=True, probe=probe_dir)
+    guard(root, root, protection, allow_root=True)
+    decision_rules = decisions.new_decision_rules()
+    rules.apply_to(rules.load_for_root(root, policy=policy), decisions_mod=decision_rules)
+    mapping, _ = decisions.load_policy_mapping(root)
+    if mapping:
+        decisions.apply_policy_mapping(mapping, decision_rules=decision_rules)
+    snapshot_path = Path(decisions_path) if decisions_path else journal.state_dir / 'decisions.json'
+    snapshot = read_json(snapshot_path) if decisions_path or os.path.lexists(snapshot_path) else None
+    return build_board(root, probe_dir, snapshot, protection, decision_rules=decision_rules)
 
 
 def main():
@@ -421,18 +459,7 @@ def main():
     try:
         journal = Journal(args.root, allow_system_drive=args.allow_system_drive)
         root = journal.root
-        assert_no_links(root)
-        policy = rules.load_root_policy(root)
-        probe_dir = Path(args.probe) if args.probe else journal.state_dir/'probe'
-        protection = journal.protection(policy, include_skips=True, probe=probe_dir)
-        guard(root, root, protection, allow_root=True)
-        rules.apply_to(rules.load_for_root(root, policy=policy), decisions_mod=decisions)
-        mapping, _ = decisions.load_policy_mapping(root)
-        if mapping:
-            decisions.apply_policy_mapping(mapping)
-        snapshot_path = Path(args.decisions) if args.decisions else journal.state_dir/'decisions.json'
-        snapshot = read_json(snapshot_path) if args.decisions or os.path.lexists(snapshot_path) else None
-        board = build_board(root, probe_dir, snapshot, protection)
+        board = board_for_root(journal, probe=args.probe, decisions_path=args.decisions)
         out = Path(args.out) if args.out else journal.state_dir/'ui.html'
         signature = '<title data-i18n="TidyFileTree · 连线工作台">'.encode('utf-8')
         write_artifact(out, render_html(root, board, lang=args.lang).encode('utf-8'),

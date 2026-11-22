@@ -267,6 +267,8 @@ class ExecutionHistoryTest(unittest.TestCase):
         import urllib.parse
         import urllib.request
 
+        request = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+
         dl = self.root / 'Downloads'
         dl.mkdir()
         item = dl / 'mod.zip'
@@ -292,7 +294,7 @@ class ExecutionHistoryTest(unittest.TestCase):
             thread.start()
             try:
                 # 1. Main page loads with live=true and connect-src 'self'
-                with urllib.request.urlopen(url) as resp:
+                with request(url) as resp:
                     html = resp.read().decode('utf-8')
                     self.assertIn("connect-src 'self'", resp.headers.get('Content-Security-Policy', ''))
                 self.assertIn('"live": true', html)
@@ -300,7 +302,7 @@ class ExecutionHistoryTest(unittest.TestCase):
 
                 # 2. /ls lists directory and excludes SECRET
                 ls_url = url + 'ls?path=' + urllib.parse.quote(str(dl))
-                with urllib.request.urlopen(ls_url) as resp:
+                with request(ls_url) as resp:
                     ls_data = json.loads(resp.read().decode('utf-8'))
                 self.assertTrue(ls_data['ok'])
                 self.assertNotIn('private.key', [e[0] for e in ls_data['entries']])
@@ -309,29 +311,29 @@ class ExecutionHistoryTest(unittest.TestCase):
                 dest_file = dest / 'mod.zip'
                 stat_url = url + 'stat?path=' + urllib.parse.quote(str(dest_file))
                 with patch.object(history_mod, 'collect_history') as collect:
-                    with urllib.request.urlopen(stat_url) as resp:
+                    with request(stat_url) as resp:
                         st_data = json.loads(resp.read().decode('utf-8'))
                     collect.assert_not_called()
                 self.assertTrue(st_data['ok'] and st_data['exists'] and not st_data['isDir'])
 
                 with self.assertRaises(urllib.error.HTTPError) as ctx:
-                    urllib.request.urlopen(url + 'stat?path=' + urllib.parse.quote(str(secret)))
+                    request(url + 'stat?path=' + urllib.parse.quote(str(secret)))
                 self.assertEqual(ctx.exception.code, 400)
 
                 with patch.object(history_mod, 'LIVE_LS_LIMIT', 2):
                     for index in range(5):
                         (dest / f'file-{index}.txt').touch()
                     endpoint = url + 'ls?path=' + urllib.parse.quote(str(dest))
-                    first = json.load(urllib.request.urlopen(endpoint))
+                    first = json.load(request(endpoint))
                     self.assertTrue(first['truncated'])
                     query = urllib.parse.urlencode({
                         'offset': first['nextOffset'], 'revision': first['revision'],
                     })
-                    second = json.load(urllib.request.urlopen(endpoint + '&' + query))
+                    second = json.load(request(endpoint + '&' + query))
                     self.assertEqual(len(first['entries'] + second['entries']), 4)
                     self.assertEqual(len({row[0] for row in first['entries'] + second['entries']}), 4)
                     with self.assertRaises(urllib.error.HTTPError) as ctx:
-                        urllib.request.urlopen(endpoint + '&offset=2&revision=old')
+                        request(endpoint + '&offset=2&revision=old')
                     self.assertEqual(ctx.exception.code, 409)
 
                 # 4. /reveal requires X-Tidy-Action header, blocks out-of-scope/SECRET, allows valid dest
@@ -342,7 +344,7 @@ class ExecutionHistoryTest(unittest.TestCase):
                     method='POST',
                 )
                 with self.assertRaises(urllib.error.HTTPError) as ctx:
-                    urllib.request.urlopen(req_no_hdr)
+                    request(req_no_hdr)
                 self.assertEqual(ctx.exception.code, 403)
 
                 revealed = []
@@ -353,7 +355,7 @@ class ExecutionHistoryTest(unittest.TestCase):
                         headers={'Content-Type': 'application/json', 'X-Tidy-Action': 'reveal'},
                         method='POST',
                     )
-                    with urllib.request.urlopen(req_ok) as resp:
+                    with request(req_ok) as resp:
                         rv = json.loads(resp.read().decode('utf-8'))
                     self.assertTrue(rv['ok'])
                     self.assertEqual(len(revealed), 1)
@@ -366,7 +368,7 @@ class ExecutionHistoryTest(unittest.TestCase):
                         method='POST',
                     )
                     with self.assertRaises(urllib.error.HTTPError) as ctx:
-                        urllib.request.urlopen(req_outside)
+                        request(req_outside)
                     self.assertEqual(ctx.exception.code, 400)
 
                 (self.journal_path.parent / 'markers.tsv').write_bytes(encode_tsv([
@@ -374,7 +376,7 @@ class ExecutionHistoryTest(unittest.TestCase):
                 ], MARKER_FIELDS))
                 for endpoint in ('ls', 'stat'):
                     with self.assertRaises(urllib.error.HTTPError) as ctx:
-                        urllib.request.urlopen(url + endpoint + '?path=' + urllib.parse.quote(str(dest)))
+                        request(url + endpoint + '?path=' + urllib.parse.quote(str(dest)))
                     self.assertEqual(ctx.exception.code, 400)
             finally:
                 server.shutdown()

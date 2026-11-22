@@ -75,6 +75,15 @@ class ApplyReceiptCase(unittest.TestCase):
         self.assertTrue(source.exists())
         self.assertFalse(target.exists())
 
+    def test_action_table_rejects_permanent_deletion(self):
+        existing = self.root / "keep.txt"
+        existing.write_text("synthetic content", encoding="utf-8")
+        self.write_actions([("delete", existing, "-", "fixture")])
+        for options in (("--dry-run",), ()):
+            result = self.run_cli("apply", self.root, "--actions", self.actions, *options)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(existing.read_text(encoding="utf-8"), "synthetic content")
+
     def test_preview_does_not_overwrite_an_existing_receipt(self):
         source, target = self.simple_move()
         self.receipt.write_bytes(b'previous receipt')

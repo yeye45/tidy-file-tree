@@ -119,5 +119,6 @@
 | `path` | **是** | `string` | 所属节点绝对路径 |
 | `groups` | **是** | `object[]` | 归组列表；每项必含 `name: string`、`units: string[]`（或计数 `int`），可选 `relation`、`why` |
 | `groups[].relation` | 可选 | 枚举 | 合法取值：`theme`（同一类东西）、`multi-version`（同作品多版本）、`episode-complement`（同作品分集互补）、`cross-layer-dup`（跨层重复）、`form-cluster`（形态/来源相同的一批） |
+| `groups[].keep_together` | 可选 | `bool` | 已确认组内组件有强依赖。工作台仅允许用户选择移动已核实的完整目录或压缩包，分散组件只展示供复核 |
 | `solo_units` | 可选 | `string[]` | 独立单件，不强行归组；`ui` 会转为独立单件卡片 |
 | `uncertain` | 可选 | `string[]` | 暂定待复核项 |

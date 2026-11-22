@@ -1,26 +1,31 @@
-"""Read-only live progress dashboard for TidyFileTree stages S0-S6."""
+"""Live progress snapshots and local workbench drafts for stages S0-S6."""
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import secrets
+from threading import Lock
+import threading
 import time
 import webbrowser
 
 from coverage import SKIP_NAMES, grouping_coverage, unit_count, valid_action
-from executor import (Journal, active_events, artifact_has_signature, completed, meta, write_artifact,
-                      read_journal)
+from executor import (ACTION_FIELDS, PLAN_REVIEW_FORMAT, TRACKED_PLANS, WORKBENCH_PLAN, Journal,
+                      actions_digest, active_events, artifact_has_signature,
+                      check_artifact_path, completed, cross_scopes, digest, directory_identity, guard, meta,
+                      plan_review_path, read_journal, receipt_path, rename_target, write_artifact)
 import rules
 from safety import (SafetyError, USER_SHELL_FOLDERS, assert_no_links, block_kind,
-                    env_dependency_reason, is_reparse, is_system_attr, is_system_root,
+                    encode_tsv, env_dependency_reason, is_reparse, is_system_attr, is_system_root,
                     is_user_profile_root, key, nested_policy_verdict, nested_verdict, normal, organize_dir,
-                    toolchain_marker_reason, within)
+                    read_tsv, toolchain_marker_reason, within)
 
 TEMPLATE = Path(__file__).with_name('progress_ui.html')
 QUARANTINE_NAMES = {'_待删除', '_pending_delete'}
 RECENT_LIMIT = 30
 NODE_SCAN_LIMIT = 1500
+WORKBENCH_LIMIT = 4 * 1024 * 1024
 
 
 def _iso_mtime(path):
@@ -59,23 +64,110 @@ def _count_tsv_rows(path):
         return 0
 
 
-def _quarantine_info(root, secrets_markers):
+def _review_artifact(record, field):
+    try:
+        value = record[field]
+        path = receipt_path(value) if field == 'receipt' else value
+        path = check_artifact_path(path)
+        if path.is_file() and digest(path.read_bytes()) == record.get(field + '_sha256'):
+            return str(path)
+    except (KeyError, TypeError, OSError, ValueError):
+        pass
+    return None
+
+
+def _plan_review(journal, plan, done_rows):
+    record_path = plan_review_path(journal, plan)
+    record = _safe_read_json(record_path) if record_path.is_file() else None
+    if not record or record.get('format') != PLAN_REVIEW_FORMAT:
+        return None
+    try:
+        actions = read_tsv(plan, ACTION_FIELDS)
+        if (record.get('root_id') != directory_identity(journal.root)
+                or record.get('actions_sha256') != actions_digest(actions)):
+            return None
+        count = record.get('count')
+        phase = record.get('phase')
+        if type(count) is not int or not 0 <= count <= len(actions):
+            return None
+        if phase in ('draft', 'blocked'):
+            return {'status': phase, 'count': count}
+        if phase == 'no_changes' and count == 0:
+            return {'status': phase, 'count': 0}
+        if phase == 'previewed':
+            receipt = _review_artifact(record, 'receipt')
+            if receipt:
+                return {'status': phase, 'count': count, 'receipt': receipt,
+                        'preview': _review_artifact(record, 'preview')}
+            return {'status': 'draft', 'count': len(actions)}
+        elif phase in ('executing', 'executed', 'partial') and isinstance(record.get('run'), str):
+            did_run = any(row['run_id'] == record['run'] for row in done_rows)
+            done = record.get('done')
+            if phase == 'executed' and did_run and type(done) is int and done == count and count > 0:
+                return {'status': phase, 'count': count, 'done': done}
+            if phase == 'partial' and type(done) is int and 0 <= done < count and (did_run or done == 0):
+                return {'status': phase, 'count': count, 'done': done}
+            return {'status': 'executing', 'count': count}
+    except (KeyError, TypeError, OSError, ValueError):
+        pass
+    return None
+
+
+def _submit_workbench(journal, rows, probe=None):
+    if not isinstance(rows, list) or not rows:
+        raise SafetyError('动作表为空')
+    root = journal.root
+    with journal.locked(prepare=False):
+        protection = journal.protection(include_skips=True, probe=Path(probe) if probe else None)
+        guard(root, root, protection, allow_root=True)
+        if journal.unresolved():
+            raise SafetyError('有未完成事务')
+        actions = []
+        for row in rows:
+            if (not isinstance(row, list) or len(row) != len(ACTION_FIELDS)
+                    or any(not isinstance(value, str) or '\x00' in value for value in row)):
+                raise SafetyError('动作格式无效')
+            op, source, target, _ = row
+            if (op not in ('move', 'rename') or not os.path.isabs(source)
+                    or (op == 'move' and not os.path.isabs(target))):
+                raise SafetyError('实时工作台只接收整理根内的移动和改名')
+            guard(source, root, protection)
+            if block_kind(source, protection.markers, descendants=True):
+                raise SafetyError('来源含有受保护路径')
+            if op == 'move':
+                guard(target, root, protection, allow_container=True)
+            else:
+                rename_target(source, target, root, protection)
+            actions.append(dict(zip(ACTION_FIELDS, row)))
+        plan = check_artifact_path(journal.state_dir / WORKBENCH_PLAN)
+        data = encode_tsv(actions, ACTION_FIELDS)
+        existing = plan.read_bytes() if plan.is_file() else None
+        legacy_mtime = _iso_mtime(journal.state_dir / 'plan.tsv')
+        if data != existing or (legacy_mtime or '') > (_iso_mtime(plan) or ''):
+            def owns_plan(path):
+                return bool(read_tsv(path, ACTION_FIELDS))
+
+            write_artifact(plan, data, owns_existing=owns_plan)
+        return len(actions)
+
+
+def _quarantine_info(root, markers):
     """Inspect holding/quarantine folder counts without deleting or revealing secrets."""
     total = 0
     found_dir = None
     for name in QUARANTINE_NAMES:
         candidate = Path(root) / name
         try:
-            if not candidate.is_dir() or is_reparse(candidate):
+            if block_kind(candidate, markers, descendants=True):
                 continue
-            if block_kind(candidate, secrets_markers, descendants=True):
+            if not candidate.is_dir() or is_reparse(candidate):
                 continue
             found_dir = name
             with os.scandir(candidate) as it:
                 for idx, entry in enumerate(it):
                     if idx >= 500:
                         break
-                    if block_kind(entry.path, secrets_markers, descendants=True):
+                    if block_kind(entry.path, markers, descendants=True):
                         continue
                     total += 1
         except (OSError, ValueError):
@@ -456,32 +548,53 @@ def collect_snapshot(root, probe_override=None):
         invalid_artifacts.append('decisions.aiQuestions')
         ai_questions = []
     ai_answered = sum(1 for q in ai_questions if isinstance(q, dict) and q.get('aiJudgement'))
-    plan_path = state_dir / 'plan.tsv'
+    plan_path = max((state_dir / name for name in TRACKED_PLANS),
+                    key=lambda path: _iso_mtime(path) or '')
     plan_count = _count_tsv_rows(plan_path) if plan_path.is_file() else 0
     ui_path = state_dir / 'ui.html'
     ui_ready = ui_path.is_file()
     if decisions_path.is_file():
         add_event('S4', 'decisions', 'decisions.json', f"{dec_counts['total']}", _iso_mtime(decisions_path))
     if plan_path.is_file():
-        add_event('S4', 'plan', 'plan.tsv', f'{plan_count}', _iso_mtime(plan_path))
+        add_event('S4', 'plan', plan_path.name, f'{plan_count}', _iso_mtime(plan_path))
     if ui_ready:
         add_event('S4', 'ui', 'ui.html', 'ready', _iso_mtime(ui_path))
 
     # ── S5: journal.tsv, transactions, history.html ──
     journal_rows = []
+    journal_error = False
     if journal.path.is_file():
         try:
             journal_rows = read_journal(journal.path)
         except (OSError, ValueError):
-            journal_rows = []
+            journal_error = True
     done_rows = completed(journal_rows)
+    plan_review = _plan_review(journal, plan_path, done_rows) if plan_count else None
     active_seqs = active_events(journal_rows)
+    external_markers = {}
+
+    def visible_event(row):
+        paths = [root_path / row[name] for name in ('before', 'after') if row[name] not in ('', '-')]
+        try:
+            if any(block_kind(path, markers, descendants=True) for path in paths):
+                return False
+            if all(within(path, root_path) for path in paths):
+                return True
+            data = meta(row)
+            if data.get('effect') != 'cross-move':
+                return False
+            scopes = cross_scopes(root_path, data.get('cross'), row['before'], row['after'])
+            other = next(scope for scope in scopes if scope != root_path)
+            if other not in external_markers:
+                external_markers[other] = Journal(other).protection(include_skips=True).markers
+            return not any(block_kind(path, external_markers[other], descendants=True) for path in paths)
+        except (OSError, ValueError):
+            return False
+
+    visible_rows = [row for row in done_rows if visible_event(row)]
     exec_moves = exec_renames = exec_mkdirs = exec_undos = 0
     exec_runs = set()
-    for row in done_rows:
-        if any(row[f] not in ('', '-') and block_kind(root_path / row[f], secret_markers, descendants=True)
-               for f in ('before', 'after')):
-            continue
+    for row in visible_rows:
         exec_runs.add(row['run_id'])
         op = row['op']
         if op.startswith('undo-'):
@@ -492,26 +605,25 @@ def collect_snapshot(root, probe_override=None):
             exec_renames += 1
         elif op == 'mkdir':
             exec_mkdirs += 1
-    for row in reversed(done_rows[-12:]):
-        if any(row[f] not in ('', '-') and block_kind(root_path / row[f], secret_markers, descendants=True)
-               for f in ('before', 'after')):
-            continue
+    for row in reversed(visible_rows[-12:]):
         target_label = _rel_label(row['after'] if row['after'] != '-' else row['before'], root_path)
         add_event('S5', row['op'], target_label, row['op'], row['ts'])
 
     unresolved_count = 0
+    unresolved_error = journal_error
     try:
-        if journal.tx_dir.is_dir() or (journal.mirror_dir / 'transactions').is_dir():
+        if journal.path.is_file() or journal.tx_dir.is_dir() or (journal.mirror_dir / 'transactions').is_dir():
             unresolved_count = len(journal.unresolved())
     except (OSError, ValueError):
-        unresolved_count = 0
+        # An unreadable recovery state is not evidence that recovery is unnecessary.
+        unresolved_error = True
 
     history_path = state_dir / 'history.html'
     history_ready = history_path.is_file()
     if history_ready:
         add_event('S5', 'history', 'history.html', 'ready', _iso_mtime(history_path))
 
-    quarantine = _quarantine_info(root_path, secret_markers)
+    quarantine = _quarantine_info(root_path, markers)
 
     # Sort newest activity first
     recent.sort(key=lambda item: item['time'] or '', reverse=True)
@@ -523,14 +635,16 @@ def collect_snapshot(root, probe_override=None):
         or plan_count > 0
         or (ui_ready and s1_done > 0)
     )
-    if done_rows:
+    if unresolved_count or unresolved_error:
+        current_stage = 'S5'
+    elif done_rows:
         current_stage = 'S6' if (missing_nodes == 0 and unverified_nodes == 0 and probe_errors == 0
                                  and unresolved_count == 0 and not node_scan_truncated) else 'S5'
     elif s4_has_work:
         current_stage = 'S4'
-    elif s3_done > 0:
+    elif s3_expected > s3_done or s3_done > 0:
         current_stage = 'S3'
-    elif s2_done > 0:
+    elif s2_expected > s2_done or s2_done > 0:
         current_stage = 'S2'
     elif s1_done > 0 or (s0_done and s1_expected > 0):
         current_stage = 'S1'
@@ -538,6 +652,87 @@ def collect_snapshot(root, probe_override=None):
         current_stage = 'S0'
     else:
         current_stage = 'idle'
+
+    # A next step is derived from artifacts and counters, never from UI hints alone.
+    # `actor` tells the client whether this is automatic work, a human decision, or
+    # an informational terminal state. In particular, a generated plan is only a
+    # preview/review prompt; it is not proof that the plan was approved.
+    last_execution = max((row['ts'] for row in done_rows), default='')
+    action_mtime = _iso_mtime(plan_path) if plan_count else None
+    has_plan = bool(plan_count and (plan_path.name == WORKBENCH_PLAN or not last_execution
+                                    or (action_mtime or '') > last_execution))
+    review_status = plan_review['status'] if plan_review else None
+    if review_status == 'executed':
+        has_plan = False
+    no_actions = bool(dec_counts['total'] and dec_counts['keep'] == dec_counts['total']
+                      and not dec_counts['move'] and not dec_counts['new'] and not dec_counts['needCheck'])
+    latest_review = max((_iso_mtime(file) or '' for file in (decisions_path, ui_path)), default='')
+    review_current = s4_has_work and (not last_execution or latest_review > last_execution)
+    if unresolved_error:
+        next_step = {'id': 'recovery_state_unreadable', 'actor': 'user',
+                     'title': '恢复状态无法读取', 'reason': '事务恢复清单读取失败；执行前需要检查状态。'}
+    elif unresolved_count:
+        next_step = {'id': 'recover_transactions', 'actor': 'auto', 'count': unresolved_count,
+                     'title': '核对未完成事务', 'reason': '确认是否仍在执行，已中断的授权操作才进入恢复。'}
+    elif review_status == 'executing':
+        next_step = {'id': 'check_execution', 'actor': 'auto', 'count': plan_review['count']}
+        current_stage = 'S5'
+    elif review_status == 'partial':
+        next_step = {'id': 'review_partial', 'actor': 'user',
+                     'count': plan_review['count'], 'done': plan_review['done']}
+        current_stage = 'S5'
+    elif review_status == 'no_changes' or (review_status == 'previewed' and not plan_review['count']):
+        next_step = {'id': 'no_changes', 'actor': 'none', 'count': 0}
+        current_stage = 'S4'
+    elif review_status == 'previewed':
+        next_step = {'id': 'confirm_preview', 'actor': 'user', 'count': plan_review['count']}
+        current_stage = 'S4'
+    elif review_status == 'blocked':
+        next_step = {'id': 'review_blocked', 'actor': 'user', 'count': plan_review['count']}
+        current_stage = 'S4'
+    elif has_plan or review_status == 'draft':
+        next_step = {'id': 'preview_plan', 'actor': 'auto', 'count': plan_count}
+        current_stage = 'S4'
+    elif done_rows and not review_current and current_stage == 'S6' and allow_cache_cleanup and quarantine['count']:
+        next_step = {'id': 'review_quarantine', 'actor': 'auto', 'count': quarantine['count']}
+    elif done_rows and not review_current and current_stage == 'S6':
+        next_step = {'id': 'completed', 'actor': 'none', 'count': len(done_rows),
+                     'title': '整理已完成', 'reason': '执行记录存在且当前覆盖检查没有发现缺口。'}
+    elif done_rows and not review_current:
+        next_step = {'id': 'complete_coverage', 'actor': 'auto', 'count': missing_nodes + unverified_nodes,
+                     'title': '补齐覆盖检查', 'reason': f'覆盖检查仍有 {missing_nodes} 个缺项、{unverified_nodes} 个未验证项。'}
+    elif not s0_done and not s4_has_work and s1_expected:
+        next_step = {'id': 'start_analysis', 'actor': 'auto', 'count': s1_expected,
+                     'title': '开始扫描与识别', 'reason': f'发现 {s1_expected} 个待检查节点；可以开始自动分析。'}
+    elif s1_done < s1_expected and not s4_has_work:
+        next_step = {'id': 'continue_classification', 'actor': 'auto', 'count': s1_expected - s1_done,
+                     'title': '继续识别目录', 'reason': f'已识别 {s1_done}/{s1_expected} 个待处理节点。'}
+    elif s2_done < s2_expected and not s4_has_work:
+        next_step = {'id': 'continue_counting', 'actor': 'auto', 'count': s2_expected - s2_done,
+                     'title': '继续清点文件单元', 'reason': f'已清点 {s2_done}/{s2_expected} 个需要清点的目录。'}
+    elif s3_done < s3_expected and not s4_has_work:
+        next_step = {'id': 'continue_grouping', 'actor': 'auto', 'count': s3_expected - s3_done,
+                     'title': '继续完成归组', 'reason': f'归组 {s3_done}/{s3_expected}。'}
+    elif no_actions:
+        next_step = {'id': 'no_changes', 'actor': 'none', 'count': 0,
+                     'title': '没有待处理变更', 'reason': '已有决策将所有项目保留，没有拟议的文件操作。'}
+    elif s4_has_work and ui_ready:
+        next_step = {'id': 'review_plan', 'actor': 'user', 'count': dec_counts['needCheck']}
+    elif s4_has_work:
+        next_step = {'id': 'prepare_review', 'actor': 'auto', 'count': dec_counts['total']}
+    elif s0_done and not s1_expected and not node_scan_truncated:
+        next_step = {'id': 'no_changes', 'actor': 'none', 'count': 0,
+                     'title': '没有待处理变更', 'reason': '没有拟议操作，也没有执行记录。'}
+    elif not s1_expected and not node_scan_truncated:
+        next_step = {'id': 'no_data', 'actor': 'none', 'count': 0,
+                     'title': '尚无可处理数据', 'reason': '当前扫描范围没有发现可处理节点。'}
+    else:
+        next_step = {'id': 'continue_analysis', 'actor': 'auto', 'count': s1_expected,
+                     'title': '继续分析', 'reason': '当前阶段尚未形成可供审核的方案。'}
+    current_stage = {
+        'continue_classification': 'S1', 'continue_counting': 'S2', 'continue_grouping': 'S3',
+        'review_plan': 'S4', 'prepare_review': 'S4',
+    }.get(next_step['id'], current_stage)
 
     latest_ts = recent[0]['time'] if recent else None
     recently_active = False
@@ -554,6 +749,8 @@ def collect_snapshot(root, probe_override=None):
         'isSystemDrive': is_sys,
         'captured': datetime.now(timezone.utc).isoformat(),
         'currentStage': current_stage,
+        'nextStep': next_step,
+        'planReview': plan_review,
         'recentlyActive': recently_active,
         'latestEventAt': latest_ts,
         'markerError': marker_error,
@@ -585,14 +782,15 @@ def collect_snapshot(root, probe_override=None):
                 'uiReady': ui_ready,
             },
             's5': {
-                'done': len(done_rows),
-                'active': len(active_seqs),
+                'done': len(visible_rows),
+                'active': sum(row['seq'] in active_seqs for row in visible_rows),
                 'batches': len(exec_runs),
                 'moves': exec_moves,
                 'renames': exec_renames,
                 'mkdirs': exec_mkdirs,
                 'undos': exec_undos,
                 'unresolved': unresolved_count,
+                'recoveryError': unresolved_error,
                 'historyReady': history_ready,
             },
             's6': {
@@ -628,10 +826,29 @@ def render_page(config, initial_snapshot=None):
 
 
 def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
+    from ui import board_for_root, render_html
+
+    journal = Journal(root, allow_system_drive=True)
+    root = journal.root
+    assert_no_links(root)
     token = secrets.token_urlsafe(24)
     page_path = '/' + token + '/'
-    initial = collect_snapshot(root, probe_override=probe)
-    page = render_page({'lang': lang, 'live': True, 'intervalMs': int(interval * 1000)}, initial)
+    interval = max(0.4, interval)
+    page = render_page({'lang': lang, 'live': True, 'intervalMs': int(interval * 1000)})
+    scan_lock = Lock()
+    latest = None
+    refresh_at = 0.0
+
+    def read_snapshot():
+        nonlocal latest, refresh_at
+        with scan_lock:
+            if latest is None or time.monotonic() >= refresh_at:
+                try:
+                    latest = collect_snapshot(root, probe_override=probe)
+                except (OSError, ValueError):
+                    latest = {'nextStep': {'id': 'snapshot_unavailable', 'actor': 'user'}}
+                refresh_at = time.monotonic() + interval
+            return latest
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -641,7 +858,7 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
             self.send_response(200)
             self.send_header('Content-Type', content_type + '; charset=utf-8')
             self.send_header('Cache-Control', 'no-store')
-            self.send_header('Referrer-Policy', 'no-referrer')
+            self.send_header('Referrer-Policy', 'same-origin')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header(
                 'Content-Security-Policy',
@@ -652,6 +869,35 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
                 self.send_header('Content-Length', str(length))
             self.end_headers()
 
+        def do_POST(self):
+            nonlocal refresh_at
+            host = f'127.0.0.1:{self.server.server_port}'
+            if self.headers.get('Host') != host or self.headers.get('Origin') != f'http://{host}':
+                self.send_error(403)
+                return
+            if self.path != page_path + 'workbench-actions':
+                self.send_error(404)
+                return
+            if self.headers.get_content_type() != 'application/json':
+                self.send_error(415)
+                return
+            try:
+                length = int(self.headers['Content-Length'])
+                if not 0 < length <= WORKBENCH_LIMIT:
+                    self.send_error(413)
+                    return
+                self.connection.settimeout(5)
+                rows = json.loads(self.rfile.read(length))
+                count = _submit_workbench(journal, rows, probe=probe)
+            except (OSError, ValueError, TypeError, RecursionError):
+                self.send_error(400, 'Could not save this draft')
+                return
+            with scan_lock:
+                refresh_at = 0.0
+            body = json.dumps({'count': count}).encode('utf-8')
+            self._send_security_headers('application/json', len(body))
+            self.wfile.write(body)
+
         def do_GET(self):
             if self.headers.get('Host') != f'127.0.0.1:{self.server.server_port}':
                 self.send_error(400)
@@ -660,11 +906,19 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
                 self._send_security_headers('text/html', len(page))
                 self.wfile.write(page)
                 return
-            if self.path == page_path + 'snapshot':
+            if self.path in (page_path + 'workbench', page_path + 'workbench?lang=en', page_path + 'workbench?lang=zh-CN'):
                 try:
-                    data = collect_snapshot(root, probe_override=probe)
-                except (OSError, ValueError) as exc:
-                    data = {'error': str(exc) if isinstance(exc, SafetyError) else '无法读取进度状态'}
+                    board = board_for_root(journal, probe=probe)
+                    locale = self.path.split('?lang=')[-1] if '?' in self.path else lang
+                    body = render_html(root, board, lang=locale, live=True).encode('utf-8')
+                except (OSError, ValueError):
+                    self.send_error(400, 'Could not build the review board')
+                    return
+                self._send_security_headers('text/html', len(body))
+                self.wfile.write(body)
+                return
+            if self.path == page_path + 'snapshot':
+                data = read_snapshot()
                 body = json.dumps(data, ensure_ascii=False).encode('utf-8')
                 self._send_security_headers('application/json', len(body))
                 self.wfile.write(body)
@@ -675,13 +929,9 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
                 last_heartbeat = 0.0
                 try:
                     while True:
-                        try:
-                            snap = collect_snapshot(root, probe_override=probe)
-                            comparable = {k: v for k, v in snap.items() if k != 'captured'}
-                            digest = json.dumps(comparable, sort_keys=True, ensure_ascii=True)
-                        except (OSError, ValueError):
-                            snap = {'event': 'stopped'}
-                            digest = 'stopped'
+                        snap = read_snapshot()
+                        comparable = {k: v for k, v in snap.items() if k != 'captured'}
+                        digest = json.dumps(comparable, sort_keys=True, ensure_ascii=True)
                         now_mono = time.monotonic()
                         if digest != last_digest:
                             line = 'data: ' + json.dumps(snap, ensure_ascii=False) + '\n\n'
@@ -689,13 +939,11 @@ def make_server(root, lang='zh-CN', *, probe=None, interval=1.2):
                             self.wfile.flush()
                             last_digest = digest
                             last_heartbeat = now_mono
-                            if digest == 'stopped':
-                                return
                         elif now_mono - last_heartbeat >= 10.0:
                             self.wfile.write(b': keepalive\n\n')
                             self.wfile.flush()
                             last_heartbeat = now_mono
-                        time.sleep(max(0.4, interval))
+                        time.sleep(interval)
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     return
             self.send_error(404)

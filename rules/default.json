@@ -266,10 +266,7 @@
         "数据集",
         "语料"
       ],
-      "suggest": [
-        "AI工具",
-        "AI"
-      ]
+      "suggest": []
     },
     "comfy_runtime": {
       "label": "AI 图像生成运行环境",
@@ -277,10 +274,7 @@
         "ComfyUI 运行环境",
         "ComfyUI解压即用"
       ],
-      "suggest": [
-        "AI工具",
-        "AI工具语音区"
-      ]
+      "suggest": []
     },
     "game": {
       "label": "游戏",
@@ -426,12 +420,7 @@
         "语音合成软件",
         "变声器"
       ],
-      "suggest": [
-        "语音合成",
-        "歌声合成",
-        "AI工具语音区",
-        "AI工具"
-      ]
+      "suggest": []
     },
     "install_tool": {
       "label": "装机与刷机工具",

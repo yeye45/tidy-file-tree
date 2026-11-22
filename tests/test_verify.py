@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 CORE = HERE.parent / "core"
@@ -56,12 +57,13 @@ class TestVerifyCases(unittest.TestCase):
         self.assertTrue(ok, msg)
 
     def test_suggest_target_assertion_catches_wrong_destination(self):
-        case = {"kind":"suggest", "group":"ComfyUI 便携运行环境", "parent":"下载",
-                "zones":[{"path":"/ai", "label":"AI工具", "depth":1, "files":1}],
+        case = {"kind":"suggest", "group":"普通课程资料", "parent":"下载",
+                "zones":[{"path":"/courses", "label":"课程区", "depth":1, "files":1}],
                 "expectMode":"move", "expectTarget":"/wrong"}
-        self.assertFalse(self.V.run_case(case, D)[0])
-        case["expectTarget"] = "/ai"
-        self.assertTrue(self.V.run_case(case, D)[0])
+        with patch.object(D, 'CROSS_RULES', [{'keys': ['课程'], 'to': ['课程区']}]):
+            self.assertFalse(self.V.run_case(case, D)[0])
+            case["expectTarget"] = "/courses"
+            self.assertTrue(self.V.run_case(case, D)[0])
 
     def test_suggest_without_assertions_fails(self):
         self.assertFalse(self.V.run_case({"kind":"suggest", "group":"随便"}, D)[0])
@@ -159,6 +161,36 @@ class TestVerifyCases(unittest.TestCase):
     def test_old_case_file_without_policy_context_remains_supported(self):
         case = {'kind': 'suggest', 'group': 'unknown', 'parent': 'downloads', 'expectMode': 'keep'}
         self.assertTrue(self.V.run_case(case, D)[0])
+
+    def test_record_replays_dependency_and_model_evidence(self):
+        with tempfile.TemporaryDirectory(prefix='.organizer-test-', dir=HERE.parent) as tmp:
+            base = Path(tmp)
+            root = base / 'root'
+            source, probe = root / 'Incoming', root / '_organize' / 'probe'
+            source.mkdir(parents=True)
+            probe.mkdir(parents=True)
+            for name in ('editor.exe', 'assets.zip', 'weights.gguf'):
+                (source / name).touch()
+            (probe / 'group_placement.json').write_text(json.dumps({
+                'path': str(source), 'groups': [
+                    {'name': 'Set A', 'units': ['editor.exe', 'assets.zip'], 'keep_together': True},
+                    {'name': 'Set B', 'units': ['weights.gguf']},
+                ],
+            }), encoding='utf-8')
+            command = [sys.executable, '-B', str(HERE.parent / 'tidy_file_tree.py'), 'verify']
+            env = dict(os.environ, LOCALAPPDATA=str(base / 'local'),
+                       XDG_STATE_HOME=str(base / 'state'), PYTHONIOENCODING='utf-8')
+            output = base / 'cases.json'
+            recorded = subprocess.run(command + ['record', '--root', str(root), '--out', str(output)],
+                                      env=env, capture_output=True, encoding='utf-8')
+            self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+            cases = json.loads(output.read_text(encoding='utf-8'))['cases']
+            self.assertTrue(cases[0]['keep_together'])
+            self.assertEqual(cases[1]['modelMembers'], ['weights.gguf'])
+            replay = subprocess.run(command + ['run', str(output)], env=env,
+                                    capture_output=True, encoding='utf-8')
+            self.assertEqual(replay.returncode, 0, replay.stdout + replay.stderr)
+            self.assertIn('通过 2 / 2', replay.stdout)
 
     def test_record_and_rule_coverage_use_protected_s4_evaluation(self):
         with tempfile.TemporaryDirectory(prefix='.organizer-test-', dir=HERE.parent) as tmp:

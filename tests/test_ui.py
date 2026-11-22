@@ -122,6 +122,41 @@ class ReviewPageCase(unittest.TestCase):
             units = board['nodes'][0]['groups'][0]['units']
             self.assertEqual([u['source'] for u in units], [str(safe_file)])
 
+    def test_dependent_bundle_overrides_old_move_and_blocks_separate_exports(self):
+        with tempfile.TemporaryDirectory(prefix='.organizer-test-', dir=PROJECT) as tmp:
+            root = Path(tmp)
+            source, target = root / 'incoming', root / 'Audio'
+            source.mkdir()
+            target.mkdir()
+            (target / 'existing.txt').touch()
+            for name in ('editor.exe', 'voicebank.zip', 'complete-bundle.zip'):
+                (source / name).touch()
+            probe = root / '_organize' / 'probe'
+            probe.mkdir(parents=True)
+            split = {'name': 'Editor with dependent packs', 'units': ['editor.exe', 'voicebank.zip'],
+                     'keep_together': True}
+            intact = {'name': 'Complete editor bundle', 'units': ['complete-bundle.zip'],
+                      'keep_together': True}
+            (probe / 'group_bundles.json').write_text(
+                json.dumps({'path': str(source), 'groups': [split, intact]}), encoding='utf-8',
+            )
+            (probe / 'units_bundles.json').write_text(json.dumps({
+                'path': str(source), 'loose_files_as_units': split['units'] + intact['units'],
+            }), encoding='utf-8')
+            stored = {'root': str(root), 'nodes': [{'path': str(source), 'groups': [{
+                'id': f'{group_key(split)}:0', 'fingerprint': group_key(split),
+                'suggest': {'mode': 'move', 'target': str(target)},
+            }]}]}
+            board = build_board(root, probe, stored, Protection([], set()))
+            split_card, intact_card = board['nodes'][0]['groups']
+            self.assertTrue(split_card['suggest']['needsCheck'])
+            self.assertEqual(split_card['suggest']['target'], '@keep')
+            self.assertEqual([unit['source'] for unit in split_card['units']], [None, None])
+            [unit] = intact_card['units']
+            self.assertEqual(unit['source'], str(source / 'complete-bundle.zip'))
+            self.assertTrue(unit['sourceWitness'].startswith('user-decision:'))
+            self.assertEqual(intact_card['suggest']['target'], '@keep')
+
     def test_node_level_decisions_and_protected_nodes_surface_in_board(self):
         with tempfile.TemporaryDirectory(prefix='.organizer-test-', dir=PROJECT) as tmp:
             root = Path(tmp)

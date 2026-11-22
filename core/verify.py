@@ -142,7 +142,9 @@ def run_case(case, decisions_mod, rule_state=None):
             case.get("group", ""), case.get("parent", ""),
             zones, node_path=case.get("nodePath"),
             group_path=path if (path and os.path.isdir(path)) else None, shape=shape,
-            decision_rules=rule_state or decisions_mod)
+            decision_rules=rule_state or decisions_mod,
+            keep_together=case.get("keep_together") is True,
+            member_paths=case.get("modelMembers") or ())
 
         expect_mode = case.get("expectMode")
         expect_check = case.get("expectNeedsCheck")
@@ -250,7 +252,7 @@ def cmd_run(args):
 
 def cmd_record(args):
     """从当前判断生成用例——人工确认后作为回归基准。"""
-    from decisions import evaluate_root
+    from decisions import MODEL_EXTENSIONS, evaluate_root, group_paths
     from executor import artifact_has_signature, write_artifact
 
     evaluation = evaluate_root(args.root, allow_system_drive=True, quiet=True)
@@ -262,6 +264,8 @@ def cmd_record(args):
     for n in evaluation["nodes"]:
         for g in n["groups"]:
             suggestion = g["suggest"]
+            model = next((Path(path).name for path in group_paths(g)
+                          if Path(path).suffix.casefold() in MODEL_EXTENSIONS), None)
             cases.append({
                 "name": f"{n['name']} / {g['name']}",
                 "kind": "suggest",
@@ -269,6 +273,8 @@ def cmd_record(args):
                 "parent": n["name"],
                 "nodePath": n["path"],
                 "shape": g.get("shape"),
+                **({"keep_together": True} if g.get("keep_together") else {}),
+                **({"modelMembers": [model]} if model else {}),
                 "expectMode": suggestion["mode"],
                 "expectNeedsCheck": bool(suggestion.get("needsCheck")),
                 **({"expectTarget": suggestion["target"]}

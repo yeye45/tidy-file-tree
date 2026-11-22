@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src __BOARD_CONNECT__; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
 <title data-i18n="TidyFileTree · 连线工作台">TidyFileTree · 连线工作台</title>
 <style>
 :root{color-scheme:light dark;--bg:#f4f7fb;--paper:#fff;--tint:#eef3fa;--tint-2:#e5eefb;--ink:#142038;--muted:#586a84;--line:#d6e0ee;--accent:#245bcc;--accent-soft:#eaf1ff;--wire:#3470e7;--ok:#126b52;--ok-bg:#e8f7f1;--warn:#8c4a08;--warn-bg:#fff4e5;--danger:#b42318;--danger-bg:#fef0ef;--focus:#245bcc;--shadow:0 1px 2px rgba(15,28,50,.05)}
@@ -220,6 +220,7 @@ dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);bo
   <div class="dialog-head"><h2 id="reviewTitle" data-i18n="核对整理计划">核对整理计划</h2></div>
   <div class="dialog-body">
     <p id="reviewStatus"></p>
+    <p id="submitStatus" role="status" hidden></p>
     <div id="reviewConflicts" class="conflict-box" hidden></div>
     <div id="reviewCommands" class="cli-box" hidden>
       <div class="cli-box-head"><span data-i18n="后续终端命令">后续终端命令</span><span><button type="button" class="card-btn" id="copyPreviewCmd" data-i18n="复制预演命令">复制预演命令</button> <button type="button" class="card-btn" id="copyApplyCmd" data-i18n="复制执行命令">复制执行命令</button></span></div>
@@ -229,7 +230,7 @@ dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);bo
     <section id="corrections"><h3 data-i18n="本地分类修正（可选）">本地分类修正（可选）</h3><p class="meta" data-i18n="可选：记录你改选的原因，仅保存在本地，不会上传也不会移动文件。">可选：记录你改选的原因，仅保存在本地，不会上传也不会移动文件。</p><div id="correctionRows"></div></section>
   </div>
   <div class="dialog-actions"><form method="dialog"><button data-i18n="关闭">关闭</button></form>
-    <button id="downloadReview" data-i18n="下载核对摘要 (.md)">下载核对摘要 (.md)</button><button id="downloadCorrections" data-i18n="下载分类修正 (.tsv)">下载分类修正 (.tsv)</button><button id="downloadActions" class="primary" data-i18n="下载动作表 (.tsv)">下载动作表 (.tsv)</button></div>
+    <button id="downloadReview" data-i18n="下载核对摘要 (.md)">下载核对摘要 (.md)</button><button id="downloadCorrections" data-i18n="下载分类修正 (.tsv)">下载分类修正 (.tsv)</button><button id="downloadActions" class="primary" data-i18n="下载动作表 (.tsv)">下载动作表 (.tsv)</button><button id="submitActions" type="button" class="primary" data-i18n="提交预演" hidden>提交预演</button></div>
 </dialog>
 <dialog id="proposals" aria-labelledby="proposalsTitle">
   <div class="dialog-head"><h2 id="proposalsTitle" data-i18n="候选类别">候选类别</h2></div>
@@ -243,6 +244,7 @@ dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tint);bo
 </dialog>
 <script>
 'use strict';
+const LIVE = __BOARD_LIVE__;
 const DATA = __TIDY_FILE_TREE_DATA__;
 const englishMessages = __BOARD_MESSAGES__;
 const $ = id => document.getElementById(id);
@@ -1198,6 +1200,9 @@ function collectReview() {
 function showReview() {
   const r = collectReview();
   exportRows = r.conflicts.size ? [] : r.actions.map(action => action.row);
+  $('submitStatus').hidden = true;
+  $('submitActions').hidden = !LIVE;
+  $('submitActions').disabled = !exportRows.length;
   const describe = ({row,target}) => `${row[1]} → ${target}`;
   const sections = [
     [t('待移动'),r.actions.filter(action => action.row[0] === 'move').map(describe)],
@@ -1206,14 +1211,15 @@ function showReview() {
   ];
   $('reviewStatus').textContent = r.conflicts.size
     ? t('以下动作存在来源或落点冲突，请先取消冲突的安排。')
-    : t('共 {actions} 项待执行，{pending} 项未确认将留在原处。下载动作表后，请先预演，再使用同一份预演清单执行。',{actions:r.actions.length,pending:r.pending.length});
+    : t(LIVE ? '共 {actions} 项拟操作，{pending} 项未确认将留在原处。提交后可回到进度页查看预演状态。'
+      : '共 {actions} 项待执行，{pending} 项未确认将留在原处。下载动作表后，请先预演，再使用同一份预演清单执行。',{actions:r.actions.length,pending:r.pending.length});
   $('reviewConflicts').hidden = !r.conflicts.size;
   if (r.conflicts.size) {
     $('reviewConflicts').innerHTML = `<strong>${esc(t('冲突路径（{count}）',{count:r.conflicts.size}))}</strong><ul>${[...r.conflicts.values()].map(p => `<li>${esc(p)}</li>`).join('')}</ul>`;
   }
   const previewCmd = `tidy-file-tree apply ${quoteArg(DATA.root)} --actions tidy-file-tree-actions.tsv --dry-run --preview-html plan.html --receipt plan.tidy-file-tree-receipt.json`;
   const applyCmd = `tidy-file-tree apply ${quoteArg(DATA.root)} --actions tidy-file-tree-actions.tsv --receipt plan.tidy-file-tree-receipt.json`;
-  $('reviewCommands').hidden = !exportRows.length;
+  $('reviewCommands').hidden = LIVE || !exportRows.length;
   $('previewCmdText').textContent = previewCmd;
   $('copyPreviewCmd').onclick = () => copyText(previewCmd, $('copyPreviewCmd'), '复制预演命令');
   $('copyApplyCmd').onclick = () => copyText(applyCmd, $('copyApplyCmd'), '复制执行命令');
@@ -1251,6 +1257,27 @@ $('redoButton').addEventListener('click',()=>{if(redoStack.length) restore(redoS
 $('downloadReview').addEventListener('click',() => download('tidy-file-tree-review.md','# TidyFileTree · '+t('核对整理计划')+'\n\n'+$('reviewText').textContent,'text/markdown;charset=utf-8'));
 $('downloadActions').addEventListener('click',() => {
   if (exportRows.length) download('tidy-file-tree-actions.tsv','op\tsrc\tdst\treason\n'+exportRows.map(row => row.map(tsv).join('\t')).join('\n')+'\n','text/tab-separated-values;charset=utf-8');
+});
+$('submitActions').addEventListener('click',async () => {
+  if (!LIVE || !exportRows.length) return;
+  const button = $('submitActions');
+  const status = $('submitStatus');
+  button.disabled = true;
+  status.hidden = false;
+  status.textContent = t('正在保存动作表…');
+  try {
+    const response = await fetch('workbench-actions', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(exportRows),
+    });
+    if (!response.ok) throw new Error('Could not save the draft');
+    status.textContent = t('已提交预演请求。你可以回到进度页。');
+  } catch (_) {
+    status.textContent = t('提交失败。检查进度页是否仍在运行，也可以下载动作表。');
+  } finally {
+    button.disabled = !exportRows.length;
+  }
 });
 $('downloadCorrections').addEventListener('click',()=>{
   const rows=[...$('correctionRows').querySelectorAll('.correction-row')];
