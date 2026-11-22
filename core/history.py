@@ -2,6 +2,7 @@
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -14,8 +15,8 @@ from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
 import executor as _executor
-from executor import Journal, atomic_write, cross_scopes, meta, read_journal
-from safety import (SafetyError, assert_no_links, block_kind, is_reparse,
+from executor import Journal, atomic_write, cross_scopes, guard, meta, read_journal
+from safety import (SafetyError, assert_no_links, block_kind, is_system_attr,
                     is_system_root, key, normal, within)
 
 
@@ -27,6 +28,7 @@ MAX_ENTRIES_PER_DIR = 250
 MAX_TOTAL_ENTRIES = 3500
 SCAN_TIME_BUDGET = 1.5
 LIVE_LS_LIMIT = 500
+LIVE_LS_SCAN_LIMIT = 1000
 
 
 def operation_kind(op, effect):
@@ -68,55 +70,43 @@ def _rel_dir_key(root, directory):
         return None
 
 
-def _all_secret_markers(journal, protection, visible_external_roots):
-    markers = [row for row in protection.markers if row['kind'] == 'SECRET']
-    for ext in visible_external_roots:
-        try:
-            assert_no_links(ext)
-            markers.extend(row for row in Journal(ext).protection().markers if row['kind'] == 'SECRET')
-        except (OSError, ValueError):
-            continue
-    return markers
+def _read_protection(journal):
+    return journal.protection(inherit_cache_cleanup=True, include_skips=True)
 
 
-def _list_dir_safe(target_dir, secret_markers, *, limit=MAX_ENTRIES_PER_DIR):
-    """List immediate non-symlink, non-secret children of target_dir as [name, isDirInt, sizeInt]."""
+def _guard_history_path(path, root, protection, *, descendants=False):
+    if any(part.casefold() == '_organize' for part in path.relative_to(root).parts):
+        raise SafetyError('整理状态目录不参与历史浏览')
+    if descendants and block_kind(path, protection.markers, descendants=True):
+        raise SafetyError('路径命中保护标记')
+    guard(path, root, protection, allow_root=path == root, allow_container=True)
+    if path != root and is_system_attr(path):
+        raise SafetyError('命中 Windows 系统属性，禁止浏览')
+
+
+def _list_dir_safe(target_dir, root, protection, *, limit, offset=0, deadline=None):
+    """Return one bounded page, counting filtered entries in the directory offset."""
+    _guard_history_path(target_dir, root, protection)
     entries = []
-    truncated = False
-    try:
-        assert_no_links(target_dir)
-        # Allow browsing a container dir that merely has a SECRET child; block if the dir itself (or an ancestor) is SECRET.
-        if secret_markers and block_kind(target_dir, secret_markers, descendants=False):
-            return entries, False
-        with os.scandir(target_dir) as it:
-            for item in it:
-                if item.name.casefold() == '_organize':
-                    continue
-                try:
-                    if is_reparse(item.path):
-                        continue
-                    if secret_markers and block_kind(item.path, secret_markers, descendants=False):
-                        continue
-                    is_dir = item.is_dir(follow_symlinks=False)
-                    size = 0
-                    if not is_dir:
-                        try:
-                            size = int(item.stat(follow_symlinks=False).st_size)
-                        except OSError:
-                            size = 0
-                except (OSError, ValueError):
-                    continue
-                if len(entries) >= limit:
-                    truncated = True
-                    break
-                entries.append([item.name, 1 if is_dir else 0, size])
-    except (OSError, ValueError):
-        return [], False
+    next_offset = None
+    with os.scandir(target_dir) as contents:
+        for index, item in enumerate(islice(contents, offset, None), offset):
+            if (len(entries) >= limit or index - offset >= LIVE_LS_SCAN_LIMIT or
+                    (index > offset and deadline is not None and time.monotonic() >= deadline)):
+                next_offset = index
+                break
+            try:
+                _guard_history_path(Path(item.path), root, protection)
+                is_dir = item.is_dir(follow_symlinks=False)
+                size = 0 if is_dir else item.stat(follow_symlinks=False).st_size
+            except (OSError, ValueError):
+                continue
+            entries.append([item.name, int(is_dir), size])
     entries.sort(key=lambda e: (0 if e[1] else 1, e[0].casefold()))
-    return entries, truncated
+    return entries, next_offset
 
 
-def collect_present_entries(journal, secret_markers, visible):
+def collect_present_entries(journal, protection, visible):
     """Build a bounded, secret-safe snapshot of current directories for the Time-Machine Explorer."""
     root = Path(journal.root)
     queue = deque()
@@ -147,12 +137,13 @@ def collect_present_entries(journal, secret_markers, visible):
                         if key(cur) == key(root):
                             break
                         cur = cur.parent
-                    if field == 'after' and resolved.is_dir() and not is_reparse(resolved):
+                    if field == 'after' and resolved.is_dir():
                         enqueue(resolved)
             except (OSError, ValueError):
                 continue
 
     present = {}
+    truncated = []
     scanned_dirs = 0
     total_entries = 0
     deadline = time.monotonic() + SCAN_TIME_BUDGET
@@ -161,12 +152,15 @@ def collect_present_entries(journal, secret_markers, visible):
         if time.monotonic() > deadline:
             break
         rel, dir_path = queue.popleft()
-        if not dir_path.is_dir():
-            continue
-        remaining = min(MAX_ENTRIES_PER_DIR, MAX_TOTAL_ENTRIES - total_entries)
-        entries, _ = _list_dir_safe(dir_path, secret_markers, limit=remaining)
-        present[rel] = entries
         scanned_dirs += 1
+        remaining = min(MAX_ENTRIES_PER_DIR, MAX_TOTAL_ENTRIES - total_entries)
+        try:
+            entries, next_offset = _list_dir_safe(dir_path, root, protection, limit=remaining, deadline=deadline)
+        except (OSError, ValueError):
+            continue
+        if next_offset is not None:
+            truncated.append(rel)
+        present[rel] = entries
         total_entries += len(entries)
         # Also enqueue immediate subdirectories of root (depth 1) so first-level browsing is smooth offline.
         if rel == '.':
@@ -174,10 +168,10 @@ def collect_present_entries(journal, secret_markers, visible):
                 if is_dir and len(queue) < MAX_SCAN_DIRS:
                     enqueue(dir_path / name)
 
-    return present
+    return present, truncated
 
 
-def collect_destination_meta(journal, secret_markers, visible):
+def collect_destination_meta(journal, protection, visible, external_protections):
     """Record current existence and file/folder type for visible operation paths (secret-safe)."""
     root = Path(journal.root)
     meta_map = {}
@@ -190,12 +184,15 @@ def collect_destination_meta(journal, secret_markers, visible):
             if resolved is None:
                 continue
             try:
-                if secret_markers and block_kind(resolved, secret_markers, descendants=True):
-                    continue
+                scope, scope_protection = next(
+                    ((external, rules) for external, rules in external_protections.items()
+                     if within(resolved, external)), (root, protection),
+                )
+                _guard_history_path(Path(normal(resolved)), scope, scope_protection)
                 exists = os.path.lexists(resolved)
-                is_dir = bool(exists and resolved.is_dir() and not is_reparse(resolved))
+                is_dir = bool(exists and resolved.is_dir())
                 size = 0
-                if exists and not is_dir and not is_reparse(resolved):
+                if exists and not is_dir:
                     try:
                         size = int(os.stat(resolved, follow_symlinks=False).st_size)
                     except OSError:
@@ -292,17 +289,9 @@ def trace_path(operations, root, query_path, *, as_of_seq=None):
     }
 
 
-def collect_history(journal, protection):
-    primary_secrets = [row for row in protection.markers if row['kind'] == 'SECRET']
-    if block_kind(journal.root, primary_secrets):
-        raise SafetyError('整理根目录命中凭据保护标记')
-    rows = read_journal(journal.path)
-    try:
-        mirror_differs = read_journal(journal.mirror) != rows
-    except (OSError, ValueError):
-        mirror_differs = True
-    external_secrets = {}
-    visible_external_roots = set()
+def collect_operations(journal, protection, rows):
+    external_protections = {}
+    operation_scopes = {}
     operations = {}
     hidden = set()
     for row in rows:
@@ -310,8 +299,8 @@ def collect_history(journal, protection):
         tx = metadata.get('tx')
         op_id = (row['run_id'], tx) if isinstance(tx, str) and tx else row['seq']
         paths = tuple(row[field] for field in ('before', 'after'))
-        markers = primary_secrets
         external_root = None
+        external_paths = []
         if metadata.get('effect') == 'cross-move':
             scope = metadata.get('cross')
             try:
@@ -319,24 +308,31 @@ def collect_history(journal, protection):
             except (OSError, ValueError):
                 hidden.add(op_id)
                 continue
-            external = target_root if source_root == journal.root else source_root
-            external_root = external
-            if external not in external_secrets:
+            external_root = target_root if source_root == journal.root else source_root
+            if external_root not in external_protections:
                 try:
-                    assert_no_links(external)
-                    external_secrets[external] = [row for row in Journal(external).protection().markers
-                                                  if row['kind'] == 'SECRET']
+                    assert_no_links(external_root)
+                    external_protections[external_root] = _read_protection(Journal(external_root))
                 except (OSError, ValueError):
-                    external_secrets[external] = None
-            if external_secrets[external] is None:
+                    external_protections[external_root] = None
+            if external_protections[external_root] is None:
                 hidden.add(op_id)
                 continue
-            markers = markers + external_secrets[external]
-        if any(path not in ('', '-') and block_kind(journal.root / path, markers, descendants=True) for path in paths):
+        try:
+            for raw in paths:
+                if raw in ('', '-'):
+                    continue
+                path = Path(normal(journal.root / raw))
+                scope, rules = journal.root, protection
+                if external_root is not None and within(path, external_root):
+                    scope, rules = external_root, external_protections[external_root]
+                    external_paths.append(path)
+                _guard_history_path(path, scope, rules, descendants=True)
+        except (OSError, ValueError):
             hidden.add(op_id)
             continue
-        if external_root is not None:
-            visible_external_roots.add(external_root)
+        if external_paths:
+            operation_scopes.setdefault(op_id, {}).update({path: external_root for path in external_paths})
 
         kind, direction = operation_kind(row['op'], metadata.get('effect'))
         operation = operations.setdefault(op_id, {
@@ -358,18 +354,31 @@ def collect_history(journal, protection):
     for operation in visible:
         if operation['inverseOf'] not in visible_seqs:
             operation['inverseOf'] = None
+    scopes = {path: (root, external_protections[root])
+              for op_id, paths in operation_scopes.items() if op_id not in hidden
+              for path, root in paths.items()}
+    return visible, len(hidden), scopes
 
-    all_secrets = _all_secret_markers(journal, protection, visible_external_roots)
-    present = collect_present_entries(journal, all_secrets, visible)
-    dest_meta = collect_destination_meta(journal, all_secrets, visible)
+
+def collect_history(journal, protection):
+    _guard_history_path(journal.root, journal.root, protection)
+    rows = read_journal(journal.path)
+    try:
+        mirror_differs = read_journal(journal.mirror) != rows
+    except (OSError, ValueError):
+        mirror_differs = True
+    visible, hidden, scopes = collect_operations(journal, protection, rows)
+    present, truncated = collect_present_entries(journal, protection, visible)
+    external_protections = dict(scopes.values())
+    dest_meta = collect_destination_meta(journal, protection, visible, external_protections)
 
     return {
         'root': str(journal.root), 'journalPath': str(journal.path),
         'systemDrive': bool(is_system_root(journal.root)),
         'captured': datetime.now(timezone.utc).isoformat(),
         'mirrorDiffers': mirror_differs,
-        'hidden': len(hidden), 'operations': visible,
-        'present': present, 'destinationMeta': dest_meta,
+        'hidden': hidden, 'operations': visible,
+        'present': present, 'presentTruncated': truncated, 'destinationMeta': dest_meta,
     }
 
 
@@ -439,51 +448,28 @@ def write_preview(journal, out, prepared, blocked, external_roots, receipt_reque
     }, lang, protection)
 
 
-def _allowed_live_scopes(journal, snapshot):
-    """Compute allowed root scopes for live /ls, /stat, /reveal: primary root + visible cross-move targets."""
-    scopes = [Path(journal.root)]
-    seen = {key(journal.root)}
-    for op in snapshot.get('operations') or []:
-        for field in ('after', 'before'):
-            raw = op.get(field)
-            if not raw:
-                continue
-            p = _resolve_op_path(journal.root, raw)
-            if p is None:
-                continue
-            try:
-                if not within(p, journal.root):
-                    k = key(p)
-                    if k not in seen:
-                        seen.add(k)
-                        scopes.append(p)
-            except (OSError, ValueError):
-                continue
-    return scopes
-
-
-def _validate_live_path(raw_path, journal, scopes, secret_markers, *, allow_secret_descendants=False):
-    """Validate that a live API path is within allowed scopes, has no links, and is not SECRET."""
+def _validate_live_path(raw_path, journal, *, descendants=False):
     if not isinstance(raw_path, str) or not raw_path.strip():
         raise SafetyError('路径不能为空')
-    target = _resolve_op_path(journal.root, raw_path.strip())
+    target = _resolve_op_path(journal.root, raw_path)
     if target is None:
         raise SafetyError('路径无效')
-    in_scope = False
-    for scope in scopes:
-        try:
-            if within(target, scope):
-                in_scope = True
-                break
-        except (OSError, ValueError):
-            continue
-    if not in_scope:
-        raise SafetyError('路径超出当前历史允许范围')
-    if secret_markers and block_kind(target, secret_markers, descendants=not allow_secret_descendants):
-        raise SafetyError('路径命中凭据保护标记')
-    if os.path.lexists(target):
-        assert_no_links(target)
-    return Path(normal(target))
+    target = Path(normal(target))
+    root, protection = journal.root, _read_protection(journal)
+    _guard_history_path(root, root, protection)
+    if not within(target, root):
+        _, _, scopes = collect_operations(journal, protection, read_journal(journal.path))
+        match = next((scope for endpoint, scope in scopes.items() if within(target, endpoint)), None)
+        if match is None:
+            raise SafetyError('路径超出当前历史允许范围')
+        root, protection = match
+    _guard_history_path(target, root, protection, descendants=descendants)
+    return target, root, protection
+
+
+def _directory_revision(path):
+    info = path.stat()
+    return f'{info.st_dev}:{info.st_ino}:{info.st_mtime_ns}:{info.st_ctime_ns}'
 
 
 def _reveal_in_file_manager(target_path):
@@ -503,16 +489,9 @@ def _reveal_in_file_manager(target_path):
 
 def make_server(journal, protection, lang='zh-CN'):
     """Create a local-only live server for the Time-Machine Historical File Explorer."""
+    _guard_history_path(journal.root, journal.root, protection)
     token = py_secrets.token_urlsafe(24)
     page_path = f'/{token}/'
-
-    def load_live_state():
-        fresh_protection = journal.protection()
-        snap = collect_history(journal, fresh_protection)
-        scopes = _allowed_live_scopes(journal, snap)
-        ext_roots = {s for s in scopes if key(s) != key(journal.root)}
-        secrets = _all_secret_markers(journal, fresh_protection, ext_roots)
-        return snap, scopes, secrets
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -549,7 +528,7 @@ def make_server(journal, protection, lang='zh-CN'):
             parsed = urlsplit(self.path)
             if parsed.path == page_path:
                 try:
-                    snap, _, _ = load_live_state()
+                    snap = collect_history(journal, _read_protection(journal))
                     snap['live'] = True
                     snap['apiBase'] = page_path
                     body = render_document(snap, lang, live=True).encode('utf-8')
@@ -564,13 +543,28 @@ def make_server(journal, protection, lang='zh-CN'):
                 params = parse_qs(parsed.query)
                 raw = params.get('path', ['.'])[0]
                 try:
-                    _, scopes, secrets = load_live_state()
-                    target = _validate_live_path(raw, journal, scopes, secrets, allow_secret_descendants=True)
+                    offset = int(params.get('offset', ['0'])[0])
+                    resume = params.get('revision', [''])[0]
+                    if offset < 0 or (offset and not resume):
+                        raise SafetyError('目录分页位置无效')
+                    target, root, protection = _validate_live_path(raw, journal)
                     if not target.is_dir():
                         self._send_json(200, {'ok': True, 'exists': False, 'entries': [], 'truncated': False})
                         return
-                    entries, truncated = _list_dir_safe(target, secrets, limit=LIVE_LS_LIMIT)
-                    self._send_json(200, {'ok': True, 'exists': True, 'entries': entries, 'truncated': truncated})
+                    revision = _directory_revision(target)
+                    if offset and resume != revision:
+                        self._send_json(409, {'ok': False, 'changed': True})
+                        return
+                    entries, next_offset = _list_dir_safe(
+                        target, root, protection, limit=LIVE_LS_LIMIT, offset=offset,
+                        deadline=time.monotonic() + SCAN_TIME_BUDGET,
+                    )
+                    if _directory_revision(target) != revision:
+                        self._send_json(409, {'ok': False, 'changed': True})
+                        return
+                    self._send_json(200, {'ok': True, 'exists': True, 'entries': entries,
+                                          'truncated': next_offset is not None,
+                                          'nextOffset': next_offset, 'revision': revision})
                 except (OSError, ValueError) as exc:
                     msg = str(exc) if isinstance(exc, SafetyError) else '无法读取目录'
                     self._send_json(400, {'ok': False, 'error': msg})
@@ -580,12 +574,11 @@ def make_server(journal, protection, lang='zh-CN'):
                 params = parse_qs(parsed.query)
                 raw = params.get('path', [''])[0]
                 try:
-                    _, scopes, secrets = load_live_state()
-                    target = _validate_live_path(raw, journal, scopes, secrets)
+                    target, _, _ = _validate_live_path(raw, journal, descendants=True)
                     exists = os.path.lexists(target)
-                    is_dir = bool(exists and target.is_dir() and not is_reparse(target))
+                    is_dir = bool(exists and target.is_dir())
                     size = 0
-                    if exists and not is_dir and not is_reparse(target):
+                    if exists and not is_dir:
                         try:
                             size = int(os.stat(target, follow_symlinks=False).st_size)
                         except OSError:
@@ -614,8 +607,7 @@ def make_server(journal, protection, lang='zh-CN'):
                     raise SafetyError('请求体大小无效')
                 body = json.loads(self.rfile.read(length).decode('utf-8'))
                 raw = body.get('path') if isinstance(body, dict) else None
-                _, scopes, secrets = load_live_state()
-                target = _validate_live_path(raw, journal, scopes, secrets)
+                target, _, _ = _validate_live_path(raw, journal, descendants=True)
                 _reveal_in_file_manager(target)
                 self._send_json(200, {'ok': True, 'path': str(target)})
             except (OSError, ValueError) as exc:
@@ -629,7 +621,7 @@ def make_server(journal, protection, lang='zh-CN'):
 def main(args):
     journal = Journal(args.root, allow_system_drive=getattr(args, 'allow_system_drive', False))
     assert_no_links(journal.root)
-    protection = journal.protection()
+    protection = _read_protection(journal)
     if getattr(args, 'serve', False):
         server, url = make_server(journal, protection, lang=args.lang)
         with server:

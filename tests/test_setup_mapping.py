@@ -11,6 +11,35 @@ import setup
 
 
 class SetupVideoMappingTests(unittest.TestCase):
+    def test_adult_mapping_is_removed_on_toggle_and_manual_destination_survives(self):
+        policy = {'mapping': {}, '_adultSeparated': True,
+                  '_setupGeneratedMapping': {'adult_audio': '成人内容', 'adult_game': '成人内容', 'adult_image': '成人内容'}}
+        setup.update_setup_mapping(policy, 'adult_separation', '分开，成人内容独立成区', '混在一起')
+        self.assertEqual(policy['mapping'], {})
+        policy = {'mapping': {'adult_audio': '我的私密区'},
+                  '_setupGeneratedMapping': {'adult_game': '成人内容'}}
+        setup.update_setup_mapping(policy, 'adult_separation', '分开', '混在一起')
+        self.assertEqual(policy['mapping'], {'adult_audio': '我的私密区'})
+
+    def test_tool_product_mapping_is_removed_when_toggled_back(self):
+        policy = {'mapping': {'voice_synth': '歌声合成', 'music': '自定义音乐', 'system_image': '系统镜像'},
+                  '_setupGeneratedMapping': {'voice_synth': '歌声合成'}}
+        setup.update_setup_mapping(policy, 'tool_vs_product', '分开', '不分开')
+        self.assertEqual(policy['mapping'], {'music': '自定义音乐', 'system_image': '系统镜像'})
+        policy['mapping']['voice_synth'] = '歌声合成'
+        setup.update_setup_mapping(policy, 'tool_vs_product', '不分开', '分开')
+        setup.update_setup_mapping(policy, 'tool_vs_product', '分开', '不分开')
+        self.assertEqual(policy['mapping']['voice_synth'], '歌声合成')
+
+    def test_null_adult_answer_does_not_raise(self):
+        with tempfile.TemporaryDirectory(prefix='organizer-test-setup-') as temp:
+            root = Path(temp) / 'disk'
+            root.mkdir()
+            answers = Path(temp) / 'answers.json'
+            answers.write_text(json.dumps({'setup': {'adult_separation': None}}), encoding='utf-8')
+            self.assertEqual(setup.main(['apply', str(root), str(answers)]), 1)
+            self.assertFalse((root / '_organize' / 'policy.json').exists())
+
     def test_changing_video_split_removes_generated_but_keeps_custom_mapping(self):
         with tempfile.TemporaryDirectory(prefix='organizer-test-setup-') as temp:
             root = Path(temp) / 'disk'

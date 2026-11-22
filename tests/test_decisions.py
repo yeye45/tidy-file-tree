@@ -220,10 +220,34 @@ class TestContentShape(unittest.TestCase):
             self.assertEqual(r["kind"], "empty")
             self.assertEqual(r["total"], 0)
 
+    def test_truncated_empty_tree_is_not_reported_as_genuinely_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            for index in range(D.SAMPLE_DIR_LIMIT + 1):
+                (Path(d) / f"empty-{index:03}").mkdir()
+            r = D.content_shape(d, max_files=1)
+            self.assertEqual(r["total"], 0)
+            self.assertEqual(r["kind"], "unknown")
+            self.assertTrue(r["truncated"])
+
     def test_missing_dir(self):
         r = D.content_shape("/nonexistent/path/xyz")
         # 不抛异常，返回 total=0 或 None
         self.assertTrue(r is None or r["total"] == 0)
+
+
+class TestBoundedSamples(unittest.TestCase):
+    def test_representative_samples_cover_numeric_sequence(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / "series"
+            folder.mkdir()
+            for index in range(1, 31):
+                (folder / f"episode{index:03}.mkv").touch()
+            evidence = D.observe_sample_files(str(folder), d, limit=8)
+            names = [Path(item[0]).name for item in evidence]
+            self.assertEqual(len(names), 3)
+            self.assertIn("episode001.mkv", names)
+            self.assertIn("episode016.mkv", names)
+            self.assertIn("episode030.mkv", names)
 
     def test_case_insensitive(self):
         with tempfile.TemporaryDirectory() as d:

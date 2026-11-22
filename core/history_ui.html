@@ -416,7 +416,7 @@ const labels = {
   expStCross:['已跨卷 → {dest}','Cross-drive → {dest}'],
   expStUndone:['已撤销回原位','Undone (back in place)'],
   expStUnchanged:['仍在原位','Unchanged'],
-  expInsideMoved:['当前正在浏览已迁移目录的旧位置，内部所有项均已随父目录迁至：','Browsing inside a moved folder’s historical location — contents now live at:'],
+  expInsideMoved:['正在浏览已迁移目录的旧位置。该目录现位于：','Browsing the historical location of a folder now at:'],
   expTraceHit:['已按历史迁移链路推算出该路径现位置','Traced current location from historical move chain'],
   expEmptyDir:['当前文件夹在该时间点暂无可显示条目（双击左侧其他目录浏览）。','No visible items in this folder at this timepoint.'],
   expEmptySearch:['未找到匹配的旧路径或文件名。','No matching historical path or filename found.'],
@@ -426,6 +426,8 @@ const labels = {
   expInspExists:['磁盘上存在','Exists on disk'],
   expInspMissing:['目标位置未找到（可能已外部移动/删除）','Not found at destination'],
   expInspChecking:['核验中…','Checking…'],
+  expStatFailed:['无法核验当前状态','Could not check current status'],
+  expRetry:['重试','Retry'],
   expRevealBtn:['在资源管理器中定位','Reveal in Explorer'],
   expRevealOk:['已在系统文件管理器中打开并定位。','Revealed in system file manager.'],
   expCopyPath:['复制现路径','Copy current path'],
@@ -435,6 +437,11 @@ const labels = {
   expInherited:['随父目录 {from} 一起迁移','Moved with parent folder {from}'],
   expOfflineTip:['当前为离线只读快照。运行 tidy-file-tree history <目录> --serve 可开启一键唤起系统资源管理器定位与深层目录实时浏览。','Offline snapshot. Run tidy-file-tree history <dir> --serve for 1-click Reveal in Explorer and live deep-folder browsing.'],
   expLoadingDir:['正在读取目录内容…','Loading folder contents…'],
+  expPartialDir:['离线快照仅收录了本层部分条目，实时模式可以继续浏览。','This offline snapshot contains only part of this folder. Use live mode to browse further.'],
+  expUncapturedDir:['离线快照未收录本层的磁盘内容。','The offline snapshot did not capture this folder’s disk contents.'],
+  expMoreDir:['加载更多条目','Load more entries'],
+  expDirFailed:['无法读取当前目录内容。','Could not read the current folder.'],
+  expDirChanged:['读取期间目录发生了变化，请重新加载。','The folder changed while reading. Reload to continue.'],
   expEnterMovedTip:['双击可进入查看内部文件现位置','Double-click to browse contents inside'],
 };
 const t = (key, values={}) => labels[key][Number(lang === 'en')].replace(/\{([a-z]+)\}/g, (_, name) => values[name]);
@@ -476,6 +483,11 @@ const isWinRoot = /^(?:[A-Za-z]:\\|\\\\)/.test(data.root);
 const rootTrim = data.root.replace(/[\\/]$/, '');
 const journalPath = data.journalPath || (rootTrim + (isWinRoot ? '\\' : '/') + '_organize' + (isWinRoot ? '\\' : '/') + 'journal.tsv');
 const sysFlag = data.systemDrive ? ' --allow-system-drive' : '';
+function shellArg(value) {
+  const escaped = String(value).replace(/'/g, isWinRoot ? "''" : "'\\''");
+  return "'" + escaped + "'";
+}
+
 function relPath(value) {
   if (!value) return '';
   if (showFullPath) return value;
@@ -623,7 +635,7 @@ function renderBatchStrip(matchCountsByRun) {
   $('undoDrawerBtn').textContent = t(undoDrawerOpen ? 'undoBatchHide' : 'undoBatchBtn');
   $('undoDrawer').hidden = !hasSingleBatch || !undoDrawerOpen;
   if (hasSingleBatch) {
-    const cmd = `tidy-file-tree undo --journal "${journalPath.replace(/"/g,'\\"')}" --run-id ${selectedBatch}${sysFlag} --dry-run`;
+    const cmd = `tidy-file-tree undo --journal ${shellArg(journalPath)} --run-id ${shellArg(selectedBatch)}${sysFlag} --dry-run`;
     $('cmdText').textContent = cmd;
     $('copyCmd').textContent = t('copyUndo');
     $('copyCmd').onclick = () => copyCmdText(cmd, $('copyCmd'), 'copyUndo');
@@ -953,14 +965,15 @@ function applyLanguage(next) {
 /* ==================== Time-Machine Historical File Explorer ==================== */
 const isLive = Boolean(data.live && data.apiBase);
 const presentMap = data.present || {};
+const presentTruncated = new Set(data.presentTruncated || []);
 const destMetaMap = data.destinationMeta || {};
 const liveDirCache = new Map();
 const liveStatCache = new Map();
 const doneMoveOps = data.operations
   .filter(op => (op.kind === 'move' || op.kind === 'cross-move' || op.kind === 'rename') && op.before && op.after && op._last?.status === 'done')
   .sort((a, b) => a._last.seq - b._last.seq);
-const doneMkdirOps = data.operations
-  .filter(op => op.kind === 'mkdir' && op.after && op._last?.status === 'done')
+const doneFolderOps = data.operations
+  .filter(op => op.kind === 'mkdir' && (op.after || op.before) && op._last?.status === 'done')
   .sort((a, b) => a._last.seq - b._last.seq);
 
 let appMode = (!preview && doneMoveOps.length > 0) ? 'explorer' : 'journal';
@@ -1028,8 +1041,6 @@ function lookupMeta(absPath) {
   return null;
 }
 function presentEntriesFor(absDir) {
-  const k = normCmp(absDir);
-  if (liveDirCache.has(k)) return liveDirCache.get(k);
   const rel = toRelPosix(absDir);
   if (rel !== null) {
     const pKey = rel === '' ? '.' : rel;
@@ -1065,12 +1076,21 @@ function classifyChange(pathAtT, currentPath, steps) {
 }
 
 function buildTimeMachine(cutoffSeq) {
-  const futureOps = doneMoveOps.filter(op => op._last.seq > cutoffSeq);
-  const futureMkdirs = doneMkdirOps.filter(op => op._last.seq > cutoffSeq);
-  const createdAfterT = new Set(futureMkdirs.map(op => normCmp(toAbsPath(op.after))));
+  const futureOps = [...doneMoveOps, ...doneFolderOps].filter(op => op._last.seq > cutoffSeq)
+    .sort((a, b) => a._last.seq - b._last.seq);
+  const created = new Map();
   const tracked = [];
 
   for (const op of futureOps) {
+    if (op.kind === 'mkdir') {
+      if (op.after) {
+        const path = toAbsPath(op.after);
+        created.set(normCmp(path), path);
+      } else if (op.before) {
+        created.delete(normCmp(toAbsPath(op.before)));
+      }
+      continue;
+    }
     const befAbs = toAbsPath(op.before);
     const aftAbs = toAbsPath(op.after);
     const befCmp = normCmp(befAbs);
@@ -1097,12 +1117,14 @@ function buildTimeMachine(cutoffSeq) {
         const next = joinPath(aftAbs, suffix);
         item.steps.push({...stepBase, from: item.currentPath, to: next, inherited: true});
         item.currentPath = next;
-      } else if (befCmp.startsWith(curCmp + '\\') && !matchedChildOf) {
+      } else if (befCmp.startsWith(curCmp + '\\') &&
+                 (!matchedChildOf || curCmp.length > normCmp(matchedChildOf.currentPath).length)) {
         matchedChildOf = item;
       }
     }
 
-    if (!matchedExact) {
+    const sourceCreatedAfterT = hasPathAncestor(befCmp, created);
+    if (!matchedExact && !sourceCreatedAfterT) {
       if (matchedChildOf) {
         const suffix = befAbs.slice(matchedChildOf.currentPath.replace(/[\\/]+$/, '').length + 1);
         const pathAtT = joinPath(matchedChildOf.pathAtT, suffix);
@@ -1122,6 +1144,14 @@ function buildTimeMachine(cutoffSeq) {
         });
       }
     }
+    for (const [createdKey, path] of [...created]) {
+      if (createdKey === befCmp || createdKey.startsWith(befCmp + '\\')) {
+        const next = createdKey === befCmp ? aftAbs : joinPath(aftAbs, path.slice(befAbs.length + 1));
+        created.delete(createdKey);
+        created.set(normCmp(next), next);
+      }
+    }
+    if (sourceCreatedAfterT) created.set(normCmp(aftAbs), aftAbs);
   }
 
   // Enrich tracked items with relative paths, folder detection, and current disk meta.
@@ -1157,7 +1187,18 @@ function buildTimeMachine(cutoffSeq) {
     if (!item.isDir && item.relAtT !== null && virtualFolders.has(item.relAtT)) item.isDir = true;
   }
 
-  return {cutoffSeq, tracked, byRelAtT, arrivedAfterT, createdAfterT, folderChangeCounts, virtualFolders};
+  return {cutoffSeq, tracked, byRelAtT, arrivedAfterT, createdAfterT: created, folderChangeCounts, virtualFolders};
+}
+
+function hasPathAncestor(path, paths) {
+  let current = path;
+  while (current) {
+    if (paths.has(current)) return true;
+    const separator = current.lastIndexOf('\\');
+    if (separator < 0) break;
+    current = current.slice(0, separator);
+  }
+  return false;
 }
 
 function findMovedAncestor(relDir, st) {
@@ -1277,19 +1318,17 @@ function getExplorerEntries(dirRel, st) {
     });
   }
 
-  // 3. Present-day entries from the mapped physical directory (hybrid ghost + untouched overlay!).
-  const present = presentEntriesFor(physicalDirAbs);
+  // 3. Overlay disk entries with no later arrival at this location.
+  const live = liveDirCache.get(normCmp(physicalDirAbs));
+  const present = isLive ? live?.entries : presentEntriesFor(physicalDirAbs);
   if (Array.isArray(present)) {
     for (const [name, isDirInt, size] of present) {
       if (seen.has(normCmp(name))) continue;
       const physChildAbs = joinPath(physicalDirAbs, name);
       const childRel = prefix + name;
       const histChildAbs = joinPath(rootTrim, childRel);
-      if (!movedAnc) {
-        // Skip items that were moved INTO this folder AFTER timepoint T, or mkdir'd after T.
-        if (st.arrivedAfterT.has(normCmp(physChildAbs))) continue;
-        if (st.createdAfterT.has(normCmp(physChildAbs))) continue;
-      }
+      const physicalKey = normCmp(physChildAbs);
+      if (st.arrivedAfterT.has(physicalKey) || st.createdAfterT.has(physicalKey)) continue;
       add({
         key: 'rel:' + normCmp(childRel),
         name,
@@ -1317,7 +1356,9 @@ function getExplorerEntries(dirRel, st) {
     return a.name.localeCompare(b.name, lang);
   });
 
-  return {entries, movedAnc, physicalDirAbs, needsLiveFetch: isLive && present === null};
+  const relative = toRelPosix(physicalDirAbs);
+  return {entries, movedAnc, physicalDirAbs, live, missingSnapshot: !isLive && present === null,
+          partialSnapshot: !isLive && presentTruncated.has(relative || '.') && relative !== null};
 }
 
 function searchExplorerAll(query, st) {
@@ -1482,8 +1523,10 @@ function renderExplorerInspector(item) {
   }
   const destAbs = item.currentPath;
   const cachedStat = liveStatCache.get(normCmp(destAbs));
-  const existsVal = cachedStat !== undefined ? cachedStat.exists : item.existsNow;
-  const existBadge = existsVal === true
+  const existsVal = isLive ? cachedStat?.exists : item.existsNow;
+  const existBadge = cachedStat?.error
+    ? `<button type="button" class="exp-btn-sec" data-stat-retry="${esc(destAbs)}">${esc(t('expStatFailed'))} · ${esc(t('expRetry'))}</button>`
+    : existsVal === true
     ? `<span class="tag done">${esc(t('expInspExists'))}</span>`
     : existsVal === false
       ? `<span class="tag failed">${esc(t('expInspMissing'))}</span>`
@@ -1551,28 +1594,50 @@ function renderExplorerInspector(item) {
   }
 }
 
-async function fetchLiveDir(absDir) {
+async function fetchLiveDir(absDir, {more = false, retry = false} = {}) {
   const k = normCmp(absDir);
-  if (liveDirCache.has(k)) return;
-  try {
-    const res = await fetch(data.apiBase + 'ls?path=' + encodeURIComponent(absDir));
-    const json = await res.json();
-    liveDirCache.set(k, (json && json.ok && Array.isArray(json.entries)) ? json.entries : []);
-  } catch (_) {
-    liveDirCache.set(k, []);
+  const previous = liveDirCache.get(k);
+  if (previous?.loading || (previous && !more && !retry)) return;
+  const page = more ? previous : null;
+  const params = new URLSearchParams({path: absDir});
+  if (page?.nextOffset != null) {
+    params.set('offset', page.nextOffset);
+    params.set('revision', page.revision);
   }
-  renderExplorer();
+  liveDirCache.set(k, {entries: page?.entries, loading: true});
+  if (more || retry) renderExplorer();
+  try {
+    const res = await fetch(data.apiBase + 'ls?' + params);
+    const json = await res.json();
+    if (res.ok && json.ok && Array.isArray(json.entries)) {
+      liveDirCache.set(k, {
+        entries: [...(page?.entries || []), ...json.entries],
+        nextOffset: json.nextOffset, revision: json.revision,
+      });
+    } else {
+      liveDirCache.set(k, {entries: page?.entries, error: json.changed ? 'expDirChanged' : 'expDirFailed'});
+    }
+  } catch (_) {
+    liveDirCache.set(k, {entries: page?.entries, error: 'expDirFailed'});
+  }
+  if (appMode === 'explorer') renderExplorer();
 }
 
 async function fetchLiveStat(absPath, itemKey) {
   const k = normCmp(absPath);
   if (liveStatCache.has(k)) return;
+  liveStatCache.set(k, {loading: true});
+  let status = {error: true};
   try {
     const res = await fetch(data.apiBase + 'stat?path=' + encodeURIComponent(absPath));
     const json = await res.json();
-    if (json && json.ok) liveStatCache.set(k, {exists: Boolean(json.exists), isDir: Boolean(json.isDir), size: json.size || 0});
+    if (res.ok && json.ok) status = {exists: Boolean(json.exists)};
   } catch (_) {}
-  if (expSelectedKey === itemKey && appMode === 'explorer') renderExplorer();
+  liveStatCache.set(k, status);
+  if (expSelectedKey === itemKey && appMode === 'explorer') {
+    const selected = currentVisibleItems.find(item => item.key === itemKey && normCmp(item.currentPath) === k);
+    if (selected) renderExplorerInspector(selected);
+  }
 }
 
 async function revealLivePath(absPath) {
@@ -1620,17 +1685,25 @@ function renderExplorer() {
     }
   } else {
     const view = getExplorerEntries(expCurDir, st);
-    if (view.needsLiveFetch) {
-      $('expListPane').innerHTML = `<div class="exp-empty">${esc(t('expLoadingDir'))}</div>`;
-      fetchLiveDir(view.physicalDirAbs);
-      return;
-    }
+    if (isLive && !view.live) fetchLiveDir(view.physicalDirAbs);
     const allCount = view.entries.length;
     const changedCount = view.entries.filter(it => it.status !== 'unchanged').length;
     list = expOnlyChanged ? view.entries.filter(it => it.status !== 'unchanged') : view.entries;
     $('expCount').textContent = t('expCount', {total: allCount, changed: changedCount});
     if (view.movedAnc) {
       bannerHtml = `<span><strong>${esc(t('expInsideMoved'))}</strong> ${esc(relPath(view.movedAnc.mappedAbs) || view.movedAnc.mappedAbs)}</span>`;
+    }
+    if (view.partialSnapshot || view.missingSnapshot) {
+      bannerHtml += `<span>${esc(t(view.partialSnapshot ? 'expPartialDir' : 'expUncapturedDir'))}</span>`;
+    }
+    if (isLive) {
+      const active = view.live;
+      if (!active || active.loading) bannerHtml += `<span>${esc(t('expLoadingDir'))}</span>`;
+      else if (active.error) {
+        bannerHtml += `<span>${esc(t(active.error))}</span><button type="button" class="exp-btn-sec" data-dir-retry="${esc(view.physicalDirAbs)}">${esc(t('expRetry'))}</button>`;
+      } else if (active.nextOffset != null) {
+        bannerHtml += `<button type="button" class="exp-btn-sec" data-dir-more="${esc(view.physicalDirAbs)}">${esc(t('expMoreDir'))}</button>`;
+      }
     }
   }
 
@@ -1790,6 +1863,12 @@ $('expListPane').addEventListener('dblclick', event => {
   }
 });
 $('expInspector').addEventListener('click', event => {
+  const statRetry = event.target.closest('[data-stat-retry]');
+  if (statRetry) {
+    liveStatCache.delete(normCmp(statRetry.dataset.statRetry));
+    renderExplorer();
+    return;
+  }
   const revBtn = event.target.closest('[data-reveal-path]');
   if (revBtn) { revealLivePath(revBtn.dataset.revealPath); return; }
   const copyPathBtn = event.target.closest('[data-copy-path]');
@@ -1797,14 +1876,14 @@ $('expInspector').addEventListener('click', event => {
   const copyRevBtn = event.target.closest('[data-copy-reveal]');
   if (copyRevBtn) {
     const p = copyRevBtn.dataset.copyReveal;
-    const cmd = isWinRoot ? `explorer /select,"${p.replace(/"/g, '\\"')}"` : `open -R "${p.replace(/"/g, '\\"')}"`;
+    const cmd = isWinRoot ? `explorer.exe ${shellArg("/select," + p)}` : `open -R ${shellArg(p)}`;
     copyCmdText(cmd, copyRevBtn, 'expCopyRevealCmd');
     return;
   }
   const undoBtn = event.target.closest('[data-exp-undo-seq]');
   if (undoBtn) {
     const seq = undoBtn.dataset.expUndoSeq;
-    const cmd = `tidy-file-tree undo --journal "${journalPath.replace(/"/g,'\\"')}" --seq ${seq}${sysFlag} --dry-run`;
+    const cmd = `tidy-file-tree undo --journal ${shellArg(journalPath)} --seq ${seq}${sysFlag} --dry-run`;
     copyCmdText(cmd, undoBtn, 'copySingleUndo');
     return;
   }
@@ -1820,6 +1899,12 @@ $('expInspector').addEventListener('click', event => {
     renderAppMode();
     render(op);
   }
+});
+$('expBanner').addEventListener('click', event => {
+  const more = event.target.closest('[data-dir-more]');
+  if (more) fetchLiveDir(more.dataset.dirMore, {more: true});
+  const retry = event.target.closest('[data-dir-retry]');
+  if (retry) fetchLiveDir(retry.dataset.dirRetry, {retry: true});
 });
 $('summary').addEventListener('click', event => {
   const card = event.target.closest('[data-stat-filter]');
@@ -1925,7 +2010,7 @@ $('operations').addEventListener('click',event => {
   const copyBtn = event.target.closest('[data-copy-seq]');
   if (copyBtn) {
     const seq = copyBtn.dataset.copySeq;
-    const cmd = `tidy-file-tree undo --journal "${journalPath.replace(/"/g,'\\"')}" --seq ${seq}${sysFlag} --dry-run`;
+    const cmd = `tidy-file-tree undo --journal ${shellArg(journalPath)} --seq ${seq}${sysFlag} --dry-run`;
     copyCmdText(cmd, copyBtn, 'copySingleUndo');
     return;
   }

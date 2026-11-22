@@ -204,6 +204,32 @@ class ExecutionHistoryTest(unittest.TestCase):
         self.assertEqual(len(traced['steps']), 1)
         self.assertTrue(traced['steps'][0]['inherited'])
 
+    def test_history_skips_marked_and_policy_excluded_directories(self):
+        protected = {'Others': 'FOREIGN', 'HandsOff': 'NO_TOUCH', 'Vault': 'SECRET'}
+        for name in [*protected, 'PolicyExcluded', 'ProbeExcluded', 'Public']:
+            directory = self.root / name
+            directory.mkdir()
+            (directory / (name + '-file.txt')).touch()
+        self.journal_path.parent.mkdir()
+        (self.journal_path.parent / 'markers.tsv').write_bytes(encode_tsv([
+            {'path': str(self.root / name), 'kind': kind, 'by': 'user', 'note': '', 'ts': ''}
+            for name, kind in protected.items()
+        ], MARKER_FIELDS))
+        (self.journal_path.parent / 'policy.json').write_text(
+            json.dumps({'no_go_zones': ['PolicyExcluded']}), encoding='utf-8',
+        )
+        probe = self.journal_path.parent / 'probe'
+        probe.mkdir()
+        (probe / 'skip.json').write_text(json.dumps({
+            'path': str(self.root / 'ProbeExcluded'), 'action': 'skip',
+        }), encoding='utf-8')
+        html, data = self.snapshot()
+        self.assertEqual([entry[0] for entry in data['present']['.']], ['Public'])
+        self.assertIn('Public-file.txt', html)
+        for name in [*protected, 'PolicyExcluded', 'ProbeExcluded']:
+            self.assertNotIn(name + '-file.txt', html)
+            self.assertNotIn(name, data['present'])
+
     def test_trace_path_handles_multihop_rename_and_undo(self):
         dl = self.root / 'Downloads'
         dl.mkdir()
@@ -279,16 +305,34 @@ class ExecutionHistoryTest(unittest.TestCase):
                 self.assertTrue(ls_data['ok'])
                 self.assertNotIn('private.key', [e[0] for e in ls_data['entries']])
 
-                # 3. /stat reports existing destination and blocks SECRET
+                # 3. /stat checks the requested path without rebuilding the snapshot.
                 dest_file = dest / 'mod.zip'
                 stat_url = url + 'stat?path=' + urllib.parse.quote(str(dest_file))
-                with urllib.request.urlopen(stat_url) as resp:
-                    st_data = json.loads(resp.read().decode('utf-8'))
+                with patch.object(history_mod, 'collect_history') as collect:
+                    with urllib.request.urlopen(stat_url) as resp:
+                        st_data = json.loads(resp.read().decode('utf-8'))
+                    collect.assert_not_called()
                 self.assertTrue(st_data['ok'] and st_data['exists'] and not st_data['isDir'])
 
                 with self.assertRaises(urllib.error.HTTPError) as ctx:
                     urllib.request.urlopen(url + 'stat?path=' + urllib.parse.quote(str(secret)))
                 self.assertEqual(ctx.exception.code, 400)
+
+                with patch.object(history_mod, 'LIVE_LS_LIMIT', 2):
+                    for index in range(5):
+                        (dest / f'file-{index}.txt').touch()
+                    endpoint = url + 'ls?path=' + urllib.parse.quote(str(dest))
+                    first = json.load(urllib.request.urlopen(endpoint))
+                    self.assertTrue(first['truncated'])
+                    query = urllib.parse.urlencode({
+                        'offset': first['nextOffset'], 'revision': first['revision'],
+                    })
+                    second = json.load(urllib.request.urlopen(endpoint + '&' + query))
+                    self.assertEqual(len(first['entries'] + second['entries']), 4)
+                    self.assertEqual(len({row[0] for row in first['entries'] + second['entries']}), 4)
+                    with self.assertRaises(urllib.error.HTTPError) as ctx:
+                        urllib.request.urlopen(endpoint + '&offset=2&revision=old')
+                    self.assertEqual(ctx.exception.code, 409)
 
                 # 4. /reveal requires X-Tidy-Action header, blocks out-of-scope/SECRET, allows valid dest
                 req_no_hdr = urllib.request.Request(
@@ -323,6 +367,14 @@ class ExecutionHistoryTest(unittest.TestCase):
                     )
                     with self.assertRaises(urllib.error.HTTPError) as ctx:
                         urllib.request.urlopen(req_outside)
+                    self.assertEqual(ctx.exception.code, 400)
+
+                (self.journal_path.parent / 'markers.tsv').write_bytes(encode_tsv([
+                    {'path': str(dest), 'kind': 'NO_TOUCH', 'by': 'user', 'note': '', 'ts': ''},
+                ], MARKER_FIELDS))
+                for endpoint in ('ls', 'stat'):
+                    with self.assertRaises(urllib.error.HTTPError) as ctx:
+                        urllib.request.urlopen(url + endpoint + '?path=' + urllib.parse.quote(str(dest)))
                     self.assertEqual(ctx.exception.code, 400)
             finally:
                 server.shutdown()

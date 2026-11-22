@@ -14,6 +14,8 @@ import hashlib
 import os
 import stat
 import sys
+import time
+import re
 from datetime import datetime
 from functools import lru_cache
 from heapq import nsmallest
@@ -376,18 +378,52 @@ DOC_EXT = {".doc", ".docx", ".pdf", ".txt", ".md", ".xls", ".xlsx",
            ".ppt", ".pptx", ".odt", ".csv", ".epub", ".mobi"}
 
 
-def sample_walk(path, permit=None):
-    """Yield directories and file names, pruning protected branches before descent."""
-    for folder, dirs, files in os.walk(path):
-        if permit is not None:
-            dirs[:] = [d for d in dirs if permit(os.path.join(folder, d))
-                       and not is_reparse(os.path.join(folder, d))]
-            files = [f for f in files if permit(os.path.join(folder, f))]
+SAMPLE_DIR_LIMIT = 128
+SAMPLE_ENTRY_LIMIT = 10000
+SAMPLE_TIME_LIMIT = 0.75
+
+
+def sample_walk(path, permit=None, *, state=None):
+    """Yield a bounded, permission-pruned walk; report when traversal was cut short."""
+    state = state if state is not None else {}
+    state["truncated"] = False
+    deadline = time.monotonic() + SAMPLE_TIME_LIMIT
+    pending = [path]
+    visited_dirs = visited_entries = 0
+    while pending:
+        if visited_dirs >= SAMPLE_DIR_LIMIT or visited_entries >= SAMPLE_ENTRY_LIMIT \
+                or time.monotonic() >= deadline:
+            state["truncated"] = True
+            return
+        folder = pending.pop()
+        visited_dirs += 1
+        files, dirs = [], []
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    if visited_entries >= SAMPLE_ENTRY_LIMIT or time.monotonic() >= deadline:
+                        state["truncated"] = True
+                        break
+                    visited_entries += 1
+                    candidate = entry.path
+                    if entry.is_dir(follow_symlinks=False):
+                        if ((permit is None or permit(candidate)) and not is_reparse(candidate)):
+                            dirs.append(entry.name)
+                    elif entry.is_file(follow_symlinks=False):
+                        if permit is None or permit(candidate):
+                            files.append(entry.name)
+        except OSError:
+            raise
         dirs.sort()
+        files.sort()
         yield folder, files
+        if visited_dirs + len(dirs) > SAMPLE_DIR_LIMIT:
+            state["truncated"] = True
+            dirs = dirs[:max(0, SAMPLE_DIR_LIMIT - visited_dirs)]
+        pending.extend(os.path.join(folder, name) for name in reversed(dirs))
 
 
-def content_shape(path, max_files=2000, *, permit=None):
+def content_shape(path, max_files=2000, *, permit=None, candidates=None):
     """看一个目录里装的是什么形态的文件。
 
     只统计扩展名分布，不读内容。成本低，但足以区分
@@ -398,8 +434,11 @@ def content_shape(path, max_files=2000, *, permit=None):
 
     ext_count = Counter()
     total = 0
+    walk_state = {}
     try:
-        for _, names in sample_walk(path, permit):
+        for folder, names in sample_walk(path, permit, state=walk_state):
+            if candidates is not None:
+                candidates.extend((name, os.path.join(folder, name)) for name in names)
             for f in nsmallest(max_files - total, names):
                 e = _os.path.splitext(f)[1].lower()
                 ext_count[e] += 1
@@ -407,12 +446,15 @@ def content_shape(path, max_files=2000, *, permit=None):
                 if total >= max_files:
                     break
             if total >= max_files:
+                walk_state["truncated"] = True
                 break
     except OSError:
         return None
 
     if not total:
-        return {"total": 0, "dominant": None, "kind": "empty"}
+        return {"total": 0, "dominant": None,
+                "kind": "unknown" if walk_state.get("truncated") else "empty",
+                **({"truncated": True} if walk_state.get("truncated") else {})}
 
     top_ext, top_n = ext_count.most_common(1)[0]
     ratio = top_n / total
@@ -428,8 +470,6 @@ def content_shape(path, max_files=2000, *, permit=None):
         "code": fam(CODE_EXT),
         "doc": fam(DOC_EXT),
     }
-    best = max(shares, key=shares.get)
-
     kind = "mixed"
     if shares["installer"] >= 0.5:
         kind = "installer"      # 主要是可执行安装体
@@ -450,6 +490,7 @@ def content_shape(path, max_files=2000, *, permit=None):
         "ratio": round(ratio, 2),
         "shares": {k: round(v, 2) for k, v in shares.items() if v > 0},
         "kind": kind,
+        **({"truncated": True} if walk_state.get("truncated") else {}),
     }
 
 
@@ -732,20 +773,49 @@ def observe_path(path, root):
             info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
-def observe_sample_files(directory, root, *, permit=None, limit=AI_SAMPLE_LIMIT):
-    """Read bounded file metadata from the same visible sample sent with the question."""
+def _representative_sample_indices(names, limit):
+    """Prefer one example per filename family, then endpoints of numeric series."""
+    if limit <= 0:
+        return []
+    families = {}
+    for index, name in sorted(enumerate(names), key=lambda pair: pair[1].casefold()):
+        signature = re.sub(r"\d+", "#", name.casefold())
+        families.setdefault(signature, []).append(index)
+    choices = []
+    for indices in families.values():
+        if len(indices) == 1:
+            picks = indices
+        elif len(indices) == 2:
+            picks = [indices[0], indices[-1]]
+        else:
+            picks = [indices[0], indices[len(indices) // 2], indices[-1]]
+        choices.append(picks)
+    selected = []
+    for round_index in range(3):
+        for picks in choices:
+            if round_index < len(picks):
+                selected.append(picks[round_index])
+                if len(selected) >= limit:
+                    return selected
+    return selected
+
+
+def observe_sample_files(directory, root, *, permit=None, limit=AI_SAMPLE_LIMIT, candidates=None):
+    """Read bounded file metadata from representative names in the visible sample."""
+    if candidates is None:
+        candidates = []
+        if directory:
+            try:
+                for folder, names in sample_walk(directory, permit):
+                    candidates.extend((name, os.path.join(folder, name)) for name in names)
+            except OSError:
+                pass
+    selected = _representative_sample_indices([name for name, _ in candidates], limit)
     samples = []
-    if directory:
-        try:
-            for folder, names in islice(sample_walk(directory, permit), 128):
-                for name in nsmallest(limit - len(samples), names):
-                    evidence = observe_path(os.path.join(folder, name), root)
-                    if evidence and stat.S_ISREG(evidence[1]):
-                        samples.append(evidence)
-                if len(samples) >= limit:
-                    break
-        except OSError:
-            pass
+    for index in selected:
+        evidence = observe_path(candidates[index][1], root)
+        if evidence and stat.S_ISREG(evidence[1]):
+            samples.append(evidence)
     return samples
 
 
@@ -804,9 +874,11 @@ def suggest_group(group_name, node_name, zones, node_path=None,
     # ① 内容形态：这是最硬的证据
     if shape is None and group_path and os.path.isdir(group_path):
         shape = content_shape(group_path, permit=permit)
-    if shape and shape.get("kind") not in (None, "mixed", "empty"):
+    if shape and shape.get("kind") not in (None, "mixed", "empty", "unknown"):
         evidence.append(f"内容以 {shape['kind']} 为主"
                         f"（{shape.get('dominant')} 占 {shape.get('ratio', 0):.0%}）")
+    if shape and shape.get("truncated"):
+        evidence.append("已达目录采样上限，内容形态仅代表已查看项")
 
     # ② 归属：组名含目录名，或所在目录本身是分类容器 → 原地
     if node_name and node_name in group_name:
@@ -951,6 +1023,11 @@ def _boot_rules(root, *, decision_rules=None, quiet=False):
         print(f"规则包 v{data.get('version')} 已生效: "
               f"{len(changed)} 组常量", file=sys.stderr)
     return data
+
+
+def new_decision_rules():
+    return SimpleNamespace(CROSS_RULES=[], CATEGORY_NODE_NAMES=set(),
+                           NEW_CATEGORIES=DEFAULT_NEW_CATEGORIES)
 
 
 def is_category_node(name, category_nodes=None):
@@ -1321,8 +1398,7 @@ def evaluate_root(root, probe=None, *, allow_system_drive=False, quiet=False):
         raise SafetyError('阶段产物目录受保护')
     assert_no_links(probe_dir)
 
-    decision_rules = SimpleNamespace(CROSS_RULES=[], CATEGORY_NODE_NAMES=set(),
-                                     NEW_CATEGORIES=DEFAULT_NEW_CATEGORIES)
+    decision_rules = new_decision_rules()
     _boot_rules(root, decision_rules=decision_rules, quiet=quiet)
     mapping, _ = load_policy_mapping(root)
     if mapping:
@@ -1383,7 +1459,9 @@ def evaluate_root(root, probe=None, *, allow_system_drive=False, quiet=False):
         for g in n["groups"]:
             members = [os.path.join(n["path"], member) for member in group_paths(g)]
             group_path = next((path for path in members if permitted(path) and os.path.isdir(path)), None)
-            shape = content_shape(group_path, permit=sample_permitted) if group_path else None
+            candidates = []
+            shape = content_shape(group_path, permit=sample_permitted,
+                                  candidates=candidates) if group_path else None
             g["shape"] = shape
             suggestion = suggest_group(g["name"], n["name"], zones, n["path"], shape=shape,
                                        decision_rules=decision_rules)
@@ -1407,7 +1485,10 @@ def evaluate_root(root, probe=None, *, allow_system_drive=False, quiet=False):
             sample_dir = group_path
             if not sample_dir and not observed_members and permitted(named_path) and os.path.isdir(named_path):
                 sample_dir = named_path
-            samples = observe_sample_files(sample_dir, root, permit=sample_permitted)
+            samples = observe_sample_files(
+                sample_dir, root, permit=sample_permitted,
+                candidates=candidates if group_path else None,
+            )
             files = samples + [item for item in observed_members if stat.S_ISREG(item[1])]
             samples = list(dict.fromkeys(files))[:AI_SAMPLE_LIMIT]
             q = build_ai_question(g["name"], n["name"], n["path"], suggestion, shape,

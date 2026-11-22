@@ -309,11 +309,12 @@ let matchCursor = 0;
 const expandedDraftTables = new Set();
 
 const separator = path => /^(?:[A-Za-z]:\\|\\\\)/.test(path) ? '\\' : '/';
-function relativePath(path) {
+function relativePath(path, fallback = path) {
   const root = nodes.get(0).path;
-  if (path === root) return '.';
   const boundary = root.replace(/[\\/]$/, '')+separator(root);
-  return path.startsWith(boundary) ? path.slice(boundary.length) : path;
+  const compare = separator(root) === '\\' ? value => value.toLowerCase() : value => value;
+  if (compare(path) === compare(root)) return '.';
+  return compare(path).startsWith(compare(boundary)) ? path.slice(boundary.length) : fallback;
 }
 function descendantCount(id) {
   const node = nodes.get(id);
@@ -1029,11 +1030,14 @@ $('ai-file').addEventListener('change',event => {
   if (file) importReviewAnswers(file);
 });
 $('draft-download').addEventListener('click',() => {
-  const root = nodes.get(0).path;
-  const report = {root,limited:overall === 'incomplete',
-    inventories:[...inventories.values()].map(({path,episodes,unpaired}) => ({path,episodes,unpaired})),
+  const exportPath = path => relativePath(path, null);
+  const report = {root:'.',limited:overall === 'incomplete',
+    inventories:[...inventories.values()].map(({path,episodes,unpaired}) =>
+      ({path:exportPath(path),episodes,unpaired})),
     groups:[...drafts].flatMap(([id,groups]) => groups.map(({title,season,folders,issues,rows}) =>
-      ({parent:nodes.get(id).path,title,season,folders,issues,rows})))};
+      ({parent:exportPath(nodes.get(id).path),title,season,folders,issues,
+        rows:rows.map(row => ({...row,source:exportPath(row.source),
+          target:row.target ? exportPath(row.target) : null}))})))};
   downloadJson('tidy-file-tree-drafts.json',report);
 });
 $('rescan').addEventListener('click',start);

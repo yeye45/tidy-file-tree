@@ -20,6 +20,7 @@ class TestVerifyCases(unittest.TestCase):
 
     def setUp(self):
         import verify
+        import rules  # Import before stdout capture; the CLI module configures encoding.
         self.V = verify
 
     def test_stem_case(self):
@@ -89,13 +90,85 @@ class TestVerifyCases(unittest.TestCase):
             cases = self.V.load_cases(d)
             self.assertEqual(len(cases), 1)
 
+    def test_recorded_policy_mapping_is_applied_during_replay(self):
+        original = [dict(rule) for rule in D.CROSS_RULES]
+        try:
+            D.CROSS_RULES[:] = [{'keys': ['VOCALOID', '声库', '音源', '歌声合成'], 'to': ['歌声合成']}]
+            with tempfile.TemporaryDirectory() as d:
+                path = Path(d) / 'cases.json'
+                path.write_text(json.dumps({
+                    'policyMapping': {'voice_synth': 'MyVault'},
+                    'zones': [{'path': '/vault', 'label': 'MyVault', 'depth': 1, 'files': 2}],
+                    'cases': [{'kind': 'suggest', 'group': 'VOCALOID 声库', 'parent': '下载',
+                               'zones': [{'path': '/vault', 'label': 'MyVault', 'depth': 1, 'files': 2}],
+                               'expectMode': 'move', 'expectTarget': '/vault'}],
+                }), encoding='utf-8')
+                import argparse
+                args = argparse.Namespace(path=str(path), verbose=True)
+                from contextlib import redirect_stdout
+                from io import StringIO
+                output = StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(self.V.cmd_run(args), 0)
+                self.assertIn('target 期望 /vault / 实际 /vault', output.getvalue())
+                self.assertEqual(D.CROSS_RULES, [{'keys': ['VOCALOID', '声库', '音源', '歌声合成'], 'to': ['歌声合成']}])
+        finally:
+            D.CROSS_RULES[:] = original
+
+    def test_directory_replay_keeps_context_per_source_file(self):
+        original = [dict(rule) for rule in D.CROSS_RULES]
+        try:
+            D.CROSS_RULES[:] = [{'keys': ['VOCALOID', '声库', '音源', '歌声合成'], 'to': ['歌声合成']}]
+            with tempfile.TemporaryDirectory() as d:
+                base = Path(d)
+                for filename, target in (('a.json', 'Vault A'), ('b.json', 'Vault B')):
+                    path = base / filename
+                    path.write_text(json.dumps({
+                        'policyMapping': {'voice_synth': target},
+                        'cases': [{'kind': 'suggest', 'group': 'VOCALOID 声库', 'parent': '下载',
+                                   'zones': [{'path': f'/{target}', 'label': target, 'depth': 1, 'files': 2}],
+                                   'expectMode': 'move', 'expectTarget': f'/{target}'}],
+                    }), encoding='utf-8')
+                import argparse
+                from contextlib import redirect_stdout
+                from io import StringIO
+                output = StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(self.V.cmd_run(argparse.Namespace(path=d, verbose=False)), 0)
+                self.assertIn('通过 2 / 2', output.getvalue())
+                self.assertEqual(D.CROSS_RULES, [{'keys': ['VOCALOID', '声库', '音源', '歌声合成'], 'to': ['歌声合成']}])
+        finally:
+            D.CROSS_RULES[:] = original
+
+    def test_valid_decision_example_is_manual_review_not_automated_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'semantic.json'
+            path.write_text(json.dumps({'cases': [{
+                'kind': 'decision', 'stage': 'S2', 'caseType': 'semantic',
+                'evidence': ['installer files'], 'expectedCategory': 'software_installer',
+            }]}), encoding='utf-8')
+            import argparse
+            from contextlib import redirect_stdout
+            from io import StringIO
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(self.V.cmd_run(argparse.Namespace(path=str(path), verbose=False)), 0)
+            self.assertIn('通过 0 / 0', output.getvalue())
+            self.assertIn('待人工判断 1', output.getvalue())
+
+    def test_old_case_file_without_policy_context_remains_supported(self):
+        case = {'kind': 'suggest', 'group': 'unknown', 'parent': 'downloads', 'expectMode': 'keep'}
+        self.assertTrue(self.V.run_case(case, D)[0])
+
     def test_record_and_rule_coverage_use_protected_s4_evaluation(self):
         with tempfile.TemporaryDirectory(prefix='.organizer-test-', dir=HERE.parent) as tmp:
             base = Path(tmp)
             root = base / 'root'
             probe = root / '_organize' / 'probe'
             probe.mkdir(parents=True)
-            (probe.parent / 'policy.json').write_text('{"no_go_zones":["Excluded"]}', encoding='utf-8')
+            (probe.parent / 'policy.json').write_text(
+                json.dumps({'no_go_zones': ['Excluded'], 'mapping': {'voice_synth': 'MyVault'}}),
+                encoding='utf-8')
             for node, label in (('Incoming', 'x7F3 batch'), ('Excluded', 'Protected group')):
                 source = root / node / 'Package'
                 source.mkdir(parents=True)
@@ -119,6 +192,9 @@ class TestVerifyCases(unittest.TestCase):
             self.assertEqual(record.returncode, 0, record.stderr)
             text = cases_path.read_text(encoding='utf-8')
             self.assertNotIn('Excluded', text)
+            recorded_payload = json.loads(text)
+            self.assertEqual(recorded_payload['policyMapping'], {'voice_synth': 'MyVault'})
+            self.assertIn('rulePack', recorded_payload)
             cases = self.V.load_cases(cases_path)
             self.assertEqual(len(cases), 1)
             self.assertEqual(cases[0]['shape']['kind'], 'installer')

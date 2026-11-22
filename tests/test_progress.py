@@ -143,6 +143,23 @@ class ProgressDashboardTests(unittest.TestCase):
         self.assertEqual(snap['currentStage'], 'S1')
         self.assertFalse(snap['stages']['s4']['ready'])
 
+    def test_enrolled_loose_file_with_probe_is_not_stale(self):
+        loose = self.root / 'loose-file.txt'
+        loose.write_text('content', encoding='utf-8')
+        probe = self.root / '_organize' / 'probe'
+        probe.mkdir(parents=True)
+        (probe / 'probe_loose.json').write_text(json.dumps({
+            'path': str(loose), 'action': 'keep',
+        }), encoding='utf-8')
+
+        snap = progress.collect_snapshot(self.root)
+
+        row = next(node for node in snap['nodes'] if node['name'] == 'loose-file.txt')
+        self.assertEqual(row['stage'], 's1_done')
+        self.assertEqual(row['action'], 'keep')
+        self.assertEqual(snap['stages']['s1']['done'], 1)
+        self.assertEqual(snap['stages']['s1']['total'], 1)
+
     def test_truncated_root_scan_is_reported_and_never_s6_ok(self):
         for name in ('A', 'B'):
             (self.root / name).mkdir()

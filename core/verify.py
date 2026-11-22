@@ -21,6 +21,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -52,6 +53,11 @@ def load_cases(path):
         for c in items:
             if isinstance(c, dict):
                 c["_source"] = f.name
+                if isinstance(data, dict):
+                    c["_verifyContext"] = {
+                        key: data[key] for key in ("policyMapping", "rulePack")
+                        if isinstance(data.get(key), dict)
+                    }
                 if isinstance(data, dict) and isinstance(data.get("zones"), list):
                     c.setdefault("zones", data["zones"])
                 cases.append(c)
@@ -79,7 +85,7 @@ def _zones_from_rules(decisions_mod):
     return zones
 
 
-def run_case(case, decisions_mod):
+def run_case(case, decisions_mod, rule_state=None):
     """跑一个用例，返回 (通过, 说明)。"""
     kind = case.get("kind", "suggest")
 
@@ -130,12 +136,13 @@ def run_case(case, decisions_mod):
         if zones is None:
             # 没给 zones 时，从规则包的 categories.suggest 造一份
             # 否则什么都匹配不上，全返回 keep，测了等于没测
-            zones = _zones_from_rules(decisions_mod)
+            zones = _zones_from_rules(rule_state or decisions_mod)
 
         sug = decisions_mod.suggest_group(
             case.get("group", ""), case.get("parent", ""),
             zones, node_path=case.get("nodePath"),
-            group_path=path if (path and os.path.isdir(path)) else None, shape=shape)
+            group_path=path if (path and os.path.isdir(path)) else None, shape=shape,
+            decision_rules=rule_state or decisions_mod)
 
         expect_mode = case.get("expectMode")
         expect_check = case.get("expectNeedsCheck")
@@ -164,27 +171,46 @@ def run_case(case, decisions_mod):
 
 def cmd_run(args):
     import decisions as dec_mod
-
-    # 加载规则包
-    try:
-        import rules
-        pack = rules.load()
-        if not pack.get("_missing"):
-            rules.apply_to(pack, decisions_mod=dec_mod)
-    except Exception:
-        pass
+    import rules
 
     cases = load_cases(args.path)
     if not cases:
         print("没有用例")
         return 1
 
-    passed = failed = skipped = 0
+    try:
+        base_pack = rules.load()
+    except Exception:
+        base_pack = {"_missing": True}
+
+    passed = failed = skipped = manual_review = 0
     failures = []
+    rule_states = {}
 
     for c in cases:
         try:
-            ok, msg = run_case(c, dec_mod)
+            source = c["_source"]
+            state = rule_states.get(source)
+            if state is None:
+                context = c.get("_verifyContext") or {}
+                root_pack = context.get("rulePack")
+                if isinstance(root_pack, dict):
+                    state = dec_mod.new_decision_rules()
+                    pack = root_pack
+                else:
+                    state = SimpleNamespace(
+                        CROSS_RULES=[dict(rule) for rule in dec_mod.CROSS_RULES],
+                        CATEGORY_NODE_NAMES=set(dec_mod.CATEGORY_NODE_NAMES),
+                        NEW_CATEGORIES=dec_mod.NEW_CATEGORIES,
+                    )
+                    pack = base_pack
+                if not pack.get("_missing"):
+                    rules.apply_to(pack, decisions_mod=state)
+                mapping = context.get("policyMapping")
+                if isinstance(mapping, dict):
+                    dec_mod.apply_policy_mapping(mapping, decision_rules=state)
+                rule_states[source] = state
+            ok, msg = run_case(c, dec_mod, state)
         except Exception as exc:
             ok, msg = False, f"异常 {type(exc).__name__}: {exc}"
 
@@ -195,6 +221,10 @@ def cmd_run(args):
             skipped += 1
             if args.verbose:
                 print(f"  跳过  {name:36} {msg}")
+        elif ok and c.get("kind", "suggest") == "decision":
+            manual_review += 1
+            if args.verbose:
+                print(f"  审阅  {name:36} {msg}")
         elif ok:
             passed += 1
             if args.verbose:
@@ -207,7 +237,8 @@ def cmd_run(args):
     total = passed + failed
     print()
     print(f"通过 {passed} / {total}"
-          + (f" · 跳过 {skipped}" if skipped else ""))
+          + (f" · 跳过 {skipped}" if skipped else "")
+          + (f" · 待人工判断 {manual_review}" if manual_review else ""))
     if failures:
         print()
         print("失败明细:")
@@ -223,6 +254,10 @@ def cmd_record(args):
     from executor import artifact_has_signature, write_artifact
 
     evaluation = evaluate_root(args.root, allow_system_drive=True, quiet=True)
+    from decisions import load_policy_mapping
+    policy_mapping, _ = load_policy_mapping(args.root)
+    import rules
+    rule_pack = rules.load_for_root(args.root)
     cases = []
     for n in evaluation["nodes"]:
         for g in n["groups"]:
@@ -236,12 +271,18 @@ def cmd_record(args):
                 "shape": g.get("shape"),
                 "expectMode": suggestion["mode"],
                 "expectNeedsCheck": bool(suggestion.get("needsCheck")),
+                **({"expectTarget": suggestion["target"]}
+                   if suggestion.get("target") is not None else {}),
+                **({"expectCategory": suggestion["category"]}
+                   if suggestion.get("category") is not None else {}),
             })
 
     out = {
         "_about": "从当前判断自动生成。人工确认后作为回归基准。",
         "_root": evaluation["root"],
         "zones": evaluation["zones"],
+        "policyMapping": policy_mapping,
+        "rulePack": rule_pack,
         "cases": cases,
     }
     signature = json.dumps({"_about": out["_about"]}, ensure_ascii=False)[1:-1].encode('utf-8')

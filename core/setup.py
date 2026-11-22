@@ -204,6 +204,44 @@ def update_video_mapping(policy, previous_choice, choice):
     policy["_setupGeneratedMapping"] = generated
 
 
+SETUP_MAPPINGS = {
+    "adult_separation": {"adult_audio": "成人内容", "adult_game": "成人内容", "adult_image": "成人内容"},
+    "tool_vs_product": {"voice_synth": "歌声合成", "music": "音乐",
+                        "software_installer": "软件安装包", "install_tool": "装机工具"},
+}
+
+
+def update_setup_mapping(policy, key, previous_choice, choice):
+    """Apply setup-owned mappings while preserving user edits and older provenance."""
+    mapping = policy.setdefault("mapping", {})
+    generated = policy.get("_setupGeneratedMapping")
+    generated = dict(generated) if isinstance(generated, dict) else {}
+    managed = policy.get("_setupManagedPreferences")
+    managed = {item for item in managed if isinstance(item, str)} if isinstance(managed, list) else set()
+    targets = SETUP_MAPPINGS[key]
+    previously_enabled = (bool(policy.get("_adultSeparated")) if key == "adult_separation"
+                          else previous_choice == "分开")
+    if key not in managed and previously_enabled:
+        # Older policies only recorded the choice, so recognize its exact defaults once.
+        for category, target in targets.items():
+            generated.setdefault(category, target)
+    for category in targets:
+        prior = generated.pop(category, None)
+        if prior is not None and mapping.get(category) == prior:
+            mapping.pop(category, None)
+    enabled = (str(choice or "").startswith("分开") if key == "adult_separation"
+               else choice == "分开")
+    if enabled:
+        for category, target in targets.items():
+            if not mapping.get(category):
+                mapping[category] = target
+                generated[category] = target
+    policy["_setupGeneratedMapping"] = generated
+    policy["_setupManagedPreferences"] = sorted(managed | {key})
+    if key == "adult_separation":
+        policy["_adultSeparated"] = enabled
+
+
 def cmd_apply(args):
     try:
         answers = json.loads(Path(args.answers).read_text(encoding="utf-8-sig"))
@@ -215,6 +253,10 @@ def cmd_apply(args):
         print("答案文件需要 JSON 对象", file=sys.stderr)
         return 1
     answers = answers.get("setup", answers)
+    for preference in ("adult_separation", "tool_vs_product", "video_split"):
+        if preference in answers and not isinstance(answers[preference], str):
+            print(f"无法保存整理设置: {preference} 的答案必须是文本", file=sys.stderr)
+            return 1
     try:
         root = Path(normal(args.root))
         assert_no_links(root)
@@ -245,6 +287,8 @@ def cmd_apply(args):
 
     setup = policy.get("setup") or {}
     previous_video_split = setup.get("video_split")
+    previous_adult_separation = setup.get("adult_separation")
+    previous_tool_vs_product = setup.get("tool_vs_product")
     setup.update(answers)
     policy["setup"] = setup
 
@@ -255,22 +299,14 @@ def cmd_apply(args):
     elif goal_val.startswith("整理"):
         policy["allow_cache_cleanup"] = False
 
-    if setup.get("adult_separation", "").startswith("分开"):
-        mapping = policy.setdefault("mapping", {})
-        for cat in ("adult_audio", "adult_game", "adult_image"):
-            if not mapping.get(cat):
-                mapping[cat] = "成人内容"
-        policy["_adultSeparated"] = True
+    if "adult_separation" in answers:
+        update_setup_mapping(policy, "adult_separation", previous_adult_separation, setup.get("adult_separation"))
 
     if "video_split" in answers:
         update_video_mapping(policy, previous_video_split, setup["video_split"])
 
-    if setup.get("tool_vs_product", "") == "分开":
-        mapping = policy.setdefault("mapping", {})
-        mapping.setdefault("voice_synth", "歌声合成")
-        mapping.setdefault("music", "音乐")
-        mapping.setdefault("software_installer", "软件安装包")
-        mapping.setdefault("install_tool", "装机工具")
+    if "tool_vs_product" in answers:
+        update_setup_mapping(policy, "tool_vs_product", previous_tool_vs_product, setup.get("tool_vs_product"))
 
     no_go = setup.get("no_go_zones")
     if isinstance(no_go, list):

@@ -357,10 +357,11 @@ def collect_snapshot(root, probe_override=None):
                 'units': None, 'groups': None, 'updatedAt': None,
             })
             continue
-        exists_now = os.path.isdir(info['path'])
+        exists_now = os.path.lexists(info['path'])
+        is_directory = exists_now and os.path.isdir(info['path'])
         p_info = probes.get(k)
-        u_info = units.get(k)
-        g_info = groups.get(k)
+        u_info = units.get(k) if is_directory else None
+        g_info = groups.get(k) if is_directory else None
         action = p_info['action'] if p_info else None
         u_count = u_info['total_units'] if u_info else None
         g_count = g_info['count'] if g_info else None
@@ -377,12 +378,12 @@ def collect_snapshot(root, probe_override=None):
             })
             continue
 
-        needs_s1 = (not info['derived']) or info['enter_child']
+        needs_s1 = not is_directory or not info['derived'] or info['enter_child']
         if needs_s1:
             s1_expected += 1
             if p_info:
                 s1_done += 1
-        needs_s2 = action == 'split' or u_info is not None
+        needs_s2 = is_directory and (action == 'split' or u_info is not None)
         if needs_s2:
             s2_expected += 1
             if u_info:

@@ -112,6 +112,16 @@ class BrowserRegression(unittest.TestCase):
                         page.set_default_timeout(5000)
                         page.goto(url)
                         page.locator("#ai-export").wait_for()
+                        with page.expect_download() as draft_file:
+                            page.locator("#draft-download").click()
+                        draft = json.loads(draft_file.value.path().read_text(encoding="utf-8"))
+                        self.assertEqual(draft["root"], ".")
+                        self.assertNotIn(str(root).replace("\\", "/"),
+                                         json.dumps(draft).replace("\\\\", "/"))
+                        rows = [row for group in draft["groups"] for row in group["rows"]]
+                        self.assertTrue(rows)
+                        self.assertTrue(all(not Path(row["source"]).is_absolute() for row in rows))
+                        self.assertTrue(all(not Path(row["target"]).is_absolute() for row in rows if row["target"]))
                         with page.expect_download() as download:
                             page.locator("#ai-export").click()
                         questions = json.loads(download.value.path().read_text(encoding="utf-8"))
@@ -156,9 +166,102 @@ class BrowserRegression(unittest.TestCase):
                         server.terminate()
             self.assertEqual(sorted(root.rglob("*")), before)
 
+    def test_history_filters_late_arrivals_and_browses_large_live_folders(self):
+        with tempfile.TemporaryDirectory(prefix=".tidy-file-tree-history-browser-", dir=PROJECT) as temp:
+            base = Path(temp)
+            root = base / "root"
+            old = root / "Intake" / "Toolkit"
+            old.mkdir(parents=True)
+            (old / "original.txt").touch()
+            incoming = root / "incoming.txt"
+            incoming.touch()
+            archive = root / "Archive"
+            archive.mkdir()
+            crowded = root / "Crowded"
+            crowded.mkdir()
+            for i in range(520):
+                (crowded / f"{i:03}.txt").touch()
+            env = dict(os.environ, LOCALAPPDATA=str(base / "app-state"),
+                       XDG_STATE_HOME=str(base / "state"), PYTHONIOENCODING="utf-8")
+            if env.get("TIDY_FILE_TREE_BROWSER_USE_INSTALLED") != "1":
+                env["PYTHONPATH"] = str(PROJECT) + os.pathsep + env.get("PYTHONPATH", "")
+            cli = [sys.executable, "-m", "tidy_file_tree"]
+            actions = base / "actions.tsv"
+            for operation, source, target in (
+                ("mkdir", "-", old / "NewFolder"),
+                ("move", old, archive),
+                ("move", incoming, archive / old.name),
+            ):
+                actions.write_text(f"op\tsrc\tdst\treason\n{operation}\t{source}\t{target}\tfixture\n",
+                                   encoding="utf-8")
+                result = subprocess.run(cli + ["apply", str(root), "--actions", str(actions)],
+                                        cwd=base, env=env, capture_output=True, encoding="utf-8")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            report = base / "history.html"
+            result = subprocess.run(cli + ["history", str(root), "--out", str(report), "--lang", "en"],
+                                    cwd=base, env=env, capture_output=True, encoding="utf-8")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with sync_playwright() as playwright:
+                chrome = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+                edge = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+                executable = next((str(path) for path in (chrome, edge) if path.is_file()), None)
+                browser = playwright.chromium.launch(executable_path=executable)
+                page = browser.new_page()
+                page.set_default_timeout(7000)
+                page.goto(report.as_uri())
+                page.locator('#expTree button[data-exp-dir="Intake"]').click()
+                page.locator("#expListPane tr").filter(has_text="Toolkit").dblclick()
+                expect(page.locator("#expListPane .exp-item-name")).to_have_text(["original.txt"])
+                page.locator("#expHome").click()
+                page.locator("#expListPane tr").filter(has_text="Crowded").dblclick()
+                expect(page.locator("#expBanner")).to_contain_text("contains only part of this folder")
+
+                command = cli + ["history", str(root), "--serve", "--no-open", "--lang", "en"]
+                with subprocess.Popen(command, cwd=base, env=env, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, text=True, encoding="utf-8") as server:
+                    try:
+                        url = server.stdout.readline().strip()
+                        self.assertTrue(url.startswith("http://127.0.0.1:"), url)
+                        checks = []
+
+                        def deny_status(route):
+                            checks.append(route.request.url)
+                            route.fulfill(status=503, content_type="application/json", body='{"ok":false}')
+
+                        page.route("**/stat?*", deny_status)
+                        page.goto(url)
+                        retry = page.get_by_role("button", name="Could not check current status · Retry")
+                        expect(retry).to_be_visible()
+                        page.locator("#expOnlyChanged").check()
+                        page.locator("#expOnlyChanged").uncheck()
+                        expect(retry).to_be_visible()
+                        initial_path = checks[0]
+                        self.assertEqual(checks.count(initial_path), 1)
+                        retry.click()
+                        expect(retry).to_be_visible()
+                        self.assertEqual(checks.count(initial_path), 2)
+                        page.locator('#expTree button[data-exp-dir="Intake"]').click()
+                        page.locator("#expListPane tr").filter(has_text="Toolkit").dblclick()
+                        expect(page.locator("#expListPane .exp-item-name")).to_have_text(["original.txt"])
+                        page.locator("#expHome").click()
+                        page.locator("#expListPane tr").filter(has_text="Crowded").dblclick()
+                        more = page.get_by_role("button", name="Load more entries")
+                        expect(more).to_be_visible()
+                        for _ in range(10):
+                            if page.locator("#expListPane tbody tr").count() == 520:
+                                break
+                            more.click()
+                            expect(page.get_by_text("Loading folder contents…")).to_have_count(0)
+                        expect(page.locator("#expListPane tbody tr")).to_have_count(520)
+                    finally:
+                        if server.poll() is None:
+                            server.terminate()
+                browser.close()
+
     def test_review_board_to_receipted_apply_and_undo(self):
         with tempfile.TemporaryDirectory(prefix=".tidy-file-tree-browser-", dir=PROJECT) as temp:
-            root = Path(temp) / "library"
+            root = Path(temp) / "library $tick`'s"
             source = root / "incoming"
             source.mkdir(parents=True)
             a, b = source / "part-a.bin", source / "part-b.bin"
@@ -279,6 +382,8 @@ class BrowserRegression(unittest.TestCase):
                                       ["@keep", str(root / "archive")])
 
                 page.locator("#reviewButton").click()
+                root_arg = str(root).replace("'", "''") if os.name == "nt" else str(root).replace("'", "'\"'\"'")
+                self.assertIn(f"tidy-file-tree apply '{root_arg}' --actions", page.locator("#previewCmdText").inner_text())
                 correction = page.locator(".correction-row").filter(has=page.locator('[data-correction="what"]'))
                 self.assertEqual(correction.count(), 1)
                 correction.locator('[data-correction="what"]').fill("user-confirmed retained sample")
@@ -357,12 +462,17 @@ class BrowserRegression(unittest.TestCase):
                 page.set_default_timeout(5000)
                 page.goto(board.as_uri())
                 page.locator("article.card button.group-port[data-source]").click()
-                archive_target = page.locator("[data-target]").filter(has=page.locator(".target-label", has_text="archive"))
-                archive_target.first.locator(".target-port").click()
+                custom_label = "personal $tick`'s"
+                page.locator("#newTargetInput").fill(custom_label)
+                page.locator("#newTargetForm button[type=submit]").click()
+                custom_target = page.locator("[data-target]").filter(has=page.locator(".target-label", has_text=custom_label))
+                custom_target.first.locator(".target-port").click()
                 self.assertEqual(page.evaluate("window.foState().linked"), 2)
                 regenerate()
                 page.reload()
                 self.assertEqual(page.evaluate("window.foState().linked"), 2)
+                custom_target = page.locator("[data-target]").filter(has=page.locator(".target-label", has_text=custom_label))
+                self.assertTrue(custom_target.is_visible())
 
                 replacement = workspace / "new.bin"
                 replacement.write_bytes(b"a different file at the same path")
@@ -379,7 +489,7 @@ class BrowserRegression(unittest.TestCase):
                 self.assertNotIn(str(replaced), actions)
                 page.locator("#review form button").click()
                 page.locator("article.card button.group-port[data-source]").click()
-                archive_target.first.locator(".target-port").click()
+                custom_target.first.locator(".target-port").click()
                 self.assertEqual(page.evaluate("window.foState().linked"), 2)
                 self.assertTrue(page.locator("#staleMetric").is_hidden())
                 page.reload()

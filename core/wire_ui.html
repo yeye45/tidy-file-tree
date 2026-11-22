@@ -258,6 +258,7 @@ const storageKey = 'tidy-file-tree-wires-v2:' + DATA.root;
 const themeKey = 'tidy-file-tree-theme';
 const rootSep = /^(?:[A-Za-z]:\\|\\\\)/.test(DATA.root) ? '\\' : '/';
 const targets = new Map([[KEEP,{path:KEEP,label:t('保持原位'),depth:0}], ...DATA.zones.map(z => [z.path,z])]);
+const customTargetsKey = 'tidy-file-tree-custom-targets-v1:' + DATA.root;
 const groups = DATA.nodes.flatMap(node => node.groups.map(group => {
   const id = JSON.stringify([node.id,group.id]);
   const units = group.units.map(unit => ({...unit,key:JSON.stringify([id,unit.id])}));
@@ -316,6 +317,21 @@ function parsePlaces(raw) {
   const saved = JSON.parse(raw);
   if (Array.isArray(saved)) return saved;
 }
+function parseCustomTargets(raw) {
+  const saved = JSON.parse(raw);
+  return Array.isArray(saved) ? saved : [];
+}
+function addCustomTargetPath(label) {
+  if (typeof label !== 'string') return;
+  const parts = label.split('/');
+  if (!parts.length || parts.some(p => !p || p === '.' || p === '..' || /[\\/:*?"<>|\x00-\x1f]/.test(p) || /[ .]$/.test(p))) return;
+  const path = DATA.root.replace(/[\\/]$/, '') + rootSep + parts.join(rootSep);
+  if (targets.has(path)) return;
+  const zone = {path, label:parts.join('/'), depth:parts.length, files:0, new:true};
+  targets.set(path,zone);
+  DATA.zones.push(zone);
+}
+for (const label of readSetting(customTargetsKey, null, parseCustomTargets) ?? []) addCustomTargetPath(label);
 function allowedAssignment(id,target) {
   const rename = renameChoices.get(id);
   return rename ? target === KEEP || Boolean(rename.token && target === rename.token) : targets.has(target);
@@ -440,6 +456,7 @@ function save() {
     const saved = [...places].map(([id,target]) => [id,target,sourceWitnesses.get(id) ?? null]);
     for (const id of unresolvedPlaces()) saved.push([id,null,null]);
     localStorage.setItem(storageKey,JSON.stringify(saved));
+    localStorage.setItem(customTargetsKey,JSON.stringify(DATA.zones.filter(zone => zone.new).map(zone => zone.label)));
   } catch (_) {}
   updateHistoryButtons();
 }
@@ -805,9 +822,8 @@ function addCustomTarget(raw) {
   }
   const fullPath = DATA.root.replace(/[\\/]$/, '') + rootSep + parts.join(rootSep);
   if (!targets.has(fullPath)) {
-    const zone = {path: fullPath, label: parts.join('/'), depth: parts.length, files: 0, new: true};
-    targets.set(fullPath, zone);
-    DATA.zones.push(zone);
+    addCustomTargetPath(parts.join('/'));
+    try { localStorage.setItem(customTargetsKey,JSON.stringify(DATA.zones.filter(zone => zone.new).map(zone => zone.label))); } catch (_) {}
   }
   if (parts.length > 1) openZones.add(parts[0]);
   renderRight();
@@ -1149,7 +1165,9 @@ $('theme').addEventListener('click',() => {
   try {localStorage.setItem(themeKey,next);} catch (_) {}
 });
 function quoteArg(value) {
-  return '"' + String(value).replace(/"/g, '\\"') + '"';
+  const text = String(value);
+  if (rootSep === '\\') return "'" + text.replace(/'/g, "''") + "'";
+  return "'" + text.replace(/'/g, "'\"'\"'") + "'";
 }
 async function copyText(text, button, labelKey) {
   try {
